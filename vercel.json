@@ -1,1 +1,15 @@
-{"builds": [{"src": "app/simple.html", "use": "@vercel/static"}], "routes": [{"src": "/", "dest": "/app/simple.html"}], "version": 2}
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "index.html", 
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/", 
+      "dest": "/index.html"
+    }
+  ]
+}
