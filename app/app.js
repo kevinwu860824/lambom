@@ -1,4 +1,5 @@
 let bomData = [];
+let machineGroups = [];
 
 const supabaseUrl = 'https://bybdmdevlmcbmzvgaimu.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5YmRtZGV2bG1jYm16dmdhaW11Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1NTM5NTYsImV4cCI6MjA5OTEyOTk1Nn0.wCOcSIvgu6zbM47iip_ymH2QCWyt_yLqnqveC6k2Ykc';
@@ -72,6 +73,29 @@ function compareBoms(bomA, bomB) {
   return { onlyA, onlyB, common };
 }
 
+function refreshSubparts(side) {
+  const machineSelectId = side === 'A' ? 'machineA' : 'machineB';
+  const subpartSelectId = side === 'A' ? 'subpartA' : 'subpartB';
+  const machine = document.getElementById(machineSelectId).value;
+  const group = machineGroups.find(item => item.machine === machine) || machineGroups[0];
+  const subparts = group ? group.subparts : [];
+  const subpartSelect = document.getElementById(subpartSelectId);
+
+  subpartSelect.innerHTML = subparts
+    .map(item => `<option value="${item.source_file}">${item.source_file}</option>`)
+    .join('');
+  subpartSelect.value = subparts[0]?.source_file ?? '';
+}
+
+function getSelectedBom(side) {
+  const machineSelectId = side === 'A' ? 'machineA' : 'machineB';
+  const subpartSelectId = side === 'A' ? 'subpartA' : 'subpartB';
+  const machine = document.getElementById(machineSelectId).value;
+  const sourceFile = document.getElementById(subpartSelectId).value;
+
+  return bomData.find(item => item.machine === machine && item.source_file === sourceFile) || null;
+}
+
 async function loadData() {
   const [machinesRes, itemsRes] = await Promise.all([
     fetch(`${supabaseUrl}/rest/v1/bom_machines?select=id,machine_name,source_file`, {
@@ -107,22 +131,38 @@ async function loadData() {
     throw new Error('Supabase returned no BOM records.');
   }
 
-  const bomA = document.getElementById('bomA');
-  const bomB = document.getElementById('bomB');
-  const options = bomData.map(bom => `<option value="${bom.source_file}">${bom.machine}</option>`).join('');
-  bomA.innerHTML = options;
-  bomB.innerHTML = options;
+  const grouped = new Map();
+  bomData.forEach(item => {
+    if (!grouped.has(item.machine)) {
+      grouped.set(item.machine, []);
+    }
+    grouped.get(item.machine).push(item);
+  });
 
-  bomA.value = bomData[0]?.source_file ?? '';
-  bomB.value = bomData[1]?.source_file ?? '';
+  machineGroups = Array.from(grouped.entries()).map(([machine, subparts]) => ({ machine, subparts }));
+
+  const machineA = document.getElementById('machineA');
+  const machineB = document.getElementById('machineB');
+  const machineOptions = machineGroups
+    .map(group => `<option value="${group.machine}">${group.machine}</option>`)
+    .join('');
+
+  machineA.innerHTML = machineOptions;
+  machineB.innerHTML = machineOptions;
+
+  machineA.value = machineGroups[0]?.machine ?? '';
+  machineB.value = machineGroups[1]?.machine ?? machineGroups[0]?.machine ?? '';
+
+  refreshSubparts('A');
+  refreshSubparts('B');
 }
 
 function renderSummary(bomA, bomB, result) {
   const summary = document.getElementById('summary');
   summary.innerHTML = `
     <h2>比對摘要</h2>
-    <p><strong>${bomA.machine}</strong> 共 ${bomA.items.length} 項</p>
-    <p><strong>${bomB.machine}</strong> 共 ${bomB.items.length} 項</p>
+    <p><strong>${bomA.machine}</strong> / ${bomA.source_file} 共 ${bomA.items.length} 項</p>
+    <p><strong>${bomB.machine}</strong> / ${bomB.source_file} 共 ${bomB.items.length} 項</p>
     <p>共同料號：${result.common.length}</p>
     <p>僅 A：${result.onlyA.length}</p>
     <p>僅 B：${result.onlyB.length}</p>
@@ -170,9 +210,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
+  document.getElementById('machineA').addEventListener('change', () => refreshSubparts('A'));
+  document.getElementById('machineB').addEventListener('change', () => refreshSubparts('B'));
+
   document.getElementById('compareBtn').addEventListener('click', () => {
-    const bomA = bomData.find(item => item.source_file === document.getElementById('bomA').value);
-    const bomB = bomData.find(item => item.source_file === document.getElementById('bomB').value);
+    const bomA = getSelectedBom('A');
+    const bomB = getSelectedBom('B');
     if (!bomA || !bomB) return;
 
     const result = compareBoms(bomA, bomB);
