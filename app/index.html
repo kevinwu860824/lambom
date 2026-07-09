@@ -12,14 +12,26 @@
     <p>從多份機台 BOM 中選擇兩份進行差異比對。</p>
 
     <section class="controls">
-      <label>
-        BOM A
-        <select id="bomA"></select>
-      </label>
-      <label>
-        BOM B
-        <select id="bomB"></select>
-      </label>
+      <div class="control-group">
+        <label>
+          機台 A
+          <select id="machineA"></select>
+        </label>
+        <label>
+          子項 A
+          <select id="subpartA"></select>
+        </label>
+      </div>
+      <div class="control-group">
+        <label>
+          機台 B
+          <select id="machineB"></select>
+        </label>
+        <label>
+          子項 B
+          <select id="subpartB"></select>
+        </label>
+      </div>
       <button id="compareBtn">開始比對</button>
     </section>
 
