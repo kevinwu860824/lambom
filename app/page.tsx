@@ -334,10 +334,9 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <PartTable title="僅存在於 A" items={result?.onlyA} />
           <PartTable title="僅存在於 B" items={result?.onlyB} />
-          <CommonTable items={result?.common} />
         </div>
       </div>
     </div>
@@ -425,50 +424,6 @@ function PartTable({ title, items }: { title: string; items?: AggregatedItem[] }
                   <TableCell>{item.description}</TableCell>
                   <TableCell>{item.qty ?? "-"}</TableCell>
                   <TableCell>{item.uom ?? ""}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function CommonTable({ items }: { items?: CompareResult["common"] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">共同項目</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {!items || items.length === 0 ? (
-          <p className="text-muted-foreground text-sm italic">沒有共同項目</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>料號</TableHead>
-                <TableHead>描述</TableHead>
-                <TableHead>A Qty</TableHead>
-                <TableHead>B Qty</TableHead>
-                <TableHead>差值(A-B)</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) => (
-                <TableRow key={item.part_no}>
-                  <TableCell>{item.part_no}</TableCell>
-                  <TableCell>{item.description}</TableCell>
-                  <TableCell>{item.qtyA ?? "-"}</TableCell>
-                  <TableCell>{item.qtyB ?? "-"}</TableCell>
-                  <TableCell>
-                    {item.qtyMatch ? (
-                      item.qtyDiff
-                    ) : (
-                      <Badge variant="destructive">{item.qtyDiff}</Badge>
-                    )}
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
