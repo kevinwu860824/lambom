@@ -73,44 +73,38 @@ function compareBoms(bomA, bomB) {
 }
 
 async function loadData() {
-  try {
-    const [machinesRes, itemsRes] = await Promise.all([
-      fetch(`${supabaseUrl}/rest/v1/bom_machines?select=id,machine_name,source_file`, {
-        headers: getSupabaseHeaders(),
-      }),
-      fetch(`${supabaseUrl}/rest/v1/bom_items?select=bom_id,part_no,description,qty,uom`, {
-        headers: getSupabaseHeaders(),
-      }),
-    ]);
+  const [machinesRes, itemsRes] = await Promise.all([
+    fetch(`${supabaseUrl}/rest/v1/bom_machines?select=id,machine_name,source_file`, {
+      headers: getSupabaseHeaders(),
+    }),
+    fetch(`${supabaseUrl}/rest/v1/bom_items?select=bom_id,part_no,description,qty,uom`, {
+      headers: getSupabaseHeaders(),
+    }),
+  ]);
 
-    if (!machinesRes.ok || !itemsRes.ok) {
-      throw new Error('Supabase unavailable');
+  if (!machinesRes.ok || !itemsRes.ok) {
+    throw new Error(`Supabase request failed (machines: ${machinesRes.status}, items: ${itemsRes.status})`);
+  }
+
+  const [machines, items] = await Promise.all([machinesRes.json(), itemsRes.json()]);
+  const itemsByBomId = new Map();
+
+  items.forEach(item => {
+    const bomId = String(item.bom_id);
+    if (!itemsByBomId.has(bomId)) {
+      itemsByBomId.set(bomId, []);
     }
+    itemsByBomId.get(bomId).push(item);
+  });
 
-    const [machines, items] = await Promise.all([machinesRes.json(), itemsRes.json()]);
-    const itemsByBomId = new Map();
+  bomData = machines.map(machine => ({
+    source_file: machine.source_file,
+    machine: machine.machine_name,
+    items: itemsByBomId.get(String(machine.id)) || [],
+  }));
 
-    items.forEach(item => {
-      const bomId = String(item.bom_id);
-      if (!itemsByBomId.has(bomId)) {
-        itemsByBomId.set(bomId, []);
-      }
-      itemsByBomId.get(bomId).push(item);
-    });
-
-    bomData = machines.map(machine => ({
-      source_file: machine.source_file,
-      machine: machine.machine_name,
-      items: itemsByBomId.get(String(machine.id)) || [],
-    }));
-  } catch (supabaseError) {
-    const fallbackData = window.BOM_FALLBACK_DATA || [];
-    if (Array.isArray(fallbackData) && fallbackData.length) {
-      bomData = fallbackData;
-    } else {
-      const res = await fetch('./boms.json');
-      bomData = await res.json();
-    }
+  if (!bomData.length) {
+    throw new Error('Supabase returned no BOM records.');
   }
 
   const bomA = document.getElementById('bomA');
@@ -166,7 +160,15 @@ function renderTables(result) {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  await loadData();
+  try {
+    await loadData();
+  } catch (error) {
+    document.getElementById('summary').innerHTML = `<p class="empty">載入 Supabase 失敗：${error.message}</p>`;
+    document.getElementById('onlyA').innerHTML = '<p class="empty">沒有資料</p>';
+    document.getElementById('onlyB').innerHTML = '<p class="empty">沒有資料</p>';
+    document.getElementById('common').innerHTML = '<p class="empty">沒有資料</p>';
+    return;
+  }
 
   document.getElementById('compareBtn').addEventListener('click', () => {
     const bomA = bomData.find(item => item.source_file === document.getElementById('bomA').value);
