@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -43,7 +43,16 @@ interface BomSummary {
 }
 
 export default function Home() {
-  const supabase = useMemo(() => createClient(), []);
+  // Created lazily on first use inside an effect/handler rather than during
+  // render, so this never runs during Next.js's server-side prerender pass.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  function getSupabase() {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient();
+    }
+    return supabaseRef.current;
+  }
+
   const bomDataRef = useRef<BomEntry[]>([]);
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
@@ -82,7 +91,7 @@ export default function Home() {
     // so a single request with a high .limit() is silently truncated.
     // Page through with .range() until a page comes back short.
     for (;;) {
-      const { data, error } = await supabase
+      const { data, error } = await getSupabase()
         .from("bom_items")
         .select("part_no,description,qty,uom")
         .eq("bom_id", bomId)
@@ -150,7 +159,7 @@ export default function Home() {
     let cancelled = false;
 
     async function loadData() {
-      const { data: machines, error } = await supabase
+      const { data: machines, error } = await getSupabase()
         .from("bom_machines")
         .select("id,machine_name,source_file");
 
