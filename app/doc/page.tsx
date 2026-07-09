@@ -116,7 +116,7 @@ export default function DocPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-5xl px-4 py-8 md:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight text-white">檔案取代</h1>
           <p className="mt-1 text-sm text-white/70">
