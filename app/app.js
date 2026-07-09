@@ -40,9 +40,50 @@ function buildTable(items) {
   `;
 }
 
+function toNumericQty(value) {
+  if (value === null || value === undefined || value === '') {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function aggregateByPartNo(items) {
+  const aggregated = new Map();
+
+  items.forEach(item => {
+    const partNo = item.part_no;
+    if (!partNo) {
+      return;
+    }
+
+    if (!aggregated.has(partNo)) {
+      aggregated.set(partNo, {
+        part_no: partNo,
+        description: item.description,
+        qty: 0,
+        uom: item.uom ?? '',
+      });
+    }
+
+    const target = aggregated.get(partNo);
+    target.qty += toNumericQty(item.qty);
+
+    if (!target.description && item.description) {
+      target.description = item.description;
+    }
+    if (!target.uom && item.uom) {
+      target.uom = item.uom;
+    }
+  });
+
+  return aggregated;
+}
+
 function compareBoms(bomA, bomB) {
-  const mapA = new Map(bomA.items.map(item => [item.part_no, item]));
-  const mapB = new Map(bomB.items.map(item => [item.part_no, item]));
+  const mapA = aggregateByPartNo(bomA.items);
+  const mapB = aggregateByPartNo(bomB.items);
 
   const onlyA = [];
   const onlyB = [];
@@ -58,8 +99,10 @@ function compareBoms(bomA, bomB) {
         description: itemA.description,
         qtyA: itemA.qty,
         qtyB: itemB.qty,
+        qtyDiff: itemA.qty - itemB.qty,
         uomA: itemA.uom,
         uomB: itemB.uom,
+        qtyMatch: itemA.qty === itemB.qty,
       });
     }
   }
@@ -69,6 +112,10 @@ function compareBoms(bomA, bomB) {
       onlyB.push(itemB);
     }
   }
+
+  onlyA.sort((a, b) => a.part_no.localeCompare(b.part_no));
+  onlyB.sort((a, b) => a.part_no.localeCompare(b.part_no));
+  common.sort((a, b) => a.part_no.localeCompare(b.part_no));
 
   return { onlyA, onlyB, common };
 }
@@ -158,14 +205,19 @@ async function loadData() {
 }
 
 function renderSummary(bomA, bomB, result) {
+  const uniqueA = aggregateByPartNo(bomA.items).size;
+  const uniqueB = aggregateByPartNo(bomB.items).size;
+  const qtyMismatch = result.common.filter(item => !item.qtyMatch).length;
+
   const summary = document.getElementById('summary');
   summary.innerHTML = `
     <h2>比對摘要</h2>
-    <p><strong>${bomA.machine}</strong> / ${bomA.source_file} 共 ${bomA.items.length} 項</p>
-    <p><strong>${bomB.machine}</strong> / ${bomB.source_file} 共 ${bomB.items.length} 項</p>
+    <p><strong>${bomA.machine}</strong> / ${bomA.source_file}：明細 ${bomA.items.length} 項、唯一料號 ${uniqueA} 項</p>
+    <p><strong>${bomB.machine}</strong> / ${bomB.source_file}：明細 ${bomB.items.length} 項、唯一料號 ${uniqueB} 項</p>
     <p>共同料號：${result.common.length}</p>
     <p>僅 A：${result.onlyA.length}</p>
     <p>僅 B：${result.onlyB.length}</p>
+    <p>共同料號中 Qty 不一致：${qtyMismatch}</p>
   `;
 }
 
@@ -181,6 +233,7 @@ function renderTables(result) {
           <th>描述</th>
           <th>A Qty</th>
           <th>B Qty</th>
+          <th>差值(A-B)</th>
         </tr>
       </thead>
       <tbody>
@@ -190,6 +243,7 @@ function renderTables(result) {
             <td>${item.description}</td>
             <td>${item.qtyA ?? '-'}</td>
             <td>${item.qtyB ?? '-'}</td>
+            <td>${item.qtyDiff}</td>
           </tr>
         `).join('')}
       </tbody>
