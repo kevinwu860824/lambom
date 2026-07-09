@@ -242,7 +242,7 @@ export default function Home() {
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-muted">
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">BOM 比對工具</h1>

@@ -96,7 +96,7 @@ export default function DataPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-muted">
       <div className="mx-auto max-w-5xl px-4 py-8 md:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">資料編輯</h1>
