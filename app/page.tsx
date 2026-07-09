@@ -242,11 +242,11 @@ export default function Home() {
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">BOM 比對工具</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">BOM 比對工具</h1>
+          <p className="mt-1 text-sm text-white/70">
             從多份機台 BOM 中選擇兩份進行差異比對。
           </p>
         </div>

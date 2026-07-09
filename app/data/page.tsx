@@ -96,11 +96,11 @@ export default function DataPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-5xl px-4 py-8 md:px-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">資料編輯</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">資料編輯</h1>
+          <p className="mt-1 text-sm text-white/70">
             左邊顯示 Supabase「Data」表目前的內容,右邊輸入新內容並按下取代。
           </p>
         </div>
