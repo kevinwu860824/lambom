@@ -11,6 +11,11 @@
 # env files
 .env*.local
 
+# reference BOM sample files (real engineering data, not project source)
+*.xlsx
+*.xls
+PM2.txt
+
 # misc
 .DS_Store
 *.pem

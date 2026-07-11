@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import type { AggregatedItem } from "@/lib/bom";
 
 interface BomSummary {
@@ -155,75 +156,75 @@ export default function Home() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
+  async function loadData() {
+    const { data: machines, error } = await getSupabase()
+      .from("bom_machines")
+      .select("id,machine_name,source_file");
 
-    async function loadData() {
-      const { data: machines, error } = await getSupabase()
-        .from("bom_machines")
-        .select("id,machine_name,source_file");
-
-      if (cancelled) return;
-
-      if (error) {
-        setInitError(`載入 Supabase 失敗:${error.message}`);
-        setInitLoading(false);
-        return;
-      }
-
-      if (!machines || machines.length === 0) {
-        setInitError("Supabase returned no BOM records.");
-        setInitLoading(false);
-        return;
-      }
-
-      const bomData: BomEntry[] = machines.map((machine) => ({
-        bomId: machine.id,
-        source_file: machine.source_file,
-        machine: machine.machine_name,
-        items: [],
-        itemsLoaded: false,
-      }));
-      bomDataRef.current = bomData;
-
-      const grouped = new Map<string, BomEntry[]>();
-      bomData.forEach((entry) => {
-        if (!grouped.has(entry.machine)) {
-          grouped.set(entry.machine, []);
-        }
-        grouped.get(entry.machine)!.push(entry);
-      });
-
-      const groups: MachineGroup[] = Array.from(grouped.entries()).map(
-        ([machine, subparts]) => ({ machine, subparts })
-      );
-      setMachineGroups(groups);
-
-      const groupA = groups[0] ?? null;
-      const groupB = groups[1] ?? groups[0] ?? null;
-      const defaultBomA = groupA?.subparts[0] ?? null;
-      const defaultBomB = groupB?.subparts[0] ?? null;
-
-      setMachineA(groupA?.machine ?? "");
-      setSubpartA(defaultBomA?.source_file ?? "");
-      setMachineB(groupB?.machine ?? "");
-      setSubpartB(defaultBomB?.source_file ?? "");
-
+    if (error) {
+      setInitError(`載入 Supabase 失敗:${error.message}`);
       setInitLoading(false);
-      await runCompare(defaultBomA, defaultBomB);
+      return;
     }
 
+    if (!machines || machines.length === 0) {
+      setInitError("Supabase returned no BOM records.");
+      setInitLoading(false);
+      return;
+    }
+
+    const bomData: BomEntry[] = machines.map((machine) => ({
+      bomId: machine.id,
+      source_file: machine.source_file,
+      machine: machine.machine_name,
+      items: [],
+      itemsLoaded: false,
+    }));
+    bomDataRef.current = bomData;
+
+    const grouped = new Map<string, BomEntry[]>();
+    bomData.forEach((entry) => {
+      if (!grouped.has(entry.machine)) {
+        grouped.set(entry.machine, []);
+      }
+      grouped.get(entry.machine)!.push(entry);
+    });
+
+    const groups: MachineGroup[] = Array.from(grouped.entries()).map(
+      ([machine, subparts]) => ({ machine, subparts })
+    );
+    setMachineGroups(groups);
+
+    const groupA = groups[0] ?? null;
+    const groupB = groups[1] ?? groups[0] ?? null;
+    const defaultBomA = groupA?.subparts[0] ?? null;
+    const defaultBomB = groupB?.subparts[0] ?? null;
+
+    setMachineA(groupA?.machine ?? "");
+    setSubpartA(defaultBomA?.source_file ?? "");
+    setMachineB(groupB?.machine ?? "");
+    setSubpartB(defaultBomB?.source_file ?? "");
+
+    setInitLoading(false);
+    await runCompare(defaultBomA, defaultBomB);
+  }
+
+  useEffect(() => {
     loadData().catch((err) => {
-      if (cancelled) return;
       setInitError(`載入 Supabase 失敗:${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
-
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function handleUploaded() {
+    setInitLoading(true);
+    setInitError(null);
+    loadData().catch((err) => {
+      setInitError(`載入 Supabase 失敗:${err instanceof Error ? err.message : String(err)}`);
+      setInitLoading(false);
+    });
+  }
 
   function handleMachineAChange(machine: string) {
     setMachineA(machine);
@@ -244,11 +245,17 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-[1600px] px-4 py-8 md:px-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">BOM 比對工具</h1>
-          <p className="mt-1 text-sm text-white/70">
-            從多份機台 BOM 中選擇兩份進行差異比對。
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">BOM 比對工具</h1>
+            <p className="mt-1 text-sm text-white/70">
+              從多份機台 BOM 中選擇兩份進行差異比對。
+            </p>
+          </div>
+          <UploadBomDialog
+            existingMachines={machineGroups.map((g) => g.machine)}
+            onUploaded={handleUploaded}
+          />
         </div>
 
         {initError && (
