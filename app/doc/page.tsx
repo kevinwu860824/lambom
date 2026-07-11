@@ -4,8 +4,54 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 
 const BUCKET = "doc";
+
+function uploadFileWithProgress(
+  bucket: string,
+  path: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const url = `${supabaseUrl}/storage/v1/object/${bucket}/${encodeURIComponent(path)}`;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.setRequestHeader("apikey", anonKey);
+    xhr.setRequestHeader("Authorization", `Bearer ${anonKey}`);
+    xhr.setRequestHeader("x-upsert", "true");
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
+      let message = `上傳失敗 (HTTP ${xhr.status})`;
+      try {
+        const body = JSON.parse(xhr.responseText);
+        message = body.message || body.error || message;
+      } catch {
+        // ignore parse errors, fall back to the generic message
+      }
+      reject(new Error(message));
+    };
+
+    xhr.onerror = () => reject(new Error("網路錯誤,上傳失敗"));
+
+    xhr.send(file);
+  });
+}
 
 interface StoredFile {
   name: string;
@@ -35,6 +81,7 @@ export default function DocPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +128,7 @@ export default function DocPage() {
     if (!selectedFile) return;
 
     setUploading(true);
+    setUploadProgress(0);
     setUploadError(null);
     setUploadSuccess(false);
 
@@ -97,11 +145,7 @@ export default function DocPage() {
         if (removeError) throw new Error(removeError.message);
       }
 
-      const { error: uploadErr } = await getSupabase()
-        .storage.from(BUCKET)
-        .upload(selectedFile.name, selectedFile, { upsert: true });
-
-      if (uploadErr) throw new Error(uploadErr.message);
+      await uploadFileWithProgress(BUCKET, selectedFile.name, selectedFile, setUploadProgress);
 
       await refreshCurrentFile();
       setUploadSuccess(true);
@@ -183,6 +227,14 @@ export default function DocPage() {
                   </Button>
                   {uploadSuccess && <span className="text-sm text-emerald-600">已更新</span>}
                 </div>
+                {uploading && (
+                  <div className="flex items-center gap-3">
+                    <Progress value={uploadProgress} className="flex-1" />
+                    <span className="text-muted-foreground w-10 text-right text-xs">
+                      {uploadProgress}%
+                    </span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
