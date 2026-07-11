@@ -59,7 +59,7 @@ export function DescriptionSearch() {
         .limit(RESULT_LIMIT);
 
       for (const term of terms) {
-        query = query.ilike("description", `%${term}%`);
+        query = query.or(`description.ilike.%${term}%,part_no.ilike.%${term}%`);
       }
 
       const { data, error: searchError } = await query;
@@ -87,13 +87,13 @@ export function DescriptionSearch() {
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>描述搜尋</CardTitle>
+        <CardTitle>料號 / 描述搜尋</CardTitle>
       </CardHeader>
       <CardContent>
         <Input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="輸入關鍵字搜尋所有機台的描述,可用空白分隔多個關鍵字(全部都要符合)"
+          placeholder="輸入關鍵字搜尋所有機台的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
         />
 
         <div className="mt-4">
