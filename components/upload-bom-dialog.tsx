@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseExcelBom, parseTxtBom, type ParsedBom } from "@/lib/bom-parse";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,13 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+interface FileEntry {
+  file: File;
+  status: "parsing" | "parsed" | "error" | "uploading" | "uploaded";
+  parsed?: ParsedBom;
+  error?: string;
+}
+
 export function UploadBomDialog({
   existingMachines,
   onUploaded,
@@ -44,12 +51,8 @@ export function UploadBomDialog({
 
   const [open, setOpen] = useState(false);
   const [machineName, setMachineName] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<FileEntry[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
-
-  const [parsing, setParsing] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [parsed, setParsed] = useState<ParsedBom | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -58,104 +61,135 @@ export function UploadBomDialog({
 
   function resetForm() {
     setMachineName("");
-    setSelectedFile(null);
-    setParsed(null);
-    setParseError(null);
+    setFiles([]);
     setSubmitError(null);
   }
 
-  async function handleFile(file: File) {
-    setSelectedFile(file);
-    setParsed(null);
-    setParseError(null);
-    setParsing(true);
-
-    try {
-      const lowerName = file.name.toLowerCase();
-      let result: ParsedBom;
-      if (lowerName.endsWith(".txt")) {
-        result = parseTxtBom(await file.text());
-      } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
-        result = parseExcelBom(await file.arrayBuffer());
-      } else {
-        throw new Error("僅支援 .txt 或 .xlsx/.xls 檔案");
+  async function handleFiles(newFiles: File[]) {
+    setFiles((prev) => {
+      const byName = new Map(prev.map((e) => [e.file.name, e] as const));
+      for (const file of newFiles) {
+        byName.set(file.name, { file, status: "parsing" });
       }
-      setParsed(result);
-    } catch (err) {
-      setParseError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setParsing(false);
+      return Array.from(byName.values());
+    });
+
+    for (const file of newFiles) {
+      try {
+        const lowerName = file.name.toLowerCase();
+        let result: ParsedBom;
+        if (lowerName.endsWith(".txt")) {
+          result = parseTxtBom(await file.text());
+        } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
+          result = parseExcelBom(await file.arrayBuffer());
+        } else {
+          throw new Error("僅支援 .txt 或 .xlsx/.xls 檔案");
+        }
+        setFiles((prev) =>
+          prev.map((e) => (e.file === file ? { ...e, status: "parsed", parsed: result } : e))
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setFiles((prev) =>
+          prev.map((e) => (e.file === file ? { ...e, status: "error", error: message } : e))
+        );
+      }
+    }
+  }
+
+  function removeFile(file: File) {
+    setFiles((prev) => prev.filter((e) => e.file !== file));
+  }
+
+  async function uploadOne(sourceFile: string, parsed: ParsedBom, trimmedMachineName: string) {
+    const supabase = getSupabase();
+
+    const { data: existing, error: findError } = await supabase
+      .from("bom_machines")
+      .select("id")
+      .eq("machine_name", trimmedMachineName)
+      .eq("source_file", sourceFile)
+      .maybeSingle();
+
+    if (findError) throw new Error(findError.message);
+
+    let bomId: number;
+
+    if (existing) {
+      bomId = existing.id;
+      const { error: updateError } = await supabase
+        .from("bom_machines")
+        .update({
+          root_part_no: parsed.rootPartNo,
+          root_description: parsed.rootDescription,
+        })
+        .eq("id", bomId);
+      if (updateError) throw new Error(updateError.message);
+
+      const { error: deleteError } = await supabase.from("bom_items").delete().eq("bom_id", bomId);
+      if (deleteError) throw new Error(deleteError.message);
+    } else {
+      const { data: inserted, error: insertMachineError } = await supabase
+        .from("bom_machines")
+        .insert({
+          machine_name: trimmedMachineName,
+          source_file: sourceFile,
+          root_part_no: parsed.rootPartNo,
+          root_description: parsed.rootDescription,
+        })
+        .select("id")
+        .single();
+      if (insertMachineError) throw new Error(insertMachineError.message);
+      bomId = inserted.id;
+    }
+
+    const rows = parsed.items.map((item) => ({ ...item, bom_id: bomId }));
+    for (const batch of chunk(rows, 500)) {
+      const { error: insertItemsError } = await supabase.from("bom_items").insert(batch);
+      if (insertItemsError) throw new Error(insertItemsError.message);
     }
   }
 
   async function handleSubmit() {
-    if (!selectedFile || !parsed || !machineName.trim()) return;
+    const trimmedMachineName = machineName.trim();
+    const toUpload = files.filter((e) => e.parsed && e.status !== "uploaded");
+    if (!trimmedMachineName || toUpload.length === 0) return;
 
     setSubmitting(true);
     setSubmitError(null);
 
-    try {
-      const supabase = getSupabase();
-      const sourceFile = selectedFile.name;
-      const trimmedMachineName = machineName.trim();
+    let failureCount = 0;
 
-      const { data: existing, error: findError } = await supabase
-        .from("bom_machines")
-        .select("id")
-        .eq("machine_name", trimmedMachineName)
-        .eq("source_file", sourceFile)
-        .maybeSingle();
-
-      if (findError) throw new Error(findError.message);
-
-      let bomId: number;
-
-      if (existing) {
-        bomId = existing.id;
-        const { error: updateError } = await supabase
-          .from("bom_machines")
-          .update({
-            root_part_no: parsed.rootPartNo,
-            root_description: parsed.rootDescription,
-          })
-          .eq("id", bomId);
-        if (updateError) throw new Error(updateError.message);
-
-        const { error: deleteError } = await supabase
-          .from("bom_items")
-          .delete()
-          .eq("bom_id", bomId);
-        if (deleteError) throw new Error(deleteError.message);
-      } else {
-        const { data: inserted, error: insertMachineError } = await supabase
-          .from("bom_machines")
-          .insert({
-            machine_name: trimmedMachineName,
-            source_file: sourceFile,
-            root_part_no: parsed.rootPartNo,
-            root_description: parsed.rootDescription,
-          })
-          .select("id")
-          .single();
-        if (insertMachineError) throw new Error(insertMachineError.message);
-        bomId = inserted.id;
+    for (const entry of toUpload) {
+      setFiles((prev) =>
+        prev.map((e) => (e.file === entry.file ? { ...e, status: "uploading" } : e))
+      );
+      try {
+        await uploadOne(entry.file.name, entry.parsed!, trimmedMachineName);
+        setFiles((prev) =>
+          prev.map((e) => (e.file === entry.file ? { ...e, status: "uploaded" } : e))
+        );
+      } catch (err) {
+        failureCount++;
+        const message = err instanceof Error ? err.message : String(err);
+        setFiles((prev) =>
+          prev.map((e) => (e.file === entry.file ? { ...e, status: "error", error: message } : e))
+        );
       }
+    }
 
-      const rows = parsed.items.map((item) => ({ ...item, bom_id: bomId }));
-      for (const batch of chunk(rows, 500)) {
-        const { error: insertItemsError } = await supabase.from("bom_items").insert(batch);
-        if (insertItemsError) throw new Error(insertItemsError.message);
-      }
+    setSubmitting(false);
+    onUploaded();
 
+    if (failureCount === 0) {
       setOpen(false);
       resetForm();
-      onUploaded();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
+    } else {
+      setSubmitError(`${failureCount} 個檔案上傳失敗,請檢查後重試(成功的部分不會重傳)。`);
     }
   }
+
+  const uploadableCount = files.filter((e) => e.parsed && e.status !== "uploaded").length;
 
   return (
     <Dialog
@@ -172,7 +206,7 @@ export function UploadBomDialog({
         <DialogHeader>
           <DialogTitle>上傳 BOM</DialogTitle>
           <DialogDescription>
-            支援 .txt(樹狀縮排報表)或 .xlsx/.xls 檔案。同機台 + 同檔名會覆蓋舊資料。
+            支援 .txt(樹狀縮排報表)或 .xlsx/.xls 檔案,可一次選取多個檔案。同機台 + 同檔名會覆蓋舊資料。
           </DialogDescription>
         </DialogHeader>
 
@@ -205,8 +239,8 @@ export function UploadBomDialog({
               e.preventDefault();
               setIsDragOver(false);
               if (submitting) return;
-              const file = e.dataTransfer.files?.[0];
-              if (file) handleFile(file);
+              const dropped = Array.from(e.dataTransfer.files ?? []);
+              if (dropped.length > 0) handleFiles(dropped);
             }}
             className={cn(
               "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-4 py-8 text-center transition-colors",
@@ -215,56 +249,80 @@ export function UploadBomDialog({
             )}
           >
             <UploadCloud className="text-muted-foreground h-8 w-8" />
-            {selectedFile ? (
-              <p className="text-sm font-medium">{selectedFile.name}</p>
-            ) : (
-              <>
-                <p className="text-sm font-medium">拖曳檔案到這裡</p>
-                <p className="text-muted-foreground text-xs">或點擊選擇檔案(.txt / .xlsx / .xls)</p>
-              </>
-            )}
+            <p className="text-sm font-medium">拖曳檔案到這裡</p>
+            <p className="text-muted-foreground text-xs">
+              或點擊選擇檔案,可一次選取多個(.txt / .xlsx / .xls)
+            </p>
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               accept=".txt,.xlsx,.xls"
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFile(file);
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length > 0) handleFiles(picked);
+                e.target.value = "";
               }}
               disabled={submitting}
               className="hidden"
             />
           </div>
 
-          {parsing && <p className="text-muted-foreground text-sm">解析中…</p>}
-
-          {parseError && (
-            <p className="text-destructive text-sm">解析失敗:{parseError}</p>
-          )}
-
-          {parsed && (
-            <div className="rounded-md border p-3 text-sm">
-              <p className="font-medium">
-                {parsed.rootPartNo}
-                <span className="text-muted-foreground font-normal"> — {parsed.rootDescription}</span>
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Badge variant="secondary">明細 {parsed.items.length} 項</Badge>
-              </div>
+          {files.length > 0 && (
+            <div className="grid gap-2">
+              {files.map((entry) => (
+                <div key={entry.file.name} className="rounded-md border p-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{entry.file.name}</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {entry.status === "parsing" && (
+                        <span className="text-muted-foreground text-xs">解析中…</span>
+                      )}
+                      {entry.status === "parsed" && (
+                        <Badge variant="secondary">明細 {entry.parsed!.items.length} 項</Badge>
+                      )}
+                      {entry.status === "uploading" && (
+                        <span className="text-muted-foreground text-xs">上傳中…</span>
+                      )}
+                      {entry.status === "uploaded" && (
+                        <span className="text-xs text-emerald-600">已上傳</span>
+                      )}
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={submitting}
+                        onClick={() => removeFile(entry.file)}
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  {entry.status === "parsed" && (
+                    <p className="text-muted-foreground mt-1 truncate text-xs">
+                      {entry.parsed!.rootPartNo} — {entry.parsed!.rootDescription}
+                    </p>
+                  )}
+                  {entry.status === "error" && (
+                    <p className="text-destructive mt-1 text-xs">{entry.error}</p>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
-          {submitError && (
-            <p className="text-destructive text-sm">上傳失敗:{submitError}</p>
-          )}
+          {submitError && <p className="text-destructive text-sm">{submitError}</p>}
         </div>
 
         <DialogFooter>
           <Button
             onClick={handleSubmit}
-            disabled={!parsed || !machineName.trim() || submitting || parsing}
+            disabled={!machineName.trim() || uploadableCount === 0 || submitting}
           >
-            {submitting ? "上傳中…" : "確認上傳"}
+            {submitting
+              ? "上傳中…"
+              : uploadableCount > 1
+                ? `確認上傳(${uploadableCount} 個檔案)`
+                : "確認上傳"}
           </Button>
         </DialogFooter>
       </DialogContent>
