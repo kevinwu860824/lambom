@@ -34,6 +34,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
+import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import type { AggregatedItem } from "@/lib/bom";
 
 interface BomSummary {
@@ -252,10 +253,13 @@ export default function Home() {
               從多份機台 BOM 中選擇兩份進行差異比對。
             </p>
           </div>
-          <UploadBomDialog
-            existingMachines={machineGroups.map((g) => g.machine)}
-            onUploaded={handleUploaded}
-          />
+          <div className="flex items-start gap-2">
+            <EditMachinesDialog machineGroups={machineGroups} onChanged={handleUploaded} />
+            <UploadBomDialog
+              existingMachines={machineGroups.map((g) => g.machine)}
+              onUploaded={handleUploaded}
+            />
+          </div>
         </div>
 
         {initError && (
