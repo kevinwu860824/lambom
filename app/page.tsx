@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
+import { DescriptionSearch } from "@/components/description-search";
 import type { AggregatedItem } from "@/lib/bom";
 
 interface BomSummary {
@@ -267,6 +268,8 @@ export default function Home() {
             <CardContent className="text-destructive text-sm">{initError}</CardContent>
           </Card>
         )}
+
+        <DescriptionSearch />
 
         <Card className="mb-6">
           <CardHeader>
