@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { UploadCloud } from "lucide-react";
 
 const BUCKET = "doc";
 
@@ -84,6 +86,7 @@ export default function DocPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function refreshCurrentFile() {
@@ -213,14 +216,44 @@ export default function DocPage() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-                  disabled={initLoading || uploading}
-                  className="text-sm"
-                />
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (!initLoading && !uploading) setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(false);
+                    if (initLoading || uploading) return;
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) setSelectedFile(file);
+                  }}
+                  className={cn(
+                    "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-4 py-10 text-center transition-colors",
+                    isDragOver ? "border-primary bg-primary/10" : "border-border",
+                    (initLoading || uploading) && "pointer-events-none opacity-50"
+                  )}
+                >
+                  <UploadCloud className="text-muted-foreground h-8 w-8" />
+                  {selectedFile ? (
+                    <p className="text-sm font-medium">{selectedFile.name}</p>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium">拖曳檔案到這裡</p>
+                      <p className="text-muted-foreground text-xs">或點擊選擇檔案</p>
+                    </>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                    disabled={initLoading || uploading}
+                    className="hidden"
+                  />
+                </div>
                 <div className="flex items-center gap-3">
                   <Button onClick={handleReplace} disabled={!selectedFile || uploading}>
                     {uploading ? "上傳中…" : "取代"}
