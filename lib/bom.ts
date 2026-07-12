@@ -46,6 +46,13 @@ export interface CompareResult {
   common: CommonItem[];
 }
 
+export interface BomSummary {
+  machine: string;
+  source_file: string;
+  itemCount: number;
+  uniqueCount: number;
+}
+
 export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
   machineGroups: MachineGroup[];
   bomData: BomEntry[];

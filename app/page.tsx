@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Star, ChevronDown } from "lucide-react";
+import { Star, ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -43,14 +43,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
-import type { AggregatedItem } from "@/lib/bom";
-
-interface BomSummary {
-  machine: string;
-  source_file: string;
-  itemCount: number;
-  uniqueCount: number;
-}
+import { exportCompareToExcel } from "@/lib/export-excel";
+import type { AggregatedItem, BomSummary } from "@/lib/bom";
 
 export default function Home() {
   // Created lazily on first use inside an effect/handler rather than during
@@ -240,6 +234,13 @@ export default function Home() {
   }
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
+  const filteredOnlyA = result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
+  const filteredOnlyB = result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
+
+  function handleExportClick() {
+    if (!summaryA || !summaryB || !result) return;
+    exportCompareToExcel(summaryA, summaryB, result, filteredOnlyA, filteredOnlyB);
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -362,24 +363,22 @@ export default function Home() {
         </Card>
 
         {result && (
-          <div className="mb-4">
+          <div className="mb-4 flex gap-2">
             <Input
               value={resultFilter}
               onChange={(e) => setResultFilter(e.target.value)}
               placeholder="搜尋僅存在於 A/B 的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
             />
+            <Button variant="outline" onClick={handleExportClick} className="shrink-0">
+              <Download className="h-4 w-4" />
+              下載 Excel
+            </Button>
           </div>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
-          <PartTable
-            title="僅存在於 A"
-            items={result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter))}
-          />
-          <PartTable
-            title="僅存在於 B"
-            items={result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter))}
-          />
+          <PartTable title="僅存在於 A" items={filteredOnlyA} />
+          <PartTable title="僅存在於 B" items={filteredOnlyB} />
         </div>
       </div>
     </div>
