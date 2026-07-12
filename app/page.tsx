@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Star } from "lucide-react";
+import { Star, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -39,6 +39,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
@@ -432,24 +433,47 @@ function MachineSelectGroup({
       </div>
       <div className="grid gap-1.5">
         <label className="text-sm font-medium">子項 {label}</label>
-        <div className="rounded-md border p-2">
-          <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
-            <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
-            全部子項
-          </label>
-          <div className="mt-1.5 grid max-h-40 gap-1 overflow-y-auto">
-            {subparts.map((entry) => (
-              <label key={entry.source_file} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={selectedSubparts.has(entry.source_file)}
-                  onCheckedChange={() => onToggleSubpart(entry.source_file)}
-                  disabled={disabled}
-                />
-                {entry.source_file}
-              </label>
-            ))}
-          </div>
-        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              disabled={disabled}
+              className="h-9 w-full justify-between font-normal"
+            >
+              <span className="truncate">
+                {subparts.length === 0
+                  ? "尚無子項"
+                  : selectedSubparts.size === 0
+                    ? "未選擇子項"
+                    : selectedSubparts.size === subparts.length
+                      ? "全部子項"
+                      : `已選 ${selectedSubparts.size}/${subparts.length} 個子項`}
+              </span>
+              <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
+            <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
+              <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
+              全部子項
+            </label>
+            <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
+              {subparts.map((entry) => (
+                <label
+                  key={entry.source_file}
+                  className="hover:bg-accent flex items-center gap-2 rounded px-1 py-1 text-sm"
+                >
+                  <Checkbox
+                    checked={selectedSubparts.has(entry.source_file)}
+                    onCheckedChange={() => onToggleSubpart(entry.source_file)}
+                    disabled={disabled}
+                  />
+                  {entry.source_file}
+                </label>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
     </div>
   );
