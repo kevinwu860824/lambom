@@ -78,9 +78,12 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
     grouped.get(entry.machine)!.push(entry);
   });
 
-  const machineGroups: MachineGroup[] = Array.from(grouped.entries()).map(
-    ([machine, subparts]) => ({ machine, subparts })
-  );
+  const machineGroups: MachineGroup[] = Array.from(grouped.entries())
+    .map(([machine, subparts]) => ({
+      machine,
+      subparts: subparts.sort((a, b) => a.source_file.localeCompare(b.source_file)),
+    }))
+    .sort((a, b) => a.machine.localeCompare(b.machine));
 
   return { machineGroups, bomData };
 }
