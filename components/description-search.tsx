@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Star, Check } from "lucide-react";
+import { Star, Check, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { fetchMachineGroups, type MachineGroup } from "@/lib/bom";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -51,7 +55,48 @@ export function DescriptionSearch() {
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function runSearch(term: string) {
+  const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedBomIds, setSelectedBomIds] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    fetchMachineGroups(getSupabase())
+      .then(({ machineGroups: groups }) => setMachineGroups(groups))
+      .catch(() => {
+        // Filter panel just won't have options; the search itself still works unfiltered.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function machineCheckState(group: MachineGroup): boolean | "indeterminate" {
+    const checkedCount = group.subparts.filter((s) => selectedBomIds.has(s.bomId)).length;
+    if (checkedCount === 0) return false;
+    if (checkedCount === group.subparts.length) return true;
+    return "indeterminate";
+  }
+
+  function toggleMachine(group: MachineGroup) {
+    const fullyChecked = machineCheckState(group) === true;
+    setSelectedBomIds((prev) => {
+      const next = new Set(prev);
+      group.subparts.forEach((s) => {
+        if (fullyChecked) next.delete(s.bomId);
+        else next.add(s.bomId);
+      });
+      return next;
+    });
+  }
+
+  function toggleSubpart(bomId: number) {
+    setSelectedBomIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(bomId)) next.delete(bomId);
+      else next.add(bomId);
+      return next;
+    });
+  }
+
+  async function runSearch(term: string, bomIds: Set<number>) {
     const trimmed = term.trim();
     if (!trimmed) {
       setResults(null);
@@ -69,6 +114,10 @@ export function DescriptionSearch() {
         .from("bom_items")
         .select("id,part_no,description,qty,uom,bom_machines(machine_name,source_file)")
         .limit(RESULT_LIMIT);
+
+      if (bomIds.size > 0) {
+        query = query.in("bom_id", Array.from(bomIds));
+      }
 
       for (const term of terms) {
         query = query.or(`description.ilike.%${term}%,part_no.ilike.%${term}%`);
@@ -88,13 +137,13 @@ export function DescriptionSearch() {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      runSearch(keyword);
+      runSearch(keyword, selectedBomIds);
     }, 400);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyword]);
+  }, [keyword, selectedBomIds]);
 
   return (
     <Card className="mb-6">
@@ -107,6 +156,63 @@ export function DescriptionSearch() {
           onChange={(e) => setKeyword(e.target.value)}
           placeholder="輸入關鍵字搜尋所有機台的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
         />
+
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setFilterOpen((v) => !v)}
+            className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
+          >
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 transition-transform", filterOpen && "rotate-180")}
+            />
+            篩選機台 / 子項
+            {selectedBomIds.size > 0 && (
+              <Badge variant="secondary" className="ml-1">
+                {selectedBomIds.size}
+              </Badge>
+            )}
+          </button>
+
+          {filterOpen && (
+            <div className="mt-2 max-h-[240px] overflow-y-auto rounded-md border p-3">
+              {selectedBomIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedBomIds(new Set())}
+                  className="text-muted-foreground mb-2 block text-xs underline"
+                >
+                  清除篩選
+                </button>
+              )}
+              {machineGroups.map((group) => {
+                const state = machineCheckState(group);
+                return (
+                  <div key={group.machine} className="mb-2">
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                      <Checkbox
+                        checked={state}
+                        onCheckedChange={() => toggleMachine(group)}
+                      />
+                      {group.machine}
+                    </label>
+                    <div className="mt-1 grid gap-1 pl-6">
+                      {group.subparts.map((s) => (
+                        <label key={s.bomId} className="flex items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={selectedBomIds.has(s.bomId)}
+                            onCheckedChange={() => toggleSubpart(s.bomId)}
+                          />
+                          {s.source_file}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         <div className="mt-4">
           {loading && <p className="text-muted-foreground text-sm">搜尋中…</p>}
