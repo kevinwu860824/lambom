@@ -39,6 +39,7 @@ interface KeyPart {
   description: string | null;
   custom_name: string;
   machine_name: string | null;
+  source_file: string | null;
 }
 
 const ALL_MACHINES = "__all__";
@@ -86,7 +87,7 @@ export default function KeyPartsPage() {
     try {
       const { data, error } = await getSupabase()
         .from("key_parts")
-        .select("id,part_no,description,custom_name,machine_name")
+        .select("id,part_no,description,custom_name,machine_name,source_file")
         .order("id", { ascending: true });
       if (error) throw new Error(error.message);
       setKeyParts(data ?? []);
@@ -291,6 +292,7 @@ export default function KeyPartsPage() {
                     </TableHead>
                     <TableHead>自訂名稱</TableHead>
                     <TableHead>來源機台</TableHead>
+                    <TableHead>子項</TableHead>
                     <TableHead>料號</TableHead>
                     <TableHead>描述</TableHead>
                     <TableHead className="w-10" />
@@ -312,6 +314,7 @@ export default function KeyPartsPage() {
                         />
                       </TableCell>
                       <TableCell>{part.machine_name ?? "-"}</TableCell>
+                      <TableCell>{part.source_file ?? "-"}</TableCell>
                       <TableCell>{part.part_no}</TableCell>
                       <TableCell>{part.description}</TableCell>
                       <TableCell>

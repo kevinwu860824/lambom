@@ -147,6 +147,7 @@ export function DescriptionSearch() {
                             partNo={row.part_no}
                             description={row.description}
                             machineName={row.bom_machines?.machine_name ?? null}
+                            sourceFile={row.bom_machines?.source_file ?? null}
                           />
                         </TableCell>
                       </TableRow>
@@ -166,10 +167,12 @@ function AddKeyPartButton({
   partNo,
   description,
   machineName,
+  sourceFile,
 }: {
   partNo: string;
   description: string | null;
   machineName: string | null;
+  sourceFile: string | null;
 }) {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
@@ -195,7 +198,13 @@ function AddKeyPartButton({
     try {
       const { error: insertError } = await getSupabase()
         .from("key_parts")
-        .insert({ part_no: partNo, description, custom_name: trimmed, machine_name: machineName });
+        .insert({
+          part_no: partNo,
+          description,
+          custom_name: trimmed,
+          machine_name: machineName,
+          source_file: sourceFile,
+        });
       if (insertError) throw new Error(insertError.message);
 
       setSaved(true);
