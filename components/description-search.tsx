@@ -62,7 +62,13 @@ export function DescriptionSearch() {
 
   useEffect(() => {
     fetchMachineGroups(getSupabase())
-      .then(({ machineGroups: groups }) => setMachineGroups(groups))
+      .then(({ machineGroups: groups }) => {
+        setMachineGroups(groups);
+        // Default to everything included, so the panel reads as "opt-out"
+        // rather than starting empty and looking like nothing will match.
+        setCheckedMachines(new Set(groups.map((g) => g.machine)));
+        setSelectedBomIds(new Set(groups.flatMap((g) => g.subparts.map((s) => s.bomId))));
+      })
       .catch(() => {
         // Filter panel just won't have options; the search itself still works unfiltered.
       });
@@ -127,9 +133,12 @@ export function DescriptionSearch() {
   }
 
   function clearFilter() {
-    setCheckedMachines(new Set());
-    setSelectedBomIds(new Set());
+    setCheckedMachines(new Set(machineGroups.map((g) => g.machine)));
+    setSelectedBomIds(new Set(machineGroups.flatMap((g) => g.subparts.map((s) => s.bomId))));
   }
+
+  const totalBomCount = machineGroups.reduce((sum, g) => sum + g.subparts.length, 0);
+  const isFiltering = selectedBomIds.size > 0 && selectedBomIds.size < totalBomCount;
 
   async function runSearch(term: string, bomIds: Set<number>) {
     const trimmed = term.trim();
@@ -202,7 +211,7 @@ export function DescriptionSearch() {
               className={cn("h-3.5 w-3.5 transition-transform", filterOpen && "rotate-180")}
             />
             篩選機台 / 子項
-            {selectedBomIds.size > 0 && (
+            {isFiltering && (
               <Badge variant="secondary" className="ml-1">
                 {selectedBomIds.size}
               </Badge>
@@ -211,7 +220,7 @@ export function DescriptionSearch() {
 
           {filterOpen && (
             <div className="mt-2 rounded-md border p-3">
-              {selectedBomIds.size > 0 && (
+              {isFiltering && (
                 <button
                   type="button"
                   onClick={clearFilter}
