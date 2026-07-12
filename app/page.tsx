@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Star } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -194,6 +196,12 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-start gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/keyparts">
+                <Star className="h-4 w-4" />
+                重要零件
+              </Link>
+            </Button>
             <EditMachinesDialog machineGroups={machineGroups} onChanged={handleUploaded} />
             <UploadBomDialog
               existingMachines={machineGroups.map((g) => g.machine)}

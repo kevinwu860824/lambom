@@ -37,7 +37,10 @@ interface KeyPart {
   part_no: string;
   description: string | null;
   custom_name: string;
+  machine_name: string | null;
 }
+
+const ALL_MACHINES = "__all__";
 
 interface CheckResult {
   keyPart: KeyPart;
@@ -62,6 +65,7 @@ export default function KeyPartsPage() {
   const [keyPartsLoading, setKeyPartsLoading] = useState(true);
   const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [machineFilter, setMachineFilter] = useState(ALL_MACHINES);
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machineLoading, setMachineLoading] = useState(true);
@@ -81,7 +85,7 @@ export default function KeyPartsPage() {
     try {
       const { data, error } = await getSupabase()
         .from("key_parts")
-        .select("id,part_no,description,custom_name")
+        .select("id,part_no,description,custom_name,machine_name")
         .order("id", { ascending: true });
       if (error) throw new Error(error.message);
       setKeyParts(data ?? []);
@@ -161,8 +165,19 @@ export default function KeyPartsPage() {
     });
   }
 
+  const machineOptions = Array.from(
+    new Set(keyParts.map((p) => p.machine_name).filter((m): m is string => Boolean(m)))
+  ).sort();
+
+  const filteredKeyParts =
+    machineFilter === ALL_MACHINES
+      ? keyParts
+      : keyParts.filter((p) => p.machine_name === machineFilter);
+
   function toggleSelectAll() {
-    setSelectedIds((prev) => (prev.size === keyParts.length ? new Set() : new Set(keyParts.map((p) => p.id))));
+    setSelectedIds((prev) =>
+      prev.size === filteredKeyParts.length ? new Set() : new Set(filteredKeyParts.map((p) => p.id))
+    );
   }
 
   async function handleCompare() {
@@ -225,30 +240,55 @@ export default function KeyPartsPage() {
           </CardHeader>
           <CardContent>
             {keyPartsError && <p className="text-destructive mb-3 text-sm">{keyPartsError}</p>}
+
+            {!keyPartsLoading && keyParts.length > 0 && (
+              <div className="mb-4 grid max-w-xs gap-1.5">
+                <label className="text-sm font-medium">機台篩選</label>
+                <Select value={machineFilter} onValueChange={setMachineFilter}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="選擇機台" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_MACHINES}>全部機台</SelectItem>
+                    {machineOptions.map((machine) => (
+                      <SelectItem key={machine} value={machine}>
+                        {machine}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {keyPartsLoading ? (
               <p className="text-muted-foreground text-sm">載入中…</p>
             ) : keyParts.length === 0 ? (
               <p className="text-muted-foreground text-sm italic">
                 還沒有重要零件,先到首頁的「料號/描述搜尋」結果列加入。
               </p>
+            ) : filteredKeyParts.length === 0 ? (
+              <p className="text-muted-foreground text-sm italic">這台機台沒有標記過的重要零件。</p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10">
                       <Checkbox
-                        checked={keyParts.length > 0 && selectedIds.size === keyParts.length}
+                        checked={
+                          filteredKeyParts.length > 0 && selectedIds.size === filteredKeyParts.length
+                        }
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
                     <TableHead>自訂名稱</TableHead>
+                    <TableHead>來源機台</TableHead>
                     <TableHead>料號</TableHead>
                     <TableHead>描述</TableHead>
                     <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {keyParts.map((part) => (
+                  {filteredKeyParts.map((part) => (
                     <TableRow key={part.id}>
                       <TableCell>
                         <Checkbox
@@ -262,6 +302,7 @@ export default function KeyPartsPage() {
                           onSave={(newValue) => renameKeyPart(part.id, newValue)}
                         />
                       </TableCell>
+                      <TableCell>{part.machine_name ?? "-"}</TableCell>
                       <TableCell>{part.part_no}</TableCell>
                       <TableCell>{part.description}</TableCell>
                       <TableCell>
