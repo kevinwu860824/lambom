@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -227,11 +228,19 @@ export default function KeyPartsPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-[1600px] px-4 py-8 md:px-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">重要零件追蹤</h1>
-          <p className="mt-1 text-sm text-white/70">
-            標記關鍵零件,之後只要挑選要檢查的項目,就能知道新機台裡是不是還用同一顆料號、或是被改了料號。
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">重要零件追蹤</h1>
+            <p className="mt-1 text-sm text-white/70">
+              標記關鍵零件,之後只要挑選要檢查的項目,就能知道新機台裡是不是還用同一顆料號、或是被改了料號。
+            </p>
+          </div>
+          <Button variant="outline" asChild>
+            <Link href="/">
+              <ArrowLeft className="h-4 w-4" />
+              回首頁
+            </Link>
+          </Button>
         </div>
 
         <Card className="mb-6">
