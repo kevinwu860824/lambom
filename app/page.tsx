@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
   compareBoms,
+  fetchAllBomItems,
+  fetchMachineGroups,
   type BomEntry,
   type CompareResult,
   type MachineGroup,
@@ -85,40 +87,11 @@ export default function Home() {
     );
   }
 
-  async function fetchAllBomItems(bomId: number, sourceFile: string) {
-    const pageSize = 1000;
-    const items: BomEntry["items"] = [];
-    let from = 0;
-
-    // The Supabase project caps rows-per-request server-side (db-max-rows),
-    // so a single request with a high .limit() is silently truncated.
-    // Page through with .range() until a page comes back short.
-    for (;;) {
-      const { data, error } = await getSupabase()
-        .from("bom_items")
-        .select("part_no,description,qty,uom")
-        .eq("bom_id", bomId)
-        .order("id", { ascending: true })
-        .range(from, from + pageSize - 1);
-
-      if (error) {
-        throw new Error(`載入子項失敗 (${sourceFile}):${error.message}`);
-      }
-
-      if (!data || data.length === 0) break;
-      items.push(...data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-
-    return items;
-  }
-
   async function ensureBomItemsLoaded(bom: BomEntry | null) {
     if (!bom) return null;
     if (bom.itemsLoaded) return bom;
 
-    bom.items = await fetchAllBomItems(bom.bomId, bom.source_file);
+    bom.items = await fetchAllBomItems(getSupabase(), bom.bomId, bom.source_file);
     bom.itemsLoaded = true;
     return bom;
   }
@@ -159,42 +132,8 @@ export default function Home() {
   }
 
   async function loadData() {
-    const { data: machines, error } = await getSupabase()
-      .from("bom_machines")
-      .select("id,machine_name,source_file");
-
-    if (error) {
-      setInitError(`載入 Supabase 失敗:${error.message}`);
-      setInitLoading(false);
-      return;
-    }
-
-    if (!machines || machines.length === 0) {
-      setInitError("Supabase returned no BOM records.");
-      setInitLoading(false);
-      return;
-    }
-
-    const bomData: BomEntry[] = machines.map((machine) => ({
-      bomId: machine.id,
-      source_file: machine.source_file,
-      machine: machine.machine_name,
-      items: [],
-      itemsLoaded: false,
-    }));
+    const { machineGroups: groups, bomData } = await fetchMachineGroups(getSupabase());
     bomDataRef.current = bomData;
-
-    const grouped = new Map<string, BomEntry[]>();
-    bomData.forEach((entry) => {
-      if (!grouped.has(entry.machine)) {
-        grouped.set(entry.machine, []);
-      }
-      grouped.get(entry.machine)!.push(entry);
-    });
-
-    const groups: MachineGroup[] = Array.from(grouped.entries()).map(
-      ([machine, subparts]) => ({ machine, subparts })
-    );
     setMachineGroups(groups);
 
     const groupA = groups[0] ?? null;

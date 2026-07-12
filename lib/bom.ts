@@ -1,3 +1,7 @@
+import type { createClient } from "@/lib/supabase";
+
+type SupabaseClient = ReturnType<typeof createClient>;
+
 export interface BomItem {
   part_no: string;
   description: string | null;
@@ -40,6 +44,78 @@ export interface CompareResult {
   onlyA: AggregatedItem[];
   onlyB: AggregatedItem[];
   common: CommonItem[];
+}
+
+export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
+  machineGroups: MachineGroup[];
+  bomData: BomEntry[];
+}> {
+  const { data: machines, error } = await supabase
+    .from("bom_machines")
+    .select("id,machine_name,source_file");
+
+  if (error) {
+    throw new Error(`載入 Supabase 失敗:${error.message}`);
+  }
+
+  if (!machines || machines.length === 0) {
+    throw new Error("Supabase returned no BOM records.");
+  }
+
+  const bomData: BomEntry[] = machines.map((machine) => ({
+    bomId: machine.id,
+    source_file: machine.source_file,
+    machine: machine.machine_name,
+    items: [],
+    itemsLoaded: false,
+  }));
+
+  const grouped = new Map<string, BomEntry[]>();
+  bomData.forEach((entry) => {
+    if (!grouped.has(entry.machine)) {
+      grouped.set(entry.machine, []);
+    }
+    grouped.get(entry.machine)!.push(entry);
+  });
+
+  const machineGroups: MachineGroup[] = Array.from(grouped.entries()).map(
+    ([machine, subparts]) => ({ machine, subparts })
+  );
+
+  return { machineGroups, bomData };
+}
+
+export async function fetchAllBomItems(
+  supabase: SupabaseClient,
+  bomId: number,
+  sourceFile: string
+): Promise<BomItem[]> {
+  const pageSize = 1000;
+  const items: BomItem[] = [];
+  let from = 0;
+
+  // The Supabase project caps rows-per-request server-side (db-max-rows),
+  // so a single request with a high .limit() is silently truncated.
+  // Page through with .range() until a page comes back short.
+  for (;;) {
+    const { data, error } = await supabase
+      .from("bom_items")
+      .select("part_no,description,qty,uom")
+      .eq("bom_id", bomId)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      throw new Error(`載入子項失敗 (${sourceFile}):${error.message}`);
+    }
+
+    if (!data || data.length === 0) break;
+    items.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return items;
 }
 
 export function toNumericQty(value: BomItem["qty"]): number {

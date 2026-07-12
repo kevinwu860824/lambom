@@ -1,9 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Star, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -118,6 +130,7 @@ export function DescriptionSearch() {
                       <TableHead>描述</TableHead>
                       <TableHead>Qty</TableHead>
                       <TableHead>Unit</TableHead>
+                      <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -129,6 +142,9 @@ export function DescriptionSearch() {
                         <TableCell>{row.description}</TableCell>
                         <TableCell>{row.qty ?? "-"}</TableCell>
                         <TableCell>{row.uom ?? ""}</TableCell>
+                        <TableCell>
+                          <AddKeyPartButton partNo={row.part_no} description={row.description} />
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -139,5 +155,100 @@ export function DescriptionSearch() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function AddKeyPartButton({
+  partNo,
+  description,
+}: {
+  partNo: string;
+  description: string | null;
+}) {
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  function getSupabase() {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient();
+    }
+    return supabaseRef.current;
+  }
+
+  const [open, setOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function handleSave() {
+    const trimmed = customName.trim();
+    if (!trimmed) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const { error: insertError } = await getSupabase()
+        .from("key_parts")
+        .insert({ part_no: partNo, description, custom_name: trimmed });
+      if (insertError) throw new Error(insertError.message);
+
+      setSaved(true);
+      setOpen(false);
+      setCustomName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setError(null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="icon-sm" variant="ghost" aria-label="加入重要零件">
+          {saved ? (
+            <Check className="h-4 w-4 text-emerald-600" />
+          ) : (
+            <Star className="text-muted-foreground h-4 w-4" />
+          )}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>加入重要零件</DialogTitle>
+          <DialogDescription>幫這個零件取一個好記的自訂名稱。</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          <div className="rounded-md border p-2 text-sm">
+            <p className="font-medium">{partNo}</p>
+            <p className="text-muted-foreground">{description}</p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`custom-name-${partNo}`}>自訂名稱</Label>
+            <Input
+              id={`custom-name-${partNo}`}
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="例如:主電源開關"
+              disabled={saving}
+            />
+          </div>
+          {error && <p className="text-destructive text-sm">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button onClick={handleSave} disabled={!customName.trim() || saving}>
+            {saving ? "儲存中…" : "儲存"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
