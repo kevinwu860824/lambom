@@ -57,6 +57,7 @@ export function DescriptionSearch() {
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [checkedMachines, setCheckedMachines] = useState<Set<string>>(new Set());
   const [selectedBomIds, setSelectedBomIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
@@ -68,15 +69,44 @@ export function DescriptionSearch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function machineCheckState(group: MachineGroup): boolean | "indeterminate" {
+  function machineSubpartState(group: MachineGroup): boolean | "indeterminate" {
     const checkedCount = group.subparts.filter((s) => selectedBomIds.has(s.bomId)).length;
     if (checkedCount === 0) return false;
     if (checkedCount === group.subparts.length) return true;
     return "indeterminate";
   }
 
-  function toggleMachine(group: MachineGroup) {
-    const fullyChecked = machineCheckState(group) === true;
+  function toggleAllMachines() {
+    const allChecked = checkedMachines.size === machineGroups.length;
+    if (allChecked) {
+      setCheckedMachines(new Set());
+      setSelectedBomIds(new Set());
+    } else {
+      setCheckedMachines(new Set(machineGroups.map((g) => g.machine)));
+      setSelectedBomIds(new Set(machineGroups.flatMap((g) => g.subparts.map((s) => s.bomId))));
+    }
+  }
+
+  function toggleMachineChecked(group: MachineGroup) {
+    const isChecked = checkedMachines.has(group.machine);
+    setCheckedMachines((prev) => {
+      const next = new Set(prev);
+      if (isChecked) next.delete(group.machine);
+      else next.add(group.machine);
+      return next;
+    });
+    setSelectedBomIds((prev) => {
+      const next = new Set(prev);
+      group.subparts.forEach((s) => {
+        if (isChecked) next.delete(s.bomId);
+        else next.add(s.bomId);
+      });
+      return next;
+    });
+  }
+
+  function toggleAllSubpartsForMachine(group: MachineGroup) {
+    const fullyChecked = machineSubpartState(group) === true;
     setSelectedBomIds((prev) => {
       const next = new Set(prev);
       group.subparts.forEach((s) => {
@@ -94,6 +124,11 @@ export function DescriptionSearch() {
       else next.add(bomId);
       return next;
     });
+  }
+
+  function clearFilter() {
+    setCheckedMachines(new Set());
+    setSelectedBomIds(new Set());
   }
 
   async function runSearch(term: string, bomIds: Set<number>) {
@@ -175,41 +210,75 @@ export function DescriptionSearch() {
           </button>
 
           {filterOpen && (
-            <div className="mt-2 max-h-[240px] overflow-y-auto rounded-md border p-3">
+            <div className="mt-2 rounded-md border p-3">
               {selectedBomIds.size > 0 && (
                 <button
                   type="button"
-                  onClick={() => setSelectedBomIds(new Set())}
+                  onClick={clearFilter}
                   className="text-muted-foreground mb-2 block text-xs underline"
                 >
                   清除篩選
                 </button>
               )}
-              {machineGroups.map((group) => {
-                const state = machineCheckState(group);
-                return (
-                  <div key={group.machine} className="mb-2">
-                    <label className="flex items-center gap-2 text-sm font-medium">
-                      <Checkbox
-                        checked={state}
-                        onCheckedChange={() => toggleMachine(group)}
-                      />
-                      {group.machine}
-                    </label>
-                    <div className="mt-1 grid gap-1 pl-6">
-                      {group.subparts.map((s) => (
-                        <label key={s.bomId} className="flex items-center gap-2 text-xs">
-                          <Checkbox
-                            checked={selectedBomIds.has(s.bomId)}
-                            onCheckedChange={() => toggleSubpart(s.bomId)}
-                          />
-                          {s.source_file}
-                        </label>
+
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  checked={
+                    checkedMachines.size === 0
+                      ? false
+                      : checkedMachines.size === machineGroups.length
+                        ? true
+                        : "indeterminate"
+                  }
+                  onCheckedChange={toggleAllMachines}
+                />
+                全部機台
+              </label>
+              <div className="mt-1 max-h-[160px] overflow-y-auto grid gap-1 pl-6">
+                {machineGroups.map((group) => (
+                  <label key={group.machine} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={checkedMachines.has(group.machine)}
+                      onCheckedChange={() => toggleMachineChecked(group)}
+                    />
+                    {group.machine}
+                  </label>
+                ))}
+              </div>
+
+              {checkedMachines.size > 0 && (
+                <div className="mt-3 grid gap-3 border-t pt-3">
+                  <p className="text-muted-foreground text-xs font-medium">
+                    子項(預設全部,可個別取消)
+                  </p>
+                  <div className="max-h-[240px] overflow-y-auto grid gap-2">
+                    {machineGroups
+                      .filter((group) => checkedMachines.has(group.machine))
+                      .map((group) => (
+                        <div key={group.machine}>
+                          <label className="flex items-center gap-2 text-sm font-medium">
+                            <Checkbox
+                              checked={machineSubpartState(group)}
+                              onCheckedChange={() => toggleAllSubpartsForMachine(group)}
+                            />
+                            {group.machine}(全部)
+                          </label>
+                          <div className="mt-1 grid gap-1 pl-6">
+                            {group.subparts.map((s) => (
+                              <label key={s.bomId} className="flex items-center gap-2 text-xs">
+                                <Checkbox
+                                  checked={selectedBomIds.has(s.bomId)}
+                                  onCheckedChange={() => toggleSubpart(s.bomId)}
+                                />
+                                {s.source_file}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
                       ))}
-                    </div>
                   </div>
-                );
-              })}
+                </div>
+              )}
             </div>
           )}
         </div>
