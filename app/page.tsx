@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
@@ -76,6 +77,14 @@ export default function Home() {
   const [result, setResult] = useState<CompareResult | null>(null);
   const [summaryA, setSummaryA] = useState<BomSummary | null>(null);
   const [summaryB, setSummaryB] = useState<BomSummary | null>(null);
+  const [resultFilter, setResultFilter] = useState("");
+
+  function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
+    const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return true;
+    const haystack = `${item.part_no} ${item.description ?? ""}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  }
 
   function subpartsFor(machine: string): BomEntry[] {
     return machineGroups.find((g) => g.machine === machine)?.subparts ?? [];
@@ -295,9 +304,25 @@ export default function Home() {
           </CardContent>
         </Card>
 
+        {result && (
+          <div className="mb-4">
+            <Input
+              value={resultFilter}
+              onChange={(e) => setResultFilter(e.target.value)}
+              placeholder="搜尋僅存在於 A/B 的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
+            />
+          </div>
+        )}
+
         <div className="grid gap-4 md:grid-cols-2">
-          <PartTable title="僅存在於 A" items={result?.onlyA} />
-          <PartTable title="僅存在於 B" items={result?.onlyB} />
+          <PartTable
+            title="僅存在於 A"
+            items={result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter))}
+          />
+          <PartTable
+            title="僅存在於 B"
+            items={result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter))}
+          />
         </div>
       </div>
     </div>
