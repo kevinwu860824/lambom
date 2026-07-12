@@ -38,6 +38,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
@@ -65,9 +66,9 @@ export default function Home() {
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machineA, setMachineA] = useState("");
-  const [subpartA, setSubpartA] = useState("");
+  const [subpartsA, setSubpartsA] = useState<Set<string>>(new Set());
   const [machineB, setMachineB] = useState("");
-  const [subpartB, setSubpartB] = useState("");
+  const [subpartsB, setSubpartsB] = useState<Set<string>>(new Set());
 
   const [initLoading, setInitLoading] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
@@ -90,14 +91,6 @@ export default function Home() {
     return machineGroups.find((g) => g.machine === machine)?.subparts ?? [];
   }
 
-  function getSelectedBom(machine: string, sourceFile: string): BomEntry | null {
-    return (
-      bomDataRef.current.find(
-        (entry) => entry.machine === machine && entry.source_file === sourceFile
-      ) ?? null
-    );
-  }
-
   async function ensureBomItemsLoaded(bom: BomEntry | null) {
     if (!bom) return null;
     if (bom.itemsLoaded) return bom;
@@ -107,14 +100,35 @@ export default function Home() {
     return bom;
   }
 
-  async function runCompare(bomAInput: BomEntry | null, bomBInput: BomEntry | null) {
+  async function combineAndLoad(machine: string, entries: BomEntry[]): Promise<BomEntry | null> {
+    if (entries.length === 0) return null;
+
+    const loaded = await Promise.all(entries.map((e) => ensureBomItemsLoaded(e)));
+    const valid = loaded.filter((e): e is BomEntry => e !== null);
+    if (valid.length === 0) return null;
+
+    return {
+      bomId: -1,
+      source_file: valid.map((e) => e.source_file).join("、"),
+      machine,
+      items: valid.flatMap((e) => e.items),
+      itemsLoaded: true,
+    };
+  }
+
+  async function runCompare(
+    machineAName: string,
+    entriesA: BomEntry[],
+    machineBName: string,
+    entriesB: BomEntry[]
+  ) {
     setCompareLoading(true);
     setCompareError(null);
 
     try {
       const [bomA, bomB] = await Promise.all([
-        ensureBomItemsLoaded(bomAInput),
-        ensureBomItemsLoaded(bomBInput),
+        combineAndLoad(machineAName, entriesA),
+        combineAndLoad(machineBName, entriesB),
       ]);
 
       if (!bomA || !bomB) {
@@ -149,16 +163,18 @@ export default function Home() {
 
     const groupA = groups[0] ?? null;
     const groupB = groups[1] ?? groups[0] ?? null;
-    const defaultBomA = groupA?.subparts[0] ?? null;
-    const defaultBomB = groupB?.subparts[0] ?? null;
+    const machineAName = groupA?.machine ?? "";
+    const machineBName = groupB?.machine ?? "";
+    const entriesA = groupA?.subparts ?? [];
+    const entriesB = groupB?.subparts ?? [];
 
-    setMachineA(groupA?.machine ?? "");
-    setSubpartA(defaultBomA?.source_file ?? "");
-    setMachineB(groupB?.machine ?? "");
-    setSubpartB(defaultBomB?.source_file ?? "");
+    setMachineA(machineAName);
+    setSubpartsA(new Set(entriesA.map((s) => s.source_file)));
+    setMachineB(machineBName);
+    setSubpartsB(new Set(entriesB.map((s) => s.source_file)));
 
     setInitLoading(false);
-    await runCompare(defaultBomA, defaultBomB);
+    await runCompare(machineAName, entriesA, machineBName, entriesB);
   }
 
   useEffect(() => {
@@ -180,16 +196,46 @@ export default function Home() {
 
   function handleMachineAChange(machine: string) {
     setMachineA(machine);
-    setSubpartA(subpartsFor(machine)[0]?.source_file ?? "");
+    setSubpartsA(new Set(subpartsFor(machine).map((s) => s.source_file)));
   }
 
   function handleMachineBChange(machine: string) {
     setMachineB(machine);
-    setSubpartB(subpartsFor(machine)[0]?.source_file ?? "");
+    setSubpartsB(new Set(subpartsFor(machine).map((s) => s.source_file)));
+  }
+
+  function toggleSubpartA(sourceFile: string) {
+    setSubpartsA((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceFile)) next.delete(sourceFile);
+      else next.add(sourceFile);
+      return next;
+    });
+  }
+
+  function toggleSubpartB(sourceFile: string) {
+    setSubpartsB((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceFile)) next.delete(sourceFile);
+      else next.add(sourceFile);
+      return next;
+    });
+  }
+
+  function toggleAllSubpartsA() {
+    const all = subpartsFor(machineA).map((s) => s.source_file);
+    setSubpartsA((prev) => (prev.size === all.length ? new Set() : new Set(all)));
+  }
+
+  function toggleAllSubpartsB() {
+    const all = subpartsFor(machineB).map((s) => s.source_file);
+    setSubpartsB((prev) => (prev.size === all.length ? new Set() : new Set(all)));
   }
 
   function handleCompareClick() {
-    runCompare(getSelectedBom(machineA, subpartA), getSelectedBom(machineB, subpartB));
+    const entriesA = subpartsFor(machineA).filter((e) => subpartsA.has(e.source_file));
+    const entriesB = subpartsFor(machineB).filter((e) => subpartsB.has(e.source_file));
+    runCompare(machineA, entriesA, machineB, entriesB);
   }
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
@@ -232,34 +278,44 @@ export default function Home() {
             <CardTitle>選擇比對對象</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-6 md:grid-cols-[1fr_1fr_auto] md:items-end">
+            <div className="grid gap-6 md:grid-cols-2">
               <MachineSelectGroup
                 label="A"
                 machine={machineA}
-                subpart={subpartA}
+                selectedSubparts={subpartsA}
                 machineGroups={machineGroups}
                 subparts={subpartsFor(machineA)}
                 disabled={initLoading}
                 onMachineChange={handleMachineAChange}
-                onSubpartChange={setSubpartA}
+                onToggleSubpart={toggleSubpartA}
+                onToggleAll={toggleAllSubpartsA}
               />
               <MachineSelectGroup
                 label="B"
                 machine={machineB}
-                subpart={subpartB}
+                selectedSubparts={subpartsB}
                 machineGroups={machineGroups}
                 subparts={subpartsFor(machineB)}
                 disabled={initLoading}
                 onMachineChange={handleMachineBChange}
-                onSubpartChange={setSubpartB}
+                onToggleSubpart={toggleSubpartB}
+                onToggleAll={toggleAllSubpartsB}
               />
-              <Button
-                onClick={handleCompareClick}
-                disabled={initLoading || compareLoading || !machineA || !machineB}
-              >
-                {compareLoading ? "比對中…" : "開始比對"}
-              </Button>
             </div>
+            <Button
+              className="mt-4"
+              onClick={handleCompareClick}
+              disabled={
+                initLoading ||
+                compareLoading ||
+                !machineA ||
+                !machineB ||
+                subpartsA.size === 0 ||
+                subpartsB.size === 0
+              }
+            >
+              {compareLoading ? "比對中…" : "開始比對"}
+            </Button>
           </CardContent>
         </Card>
 
@@ -332,22 +388,31 @@ export default function Home() {
 function MachineSelectGroup({
   label,
   machine,
-  subpart,
+  selectedSubparts,
   machineGroups,
   subparts,
   disabled,
   onMachineChange,
-  onSubpartChange,
+  onToggleSubpart,
+  onToggleAll,
 }: {
   label: string;
   machine: string;
-  subpart: string;
+  selectedSubparts: Set<string>;
   machineGroups: MachineGroup[];
   subparts: BomEntry[];
   disabled: boolean;
   onMachineChange: (value: string) => void;
-  onSubpartChange: (value: string) => void;
+  onToggleSubpart: (sourceFile: string) => void;
+  onToggleAll: () => void;
 }) {
+  const allState: boolean | "indeterminate" =
+    selectedSubparts.size === 0
+      ? false
+      : selectedSubparts.size === subparts.length
+        ? true
+        : "indeterminate";
+
   return (
     <div className="grid gap-3">
       <div className="grid gap-1.5">
@@ -367,18 +432,24 @@ function MachineSelectGroup({
       </div>
       <div className="grid gap-1.5">
         <label className="text-sm font-medium">子項 {label}</label>
-        <Select value={subpart} onValueChange={onSubpartChange} disabled={disabled}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="選擇子項" />
-          </SelectTrigger>
-          <SelectContent>
+        <div className="rounded-md border p-2">
+          <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
+            <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
+            全部子項
+          </label>
+          <div className="mt-1.5 grid max-h-40 gap-1 overflow-y-auto">
             {subparts.map((entry) => (
-              <SelectItem key={entry.source_file} value={entry.source_file}>
+              <label key={entry.source_file} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={selectedSubparts.has(entry.source_file)}
+                  onCheckedChange={() => onToggleSubpart(entry.source_file)}
+                  disabled={disabled}
+                />
                 {entry.source_file}
-              </SelectItem>
+              </label>
             ))}
-          </SelectContent>
-        </Select>
+          </div>
+        </div>
       </div>
     </div>
   );
