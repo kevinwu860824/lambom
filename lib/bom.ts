@@ -53,6 +53,57 @@ export interface BomSummary {
   uniqueCount: number;
 }
 
+export interface KeyPart {
+  id: number;
+  part_no: string;
+  description: string | null;
+  custom_name: string;
+  machine_name: string | null;
+  source_file: string | null;
+}
+
+export type KeyPartStatus = "same" | "renamed" | "missing";
+
+export interface KeyPartCheckResult {
+  keyPart: KeyPart;
+  status: KeyPartStatus;
+  matches: AggregatedItem[];
+}
+
+export function normalizeDescription(desc: string | null): string {
+  return (desc ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function checkKeyParts(
+  keyParts: KeyPart[],
+  targetItems: BomItem[]
+): KeyPartCheckResult[] {
+  const byPartNo = aggregateByPartNo(targetItems);
+
+  const byDescription = new Map<string, AggregatedItem[]>();
+  for (const item of byPartNo.values()) {
+    const key = normalizeDescription(item.description);
+    if (!key) continue;
+    if (!byDescription.has(key)) byDescription.set(key, []);
+    byDescription.get(key)!.push(item);
+  }
+
+  return keyParts.map((keyPart) => {
+    const exact = byPartNo.get(keyPart.part_no);
+    if (exact) {
+      return { keyPart, status: "same" as const, matches: [exact] };
+    }
+
+    const descKey = normalizeDescription(keyPart.description);
+    const candidates = descKey ? (byDescription.get(descKey) ?? []) : [];
+    if (candidates.length > 0) {
+      return { keyPart, status: "renamed" as const, matches: candidates };
+    }
+
+    return { keyPart, status: "missing" as const, matches: [] };
+  });
+}
+
 export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
   machineGroups: MachineGroup[];
   bomData: BomEntry[];

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { Star, ChevronDown, Download } from "lucide-react";
+import { ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -43,6 +42,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
+import { KeyPartsPanel } from "@/components/key-parts-panel";
 import { exportCompareToExcel } from "@/lib/export-excel";
 import type { AggregatedItem, BomSummary } from "@/lib/bom";
 
@@ -253,12 +253,6 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-start gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/keyparts">
-                <Star className="h-4 w-4" />
-                重要零件
-              </Link>
-            </Button>
             <EditMachinesDialog machineGroups={machineGroups} onChanged={handleUploaded} />
             <UploadBomDialog
               existingMachines={machineGroups.map((g) => g.machine)}
@@ -376,10 +370,19 @@ export default function Home() {
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="mb-6 grid gap-4 md:grid-cols-2">
           <PartTable title="僅存在於 A" items={filteredOnlyA} />
           <PartTable title="僅存在於 B" items={filteredOnlyB} />
         </div>
+
+        <KeyPartsPanel
+          machineA={machineA}
+          subpartsA={subpartsA}
+          machineB={machineB}
+          subpartsB={subpartsB}
+          subpartsFor={subpartsFor}
+          combineAndLoad={combineAndLoad}
+        />
       </div>
     </div>
   );
