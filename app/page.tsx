@@ -74,6 +74,7 @@ export default function Home() {
   const [summaryA, setSummaryA] = useState<BomSummary | null>(null);
   const [summaryB, setSummaryB] = useState<BomSummary | null>(null);
   const [resultFilter, setResultFilter] = useState("");
+  const [resultsExpanded, setResultsExpanded] = useState(true);
 
   function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -356,24 +357,45 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        {result && (
-          <div className="mb-4 flex gap-2">
-            <Input
-              value={resultFilter}
-              onChange={(e) => setResultFilter(e.target.value)}
-              placeholder="搜尋僅存在於 A/B 的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
+        <Card className="mb-6">
+          <CardHeader
+            role="button"
+            tabIndex={0}
+            onClick={() => setResultsExpanded((e) => !e)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") setResultsExpanded((v) => !v);
+            }}
+            className="flex cursor-pointer select-none flex-row items-center justify-between"
+          >
+            <CardTitle>僅存在於 A / B</CardTitle>
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${resultsExpanded ? "rotate-180" : ""}`}
             />
-            <Button variant="outline" onClick={handleExportClick} className="shrink-0">
-              <Download className="h-4 w-4" />
-              下載 Excel
-            </Button>
-          </div>
-        )}
+          </CardHeader>
 
-        <div className="mb-6 grid gap-4 md:grid-cols-2">
-          <PartTable title="僅存在於 A" items={filteredOnlyA} />
-          <PartTable title="僅存在於 B" items={filteredOnlyB} />
-        </div>
+          {resultsExpanded && (
+            <CardContent>
+              {result && (
+                <div className="mb-4 flex gap-2">
+                  <Input
+                    value={resultFilter}
+                    onChange={(e) => setResultFilter(e.target.value)}
+                    placeholder="搜尋僅存在於 A/B 的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
+                  />
+                  <Button variant="outline" onClick={handleExportClick} className="shrink-0">
+                    <Download className="h-4 w-4" />
+                    下載 Excel
+                  </Button>
+                </div>
+              )}
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <PartTable title="僅存在於 A" items={filteredOnlyA} />
+                <PartTable title="僅存在於 B" items={filteredOnlyB} />
+              </div>
+            </CardContent>
+          )}
+        </Card>
 
         <KeyPartsPanel
           machineA={machineA}
