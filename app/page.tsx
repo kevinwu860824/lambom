@@ -81,6 +81,8 @@ export default function Home() {
   const [resultsExpanded, setResultsExpanded] = useState(true);
   const [bomAItems, setBomAItems] = useState<BomItem[]>([]);
   const [bomBItems, setBomBItems] = useState<BomItem[]>([]);
+  const [subpartMapA, setSubpartMapA] = useState<Map<string, string[]>>(new Map());
+  const [subpartMapB, setSubpartMapB] = useState<Map<string, string[]>>(new Map());
 
   const [keyParts, setKeyParts] = useState<KeyPart[]>([]);
   const [keyPartsLoading, setKeyPartsLoading] = useState(true);
@@ -104,6 +106,21 @@ export default function Home() {
     bom.items = await fetchAllBomItems(getSupabase(), bom.bomId, bom.source_file);
     bom.itemsLoaded = true;
     return bom;
+  }
+
+  function buildSubpartMap(entries: BomEntry[]): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    entries.forEach((entry) => {
+      entry.items.forEach((item) => {
+        const list = map.get(item.part_no);
+        if (list) {
+          if (!list.includes(entry.source_file)) list.push(entry.source_file);
+        } else {
+          map.set(item.part_no, [entry.source_file]);
+        }
+      });
+    });
+    return map;
   }
 
   async function combineAndLoad(machine: string, entries: BomEntry[]): Promise<BomEntry | null> {
@@ -143,6 +160,8 @@ export default function Home() {
 
       setBomAItems(bomA.items);
       setBomBItems(bomB.items);
+      setSubpartMapA(buildSubpartMap(entriesA));
+      setSubpartMapB(buildSubpartMap(entriesB));
       setResult(compareBoms(bomA, bomB));
       setSummaryA({
         machine: bomA.machine,
@@ -283,8 +302,10 @@ export default function Home() {
   const filteredOnlyA = result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
   const filteredOnlyB = result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
 
-  // 重要料號:各自機台設定的重要料號,在「僅存在於 A/B」中優先排序、標示出來;
-  // 若在對側找到相同描述但不同料號的項目,視為疑似改料號,額外標紅並列出對側料號。
+  // 重要料號:各自機台設定的重要料號,在「僅存在於 A/B」中優先排序、標示出來
+  // (A 顯示出現子項 + 自訂名稱);若在對側找到相同描述但不同料號的項目,
+  // 視為疑似改料號,額外標紅置頂 —— B 這邊即使沒有自己標記重要料號,只要
+  // A 的重要料號在 B 找得到疑似改名的對象,一樣要標紅置頂(反向偵測)。
   const keyPartsA = useMemo(
     () => keyParts.filter((k) => k.machine_name === machineA),
     [keyParts, machineA]
@@ -293,22 +314,55 @@ export default function Home() {
     () => keyParts.filter((k) => k.machine_name === machineB),
     [keyParts, machineB]
   );
-  const keyPartNosA = useMemo(() => new Set(keyPartsA.map((k) => k.part_no)), [keyPartsA]);
-  const keyPartNosB = useMemo(() => new Set(keyPartsB.map((k) => k.part_no)), [keyPartsB]);
-  const renameMapA = useMemo(() => {
-    if (keyPartsA.length === 0) return new Map<string, AggregatedItem[]>();
-    const checked = checkKeyParts(keyPartsA, bomBItems);
-    return new Map(
-      checked.filter((r) => r.status === "renamed").map((r) => [r.keyPart.part_no, r.matches])
-    );
-  }, [keyPartsA, bomBItems]);
-  const renameMapB = useMemo(() => {
-    if (keyPartsB.length === 0) return new Map<string, AggregatedItem[]>();
-    const checked = checkKeyParts(keyPartsB, bomAItems);
-    return new Map(
-      checked.filter((r) => r.status === "renamed").map((r) => [r.keyPart.part_no, r.matches])
-    );
-  }, [keyPartsB, bomAItems]);
+
+  const keyPartInfoA = useMemo(() => {
+    const map = new Map<string, { customName: string; subparts: string[] }>();
+    keyPartsA.forEach((k) => {
+      map.set(k.part_no, { customName: k.custom_name, subparts: subpartMapA.get(k.part_no) ?? [] });
+    });
+    return map;
+  }, [keyPartsA, subpartMapA]);
+  const keyPartInfoB = useMemo(() => {
+    const map = new Map<string, { customName: string; subparts: string[] }>();
+    keyPartsB.forEach((k) => {
+      map.set(k.part_no, { customName: k.custom_name, subparts: subpartMapB.get(k.part_no) ?? [] });
+    });
+    return map;
+  }, [keyPartsB, subpartMapB]);
+
+  const renameCheckA = useMemo(
+    () => (keyPartsA.length > 0 ? checkKeyParts(keyPartsA, bomBItems) : []),
+    [keyPartsA, bomBItems]
+  );
+  const renameCheckB = useMemo(
+    () => (keyPartsB.length > 0 ? checkKeyParts(keyPartsB, bomAItems) : []),
+    [keyPartsB, bomAItems]
+  );
+
+  const renameInfoA = useMemo(() => {
+    const map = new Map<string, string>();
+    renameCheckA.forEach((r) => {
+      if (r.status === "renamed") map.set(r.keyPart.part_no, formatAggregatedMatches(r.matches));
+    });
+    return map;
+  }, [renameCheckA]);
+
+  const renameInfoB = useMemo(() => {
+    const map = new Map<string, string>();
+    renameCheckB.forEach((r) => {
+      if (r.status === "renamed") map.set(r.keyPart.part_no, formatAggregatedMatches(r.matches));
+    });
+    // Reverse direction: A's key parts that seem renamed in B should also
+    // pin/flag on the B side, even when B has no key parts of its own.
+    renameCheckA.forEach((r) => {
+      if (r.status === "renamed") {
+        r.matches.forEach((m) => {
+          map.set(m.part_no, `疑似為 A 重要料號「${r.keyPart.custom_name}」(原料號 ${r.keyPart.part_no})`);
+        });
+      }
+    });
+    return map;
+  }, [renameCheckA, renameCheckB]);
 
   function handleExportClick() {
     if (!summaryA || !summaryB || !result) return;
@@ -465,16 +519,18 @@ export default function Home() {
                 <PartTable
                   title="僅存在於 A"
                   items={filteredOnlyA}
-                  keyPartNos={keyPartNosA}
-                  renameMap={renameMapA}
+                  keyPartInfo={keyPartInfoA}
+                  renameInfo={renameInfoA}
                   otherSideLabel="B"
+                  keyPartColumnVariant="detail"
                 />
                 <PartTable
                   title="僅存在於 B"
                   items={filteredOnlyB}
-                  keyPartNos={keyPartNosB}
-                  renameMap={renameMapB}
+                  keyPartInfo={keyPartInfoB}
+                  renameInfo={renameInfoB}
                   otherSideLabel="A"
+                  keyPartColumnVariant="badge"
                 />
               </div>
             </CardContent>
@@ -595,27 +651,29 @@ function MachineSelectGroup({
 function PartTable({
   title,
   items,
-  keyPartNos,
-  renameMap,
+  keyPartInfo,
+  renameInfo,
   otherSideLabel,
+  keyPartColumnVariant = "badge",
 }: {
   title: string;
   items?: AggregatedItem[];
-  keyPartNos?: Set<string>;
-  renameMap?: Map<string, AggregatedItem[]>;
+  keyPartInfo?: Map<string, { customName: string; subparts: string[] }>;
+  renameInfo?: Map<string, string>;
   otherSideLabel?: string;
+  keyPartColumnVariant?: "badge" | "detail";
 }) {
-  const hasKeyParts = (keyPartNos?.size ?? 0) > 0;
+  const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0 || (renameInfo?.size ?? 0) > 0;
 
   const rows = (items ?? [])
     .map((item) => ({
       item,
-      renamed: renameMap?.get(item.part_no) ?? null,
-      isKeyPart: keyPartNos?.has(item.part_no) ?? false,
+      info: keyPartInfo?.get(item.part_no) ?? null,
+      renameText: renameInfo?.get(item.part_no) ?? null,
     }))
     .sort((a, b) => {
-      const scoreA = a.renamed ? 2 : a.isKeyPart ? 1 : 0;
-      const scoreB = b.renamed ? 2 : b.isKeyPart ? 1 : 0;
+      const scoreA = a.renameText ? 2 : a.info ? 1 : 0;
+      const scoreB = b.renameText ? 2 : b.info ? 1 : 0;
       if (scoreA !== scoreB) return scoreB - scoreA;
       return a.item.part_no.localeCompare(b.item.part_no);
     });
@@ -636,29 +694,49 @@ function PartTable({
                 <TableHead>描述</TableHead>
                 <TableHead>Qty</TableHead>
                 <TableHead>Unit</TableHead>
-                {hasKeyParts && <TableHead>重要料號</TableHead>}
+                {hasKeyPartColumn && <TableHead>重要料號</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map(({ item, renamed, isKeyPart }) => (
+              {rows.map(({ item, info, renameText }) => (
                 <TableRow
                   key={item.part_no}
-                  className={renamed ? "text-red-600 dark:text-red-400" : undefined}
+                  className={renameText ? "text-red-600 dark:text-red-400" : undefined}
                 >
                   <TableCell>{item.part_no}</TableCell>
                   <TableCell>{item.description}</TableCell>
                   <TableCell>{item.qty ?? "-"}</TableCell>
                   <TableCell>{item.uom ?? ""}</TableCell>
-                  {hasKeyParts && (
+                  {hasKeyPartColumn && (
                     <TableCell>
-                      {renamed ? (
+                      {keyPartColumnVariant === "detail" ? (
+                        <div className="grid gap-0.5 text-xs">
+                          {info && (
+                            <>
+                              <span className="font-medium">自訂名稱:{info.customName}</span>
+                              <span className="text-muted-foreground">
+                                子項:{info.subparts.length > 0 ? info.subparts.join("、") : "-"}
+                              </span>
+                            </>
+                          )}
+                          {renameText && (
+                            <>
+                              <Badge variant="destructive" className="w-fit">
+                                疑似改料號(機台 {otherSideLabel})
+                              </Badge>
+                              <span>{renameText}</span>
+                            </>
+                          )}
+                          {!info && !renameText && <span className="text-muted-foreground">-</span>}
+                        </div>
+                      ) : renameText ? (
                         <div className="grid gap-0.5">
                           <Badge variant="destructive" className="w-fit">
                             疑似改料號(機台 {otherSideLabel})
                           </Badge>
-                          <span className="text-xs">{formatAggregatedMatches(renamed)}</span>
+                          <span className="text-xs">{renameText}</span>
                         </div>
-                      ) : isKeyPart ? (
+                      ) : info ? (
                         <Badge variant="secondary" className="w-fit">
                           重要料號
                         </Badge>
