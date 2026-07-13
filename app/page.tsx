@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
+  checkKeyParts,
   compareBoms,
   fetchAllBomItems,
   fetchMachineGroups,
+  formatAggregatedMatches,
   type BomEntry,
+  type BomItem,
   type CompareResult,
+  type KeyPart,
   type MachineGroup,
 } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
@@ -75,6 +79,12 @@ export default function Home() {
   const [summaryB, setSummaryB] = useState<BomSummary | null>(null);
   const [resultFilter, setResultFilter] = useState("");
   const [resultsExpanded, setResultsExpanded] = useState(true);
+  const [bomAItems, setBomAItems] = useState<BomItem[]>([]);
+  const [bomBItems, setBomBItems] = useState<BomItem[]>([]);
+
+  const [keyParts, setKeyParts] = useState<KeyPart[]>([]);
+  const [keyPartsLoading, setKeyPartsLoading] = useState(true);
+  const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
 
   function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -131,6 +141,8 @@ export default function Home() {
         return;
       }
 
+      setBomAItems(bomA.items);
+      setBomBItems(bomB.items);
       setResult(compareBoms(bomA, bomB));
       setSummaryA({
         machine: bomA.machine,
@@ -173,11 +185,44 @@ export default function Home() {
     await runCompare(machineAName, entriesA, machineBName, entriesB);
   }
 
+  async function loadKeyParts() {
+    setKeyPartsLoading(true);
+    setKeyPartsError(null);
+    try {
+      const { data, error } = await getSupabase()
+        .from("key_parts")
+        .select("id,part_no,description,custom_name,machine_name,source_file")
+        .order("id", { ascending: true });
+      if (error) throw new Error(error.message);
+      setKeyParts(data ?? []);
+    } catch (err) {
+      setKeyPartsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setKeyPartsLoading(false);
+    }
+  }
+
+  async function renameKeyPart(id: number, newName: string) {
+    const { error } = await getSupabase()
+      .from("key_parts")
+      .update({ custom_name: newName })
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    setKeyParts((prev) => prev.map((p) => (p.id === id ? { ...p, custom_name: newName } : p)));
+  }
+
+  async function deleteKeyPartRow(id: number) {
+    const { error } = await getSupabase().from("key_parts").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    setKeyParts((prev) => prev.filter((p) => p.id !== id));
+  }
+
   useEffect(() => {
     loadData().catch((err) => {
       setInitError(`載入 Supabase 失敗:${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
+    loadKeyParts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -238,6 +283,33 @@ export default function Home() {
   const filteredOnlyA = result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
   const filteredOnlyB = result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
 
+  // 重要料號:各自機台設定的重要料號,在「僅存在於 A/B」中優先排序、標示出來;
+  // 若在對側找到相同描述但不同料號的項目,視為疑似改料號,額外標紅並列出對側料號。
+  const keyPartsA = useMemo(
+    () => keyParts.filter((k) => k.machine_name === machineA),
+    [keyParts, machineA]
+  );
+  const keyPartsB = useMemo(
+    () => keyParts.filter((k) => k.machine_name === machineB),
+    [keyParts, machineB]
+  );
+  const keyPartNosA = useMemo(() => new Set(keyPartsA.map((k) => k.part_no)), [keyPartsA]);
+  const keyPartNosB = useMemo(() => new Set(keyPartsB.map((k) => k.part_no)), [keyPartsB]);
+  const renameMapA = useMemo(() => {
+    if (keyPartsA.length === 0) return new Map<string, AggregatedItem[]>();
+    const checked = checkKeyParts(keyPartsA, bomBItems);
+    return new Map(
+      checked.filter((r) => r.status === "renamed").map((r) => [r.keyPart.part_no, r.matches])
+    );
+  }, [keyPartsA, bomBItems]);
+  const renameMapB = useMemo(() => {
+    if (keyPartsB.length === 0) return new Map<string, AggregatedItem[]>();
+    const checked = checkKeyParts(keyPartsB, bomAItems);
+    return new Map(
+      checked.filter((r) => r.status === "renamed").map((r) => [r.keyPart.part_no, r.matches])
+    );
+  }, [keyPartsB, bomAItems]);
+
   function handleExportClick() {
     if (!summaryA || !summaryB || !result) return;
     exportCompareToExcel(summaryA, summaryB, result, filteredOnlyA, filteredOnlyB);
@@ -268,7 +340,7 @@ export default function Home() {
           </Card>
         )}
 
-        <DescriptionSearch />
+        <DescriptionSearch onKeyPartAdded={loadKeyParts} />
 
         <Card className="mb-6">
           <CardHeader>
@@ -390,8 +462,20 @@ export default function Home() {
               )}
 
               <div className="grid gap-4 md:grid-cols-2">
-                <PartTable title="僅存在於 A" items={filteredOnlyA} />
-                <PartTable title="僅存在於 B" items={filteredOnlyB} />
+                <PartTable
+                  title="僅存在於 A"
+                  items={filteredOnlyA}
+                  keyPartNos={keyPartNosA}
+                  renameMap={renameMapA}
+                  otherSideLabel="B"
+                />
+                <PartTable
+                  title="僅存在於 B"
+                  items={filteredOnlyB}
+                  keyPartNos={keyPartNosB}
+                  renameMap={renameMapB}
+                  otherSideLabel="A"
+                />
               </div>
             </CardContent>
           )}
@@ -404,6 +488,11 @@ export default function Home() {
           subpartsB={subpartsB}
           subpartsFor={subpartsFor}
           combineAndLoad={combineAndLoad}
+          keyParts={keyParts}
+          keyPartsLoading={keyPartsLoading}
+          keyPartsError={keyPartsError}
+          onRename={renameKeyPart}
+          onDelete={deleteKeyPartRow}
         />
       </div>
     </div>
@@ -503,14 +592,41 @@ function MachineSelectGroup({
   );
 }
 
-function PartTable({ title, items }: { title: string; items?: AggregatedItem[] }) {
+function PartTable({
+  title,
+  items,
+  keyPartNos,
+  renameMap,
+  otherSideLabel,
+}: {
+  title: string;
+  items?: AggregatedItem[];
+  keyPartNos?: Set<string>;
+  renameMap?: Map<string, AggregatedItem[]>;
+  otherSideLabel?: string;
+}) {
+  const hasKeyParts = (keyPartNos?.size ?? 0) > 0;
+
+  const rows = (items ?? [])
+    .map((item) => ({
+      item,
+      renamed: renameMap?.get(item.part_no) ?? null,
+      isKeyPart: keyPartNos?.has(item.part_no) ?? false,
+    }))
+    .sort((a, b) => {
+      const scoreA = a.renamed ? 2 : a.isKeyPart ? 1 : 0;
+      const scoreB = b.renamed ? 2 : b.isKeyPart ? 1 : 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return a.item.part_no.localeCompare(b.item.part_no);
+    });
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        {!items || items.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-muted-foreground text-sm italic">沒有資料</p>
         ) : (
           <Table>
@@ -520,15 +636,37 @@ function PartTable({ title, items }: { title: string; items?: AggregatedItem[] }
                 <TableHead>描述</TableHead>
                 <TableHead>Qty</TableHead>
                 <TableHead>Unit</TableHead>
+                {hasKeyParts && <TableHead>重要料號</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item) => (
-                <TableRow key={item.part_no}>
+              {rows.map(({ item, renamed, isKeyPart }) => (
+                <TableRow
+                  key={item.part_no}
+                  className={renamed ? "text-red-600 dark:text-red-400" : undefined}
+                >
                   <TableCell>{item.part_no}</TableCell>
                   <TableCell>{item.description}</TableCell>
                   <TableCell>{item.qty ?? "-"}</TableCell>
                   <TableCell>{item.uom ?? ""}</TableCell>
+                  {hasKeyParts && (
+                    <TableCell>
+                      {renamed ? (
+                        <div className="grid gap-0.5">
+                          <Badge variant="destructive" className="w-fit">
+                            疑似改料號(機台 {otherSideLabel})
+                          </Badge>
+                          <span className="text-xs">{formatAggregatedMatches(renamed)}</span>
+                        </div>
+                      ) : isKeyPart ? (
+                        <Badge variant="secondary" className="w-fit">
+                          重要料號
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

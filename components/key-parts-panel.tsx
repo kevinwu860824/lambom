@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, Trash2 } from "lucide-react";
-import { createClient } from "@/lib/supabase";
 import {
   checkKeyParts,
+  formatAggregatedMatches,
   type BomEntry,
   type KeyPart,
   type KeyPartCheckResult,
@@ -33,13 +33,6 @@ import { cn } from "@/lib/utils";
 
 const ALL_MACHINES = "__all__";
 
-function formatMatches(matches: KeyPartCheckResult["matches"]): string {
-  if (matches.length === 0) return "-";
-  return matches
-    .map((m) => `${m.part_no}${m.description ? `(${m.description})` : ""}`)
-    .join("、");
-}
-
 function StatusBadge({ status }: { status: KeyPartCheckResult["status"] }) {
   if (status === "same") return <Badge variant="secondary">相同料號</Badge>;
   if (status === "renamed")
@@ -58,6 +51,11 @@ export function KeyPartsPanel({
   subpartsB,
   subpartsFor,
   combineAndLoad,
+  keyParts,
+  keyPartsLoading,
+  keyPartsError,
+  onRename,
+  onDelete,
 }: {
   machineA: string;
   subpartsA: Set<string>;
@@ -65,21 +63,16 @@ export function KeyPartsPanel({
   subpartsB: Set<string>;
   subpartsFor: (machine: string) => BomEntry[];
   combineAndLoad: (machine: string, entries: BomEntry[]) => Promise<BomEntry | null>;
+  keyParts: KeyPart[];
+  keyPartsLoading: boolean;
+  keyPartsError: string | null;
+  onRename: (id: number, newName: string) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
 }) {
-  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
-  function getSupabase() {
-    if (!supabaseRef.current) {
-      supabaseRef.current = createClient();
-    }
-    return supabaseRef.current;
-  }
-
   const [expanded, setExpanded] = useState(false);
 
-  const [keyParts, setKeyParts] = useState<KeyPart[]>([]);
-  const [keyPartsLoading, setKeyPartsLoading] = useState(true);
-  const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [machineFilter, setMachineFilter] = useState(ALL_MACHINES);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -89,52 +82,20 @@ export function KeyPartsPanel({
   const [resultsA, setResultsA] = useState<KeyPartCheckResult[] | null>(null);
   const [resultsB, setResultsB] = useState<KeyPartCheckResult[] | null>(null);
 
-  async function loadKeyParts() {
-    setKeyPartsLoading(true);
-    setKeyPartsError(null);
-    try {
-      const { data, error } = await getSupabase()
-        .from("key_parts")
-        .select("id,part_no,description,custom_name,machine_name,source_file")
-        .order("id", { ascending: true });
-      if (error) throw new Error(error.message);
-      setKeyParts(data ?? []);
-    } catch (err) {
-      setKeyPartsError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setKeyPartsLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadKeyParts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function renameKeyPart(id: number, newName: string) {
-    const { error } = await getSupabase()
-      .from("key_parts")
-      .update({ custom_name: newName })
-      .eq("id", id);
-    if (error) throw new Error(error.message);
-    setKeyParts((prev) => prev.map((p) => (p.id === id ? { ...p, custom_name: newName } : p)));
-  }
-
-  async function deleteKeyPart(id: number) {
+  async function handleDelete(id: number) {
     if (!window.confirm("確定要刪除這個重要零件嗎?")) return;
 
     setDeletingId(id);
+    setDeleteError(null);
     try {
-      const { error } = await getSupabase().from("key_parts").delete().eq("id", id);
-      if (error) throw new Error(error.message);
-      setKeyParts((prev) => prev.filter((p) => p.id !== id));
+      await onDelete(id);
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
     } catch (err) {
-      setKeyPartsError(err instanceof Error ? err.message : String(err));
+      setDeleteError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeletingId(null);
     }
@@ -214,7 +175,9 @@ export function KeyPartsPanel({
 
       {expanded && (
         <CardContent>
-          {keyPartsError && <p className="text-destructive mb-3 text-sm">{keyPartsError}</p>}
+          {(keyPartsError || deleteError) && (
+            <p className="text-destructive mb-3 text-sm">{keyPartsError ?? deleteError}</p>
+          )}
 
           {!keyPartsLoading && keyParts.length > 0 && (
             <div className="mb-4 grid max-w-xs gap-1.5">
@@ -275,7 +238,7 @@ export function KeyPartsPanel({
                     <TableCell className="min-w-[200px]">
                       <EditableField
                         value={part.custom_name}
-                        onSave={(newValue) => renameKeyPart(part.id, newValue)}
+                        onSave={(newValue) => onRename(part.id, newValue)}
                       />
                     </TableCell>
                     <TableCell>{part.machine_name ?? "-"}</TableCell>
@@ -288,7 +251,7 @@ export function KeyPartsPanel({
                         variant="ghost"
                         aria-label="刪除重要零件"
                         disabled={deletingId === part.id}
-                        onClick={() => deleteKeyPart(part.id)}
+                        onClick={() => handleDelete(part.id)}
                       >
                         <Trash2 className="text-destructive h-4 w-4" />
                       </Button>
@@ -348,11 +311,11 @@ export function KeyPartsPanel({
                         <TableCell>
                           <StatusBadge status={a.status} />
                         </TableCell>
-                        <TableCell>{formatMatches(a.matches)}</TableCell>
+                        <TableCell>{formatAggregatedMatches(a.matches)}</TableCell>
                         <TableCell>
                           <StatusBadge status={b.status} />
                         </TableCell>
-                        <TableCell>{formatMatches(b.matches)}</TableCell>
+                        <TableCell>{formatAggregatedMatches(b.matches)}</TableCell>
                       </TableRow>
                     );
                   })}

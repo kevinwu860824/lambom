@@ -74,6 +74,13 @@ export function normalizeDescription(desc: string | null): string {
   return (desc ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function formatAggregatedMatches(matches: AggregatedItem[]): string {
+  if (matches.length === 0) return "-";
+  return matches
+    .map((m) => `${m.part_no}${m.description ? `(${m.description})` : ""}`)
+    .join("、");
+}
+
 export function checkKeyParts(
   keyParts: KeyPart[],
   targetItems: BomItem[]

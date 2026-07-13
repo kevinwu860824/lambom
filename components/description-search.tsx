@@ -40,7 +40,7 @@ interface SearchResultRow {
 
 const RESULT_LIMIT = 200;
 
-export function DescriptionSearch() {
+export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => void }) {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) {
@@ -332,6 +332,7 @@ export function DescriptionSearch() {
                             description={row.description}
                             machineName={row.bom_machines?.machine_name ?? null}
                             sourceFile={row.bom_machines?.source_file ?? null}
+                            onAdded={onKeyPartAdded}
                           />
                         </TableCell>
                       </TableRow>
@@ -352,11 +353,13 @@ function AddKeyPartButton({
   description,
   machineName,
   sourceFile,
+  onAdded,
 }: {
   partNo: string;
   description: string | null;
   machineName: string | null;
   sourceFile: string | null;
+  onAdded?: () => void;
 }) {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
@@ -394,6 +397,7 @@ function AddKeyPartButton({
       setSaved(true);
       setOpen(false);
       setCustomName("");
+      onAdded?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
