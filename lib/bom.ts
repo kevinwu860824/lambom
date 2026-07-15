@@ -74,6 +74,47 @@ export function normalizeDescription(desc: string | null): string {
   return (desc ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export interface KeyPartInfo {
+  customName: string;
+  subparts: string[];
+}
+
+export interface KeyPartDisplayRow {
+  item: AggregatedItem;
+  keyPartInfo: KeyPartInfo | null;
+  renameText: string | null;
+}
+
+// Shared by the on-screen 僅存在於 A/B tables and the Excel export, so both
+// always agree on ordering/highlighting: suspected-renamed rows first, then
+// plain key parts, then everything else. `renameRank`, when given, orders the
+// renamed group to match the position of the key part it corresponds to on
+// the other side (see app/page.tsx's renameRankB), instead of alphabetically.
+export function buildKeyPartDisplayRows(
+  items: AggregatedItem[],
+  keyPartInfo: Map<string, KeyPartInfo>,
+  renameInfo: Map<string, string>,
+  renameRank?: Map<string, number>
+): KeyPartDisplayRow[] {
+  return items
+    .map((item) => ({
+      item,
+      keyPartInfo: keyPartInfo.get(item.part_no) ?? null,
+      renameText: renameInfo.get(item.part_no) ?? null,
+    }))
+    .sort((a, b) => {
+      const scoreA = a.renameText ? 2 : a.keyPartInfo ? 1 : 0;
+      const scoreB = b.renameText ? 2 : b.keyPartInfo ? 1 : 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      if (scoreA === 2 && renameRank) {
+        const rankA = renameRank.get(a.item.part_no) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = renameRank.get(b.item.part_no) ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) return rankA - rankB;
+      }
+      return a.item.part_no.localeCompare(b.item.part_no);
+    });
+}
+
 export function formatAggregatedMatches(matches: AggregatedItem[]): string {
   if (matches.length === 0) return "-";
   return matches

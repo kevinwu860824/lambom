@@ -1,5 +1,11 @@
 import * as XLSX from "xlsx-js-style";
-import type { AggregatedItem, BomSummary, CompareResult } from "@/lib/bom";
+import {
+  buildKeyPartDisplayRows,
+  type AggregatedItem,
+  type BomSummary,
+  type CompareResult,
+  type KeyPartInfo,
+} from "@/lib/bom";
 
 type CellValue = string | number;
 type CellStyle = Record<string, unknown>;
@@ -8,6 +14,15 @@ const HEADER_FILL = "6A7885";
 const HEADER_FONT_COLOR = "FFFFFF";
 const STRIPE_FILL = "F2F4F5";
 const BORDER_COLOR = "D8DEE3";
+const RENAMED_FONT_COLOR = "DC2626";
+
+export interface KeyPartExportInfo {
+  keyPartInfoA: Map<string, KeyPartInfo>;
+  keyPartInfoB: Map<string, KeyPartInfo>;
+  renameInfoA: Map<string, string>;
+  renameInfoB: Map<string, string>;
+  renameRankB: Map<string, number>;
+}
 
 function thinBorder(color: string) {
   return {
@@ -27,22 +42,31 @@ function headerStyle(): CellStyle {
   };
 }
 
-function bodyStyle(isStripe: boolean): CellStyle {
+function bodyStyle(isStripe: boolean, isRenamed: boolean): CellStyle {
   return {
+    font: isRenamed ? { color: { rgb: RENAMED_FONT_COLOR } } : undefined,
     fill: isStripe ? { fgColor: { rgb: STRIPE_FILL } } : undefined,
     border: thinBorder(BORDER_COLOR),
     alignment: { vertical: "center" },
   };
 }
 
-function applyStyles(sheet: XLSX.WorkSheet, rows: CellValue[][], headerRowCount: number) {
+function applyStyles(
+  sheet: XLSX.WorkSheet,
+  rows: CellValue[][],
+  headerRowCount: number,
+  renamedRows: Set<number> = new Set()
+) {
   const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
 
   for (let r = 0; r < rows.length; r++) {
     for (let c = 0; c < colCount; c++) {
       const ref = XLSX.utils.encode_cell({ r, c });
       if (!sheet[ref]) continue;
-      sheet[ref].s = r < headerRowCount ? headerStyle() : bodyStyle((r - headerRowCount) % 2 === 1);
+      sheet[ref].s =
+        r < headerRowCount
+          ? headerStyle()
+          : bodyStyle((r - headerRowCount) % 2 === 1, renamedRows.has(r));
     }
   }
 }
@@ -61,19 +85,44 @@ function autoColWidths(rows: CellValue[][]): { wch: number }[] {
   return widths.map((wch) => ({ wch }));
 }
 
-function buildSheet(rows: CellValue[][], headerRowCount: number): XLSX.WorkSheet {
+function buildSheet(
+  rows: CellValue[][],
+  headerRowCount: number,
+  renamedRows?: Set<number>
+): XLSX.WorkSheet {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet["!cols"] = autoColWidths(rows);
-  applyStyles(sheet, rows, headerRowCount);
+  applyStyles(sheet, rows, headerRowCount, renamedRows);
   return sheet;
 }
 
-function buildPartSheet(items: AggregatedItem[]): XLSX.WorkSheet {
+function buildPartSheet(
+  items: AggregatedItem[],
+  keyPartInfo: Map<string, KeyPartInfo>,
+  renameInfo: Map<string, string>,
+  renameRank?: Map<string, number>
+): XLSX.WorkSheet {
+  const displayRows = buildKeyPartDisplayRows(items, keyPartInfo, renameInfo, renameRank);
+
   const rows: CellValue[][] = [
-    ["料號", "描述", "Qty", "Unit"],
-    ...items.map((i) => [i.part_no, i.description ?? "", i.qty ?? "", i.uom ?? ""]),
+    ["料號", "描述", "Qty", "Unit", "自訂名稱", "子項", "疑似改料號"],
+    ...displayRows.map(({ item, keyPartInfo: info, renameText }) => [
+      item.part_no,
+      item.description ?? "",
+      item.qty ?? "",
+      item.uom ?? "",
+      info?.customName ?? "",
+      info && info.subparts.length > 0 ? info.subparts.join("、") : "",
+      renameText ?? "",
+    ]),
   ];
-  return buildSheet(rows, 1);
+
+  const renamedRows = new Set<number>();
+  displayRows.forEach((row, i) => {
+    if (row.renameText) renamedRows.add(i + 1); // +1: header occupies row 0
+  });
+
+  return buildSheet(rows, 1, renamedRows);
 }
 
 function safeFilenamePart(name: string): string {
@@ -85,8 +134,10 @@ export function exportCompareToExcel(
   summaryB: BomSummary,
   result: CompareResult,
   filteredOnlyA: AggregatedItem[],
-  filteredOnlyB: AggregatedItem[]
+  filteredOnlyB: AggregatedItem[],
+  keyPartExportInfo: KeyPartExportInfo
 ) {
+  const { keyPartInfoA, keyPartInfoB, renameInfoA, renameInfoB, renameRankB } = keyPartExportInfo;
   const qtyMismatchCount = result.common.filter((item) => !item.qtyMatch).length;
 
   const summaryRows: CellValue[][] = [
@@ -107,8 +158,16 @@ export function exportCompareToExcel(
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, buildSheet(summaryRows, 1), "比對摘要");
-  XLSX.utils.book_append_sheet(wb, buildPartSheet(filteredOnlyA), "僅存在於 A");
-  XLSX.utils.book_append_sheet(wb, buildPartSheet(filteredOnlyB), "僅存在於 B");
+  XLSX.utils.book_append_sheet(
+    wb,
+    buildPartSheet(filteredOnlyA, keyPartInfoA, renameInfoA),
+    "僅存在於 A"
+  );
+  XLSX.utils.book_append_sheet(
+    wb,
+    buildPartSheet(filteredOnlyB, keyPartInfoB, renameInfoB, renameRankB),
+    "僅存在於 B"
+  );
 
   const filename = `BOM比對_${safeFilenamePart(summaryA.machine)}_vs_${safeFilenamePart(summaryB.machine)}.xlsx`;
   XLSX.writeFile(wb, filename);

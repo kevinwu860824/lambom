@@ -5,6 +5,7 @@ import { ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
+  buildKeyPartDisplayRows,
   checkKeyParts,
   compareBoms,
   fetchAllBomItems,
@@ -14,6 +15,7 @@ import {
   type BomItem,
   type CompareResult,
   type KeyPart,
+  type KeyPartInfo,
   type MachineGroup,
 } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
@@ -364,9 +366,32 @@ export default function Home() {
     return map;
   }, [renameCheckA, renameCheckB]);
 
+  // B 的順序:置頂之後,依照對應到的 A 重要料號在 A 排序中的名次排列
+  // (而不是自己的料號字母序),讓兩邊疑似對應的列盡量對齊。
+  const renameRankB = useMemo(() => {
+    const rankedA = renameCheckA
+      .filter((r) => r.status === "renamed")
+      .slice()
+      .sort((a, b) => a.keyPart.part_no.localeCompare(b.keyPart.part_no));
+
+    const map = new Map<string, number>();
+    rankedA.forEach((r, rank) => {
+      r.matches.forEach((m) => {
+        if (!map.has(m.part_no)) map.set(m.part_no, rank);
+      });
+    });
+    return map;
+  }, [renameCheckA]);
+
   function handleExportClick() {
     if (!summaryA || !summaryB || !result) return;
-    exportCompareToExcel(summaryA, summaryB, result, filteredOnlyA, filteredOnlyB);
+    exportCompareToExcel(summaryA, summaryB, result, filteredOnlyA, filteredOnlyB, {
+      keyPartInfoA,
+      keyPartInfoB,
+      renameInfoA,
+      renameInfoB,
+      renameRankB,
+    });
   }
 
   return (
@@ -529,6 +554,7 @@ export default function Home() {
                   items={filteredOnlyB}
                   keyPartInfo={keyPartInfoB}
                   renameInfo={renameInfoB}
+                  renameRank={renameRankB}
                   otherSideLabel="A"
                   keyPartColumnVariant="badge"
                 />
@@ -653,30 +679,26 @@ function PartTable({
   items,
   keyPartInfo,
   renameInfo,
+  renameRank,
   otherSideLabel,
   keyPartColumnVariant = "badge",
 }: {
   title: string;
   items?: AggregatedItem[];
-  keyPartInfo?: Map<string, { customName: string; subparts: string[] }>;
+  keyPartInfo?: Map<string, KeyPartInfo>;
   renameInfo?: Map<string, string>;
+  renameRank?: Map<string, number>;
   otherSideLabel?: string;
   keyPartColumnVariant?: "badge" | "detail";
 }) {
   const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0 || (renameInfo?.size ?? 0) > 0;
 
-  const rows = (items ?? [])
-    .map((item) => ({
-      item,
-      info: keyPartInfo?.get(item.part_no) ?? null,
-      renameText: renameInfo?.get(item.part_no) ?? null,
-    }))
-    .sort((a, b) => {
-      const scoreA = a.renameText ? 2 : a.info ? 1 : 0;
-      const scoreB = b.renameText ? 2 : b.info ? 1 : 0;
-      if (scoreA !== scoreB) return scoreB - scoreA;
-      return a.item.part_no.localeCompare(b.item.part_no);
-    });
+  const rows = buildKeyPartDisplayRows(
+    items ?? [],
+    keyPartInfo ?? new Map(),
+    renameInfo ?? new Map(),
+    renameRank
+  );
 
   return (
     <Card>
@@ -698,7 +720,7 @@ function PartTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map(({ item, info, renameText }) => (
+              {rows.map(({ item, keyPartInfo: info, renameText }) => (
                 <TableRow
                   key={item.part_no}
                   className={renameText ? "text-red-600 dark:text-red-400" : undefined}
