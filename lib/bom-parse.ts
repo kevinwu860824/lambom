@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx-js-style";
+import { strFromU8, unzipSync } from "fflate";
 
 export interface ParsedBomItem {
   part_no: string;
@@ -310,21 +311,23 @@ function parseCsvRows(text: string): string[][] {
 }
 
 /**
- * Parses a raw SAP BOM export CSV — the ERP's native field names
- * (MATERIAL/DESCRIPTION/UOM/BOMLEVEL/NEWBUILD_QTY/BOM_QTY/GENE00../GENEnn)
- * rather than the renamed headers parseExcelBom expects (Material/
- * Description/Uni/Level/New Build Qt/BOM Qty/Genealogy NN). Genealogy
- * column GENE<nn> holds the part number at depth nn (GENE00 = the level-0
- * root, GENE01 = the level-1 part, ...), so a row's ancestors are
- * genealogy[0..level-1] — same convention parseExcelBom's "Genealogy NN"
- * columns use, just under a different name and with the column count
- * detected from the header instead of hardcoded.
+ * Builds a ParsedBom from rows already split into fields, using the raw
+ * SAP ERP field names (MATERIAL/DESCRIPTION/UOM/BOMLEVEL/NEWBUILD_QTY/
+ * BOM_QTY/GENE00../GENEnn) rather than the renamed headers parseExcelBom
+ * expects (Material/Description/Uni/Level/New Build Qt/BOM Qty/Genealogy
+ * NN). Genealogy column GENE<nn> holds the part number at depth nn
+ * (GENE00 = the level-0 root, GENE01 = the level-1 part, ...), so a row's
+ * ancestors are genealogy[0..level-1] — same convention parseExcelBom's
+ * "Genealogy NN" columns use, just under a different name and with the
+ * column count detected from the header instead of hardcoded.
+ *
+ * Shared by parseCsvBom (rows from a real CSV file) and the raw-SAP-xlsx
+ * fallback in parseXlsxBom (rows read positionally from the xlsx's XML,
+ * since some exports of this format have unusable cell coordinates).
  */
-export function parseCsvBom(text: string): ParsedBom {
-  const rows = parseCsvRows(text.replace(/^﻿/, ""));
-
+function parseSapFieldRows(rows: string[][]): ParsedBom {
   if (rows.length < 2) {
-    throw new Error("CSV 檔案內容不足(至少需要表頭 + 一筆資料)");
+    throw new Error("檔案內容不足(至少需要表頭 + 一筆資料)");
   }
 
   const headerFields = rows[0].map((h) => h.trim());
@@ -344,7 +347,7 @@ export function parseCsvBom(text: string): ParsedBom {
     .map((entry) => entry.idx);
 
   if (materialIdx === -1 || levelIdx === -1 || genealogyIndices.length === 0) {
-    throw new Error("CSV 表頭找不到必要欄位(MATERIAL / BOMLEVEL / GENE00...),請確認檔案格式");
+    throw new Error("表頭找不到必要欄位(MATERIAL / BOMLEVEL / GENE00...),請確認檔案格式");
   }
 
   const items: ParsedBomItem[] = [];
@@ -388,8 +391,152 @@ export function parseCsvBom(text: string): ParsedBom {
   }
 
   if (!rootPartNo) {
-    throw new Error("找不到 Level 0 的根節點,請確認 CSV 內容");
+    throw new Error("找不到 Level 0 的根節點,請確認檔案內容");
   }
 
   return { rootPartNo, rootDescription, items };
+}
+
+/**
+ * Parses a raw SAP BOM export CSV (see parseSapFieldRows for the field
+ * naming convention).
+ */
+export function parseCsvBom(text: string): ParsedBom {
+  return parseSapFieldRows(parseCsvRows(text.replace(/^﻿/, "")));
+}
+
+function decodeXmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&amp;/g, "&");
+}
+
+function parseSharedStrings(xml: string): string[] {
+  const items: string[] = [];
+  const siRegex = /<si>([\s\S]*?)<\/si>/g;
+  let siMatch: RegExpExecArray | null;
+  while ((siMatch = siRegex.exec(xml))) {
+    const texts = Array.from(siMatch[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)).map((m) =>
+      decodeXmlEntities(m[1])
+    );
+    items.push(texts.join(""));
+  }
+  return items;
+}
+
+/**
+ * Reads an xlsx worksheet's rows *positionally* — the Nth `<c>` element
+ * inside a `<row>` is treated as column N, in document order — instead of
+ * trusting each cell's `r="..."` coordinate attribute.
+ *
+ * Some SAP-export tools write invalid coordinates there (raw column
+ * numbers concatenated with the row number, e.g. `r="101"` for column 10
+ * row 1, instead of the required column-letter form like `J1`). Desktop
+ * Excel/Numbers silently tolerate this by falling back to positional
+ * order, but xlsx-js-style (and the OOXML spec) do not, so a normal
+ * XLSX.read() on these files silently comes back with zero usable cells.
+ * This positional reader works whether or not the coordinates are valid.
+ */
+function parseSheetRowsLenient(xml: string, sharedStrings: string[]): string[][] {
+  const rows: string[][] = [];
+  const rowRegex = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  let rowMatch: RegExpExecArray | null;
+
+  while ((rowMatch = rowRegex.exec(xml))) {
+    const cells: string[] = [];
+    const cellRegex = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    let cellMatch: RegExpExecArray | null;
+
+    while ((cellMatch = cellRegex.exec(rowMatch[1]))) {
+      const attrs = cellMatch[1];
+      const inner = cellMatch[2] ?? "";
+      const type = attrs.match(/\st="([^"]*)"/)?.[1] ?? "n";
+
+      let value = "";
+      if (type === "inlineStr") {
+        const isBody = inner.match(/<is>([\s\S]*?)<\/is>/)?.[1] ?? "";
+        value = Array.from(isBody.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g))
+          .map((m) => decodeXmlEntities(m[1]))
+          .join("");
+      } else {
+        const raw = inner.match(/<v>([\s\S]*?)<\/v>/)?.[1];
+        const decoded = raw !== undefined ? decodeXmlEntities(raw) : "";
+        if (type === "s") {
+          const idx = Number.parseInt(decoded, 10);
+          value = Number.isNaN(idx) ? "" : (sharedStrings[idx] ?? "");
+        } else {
+          value = decoded;
+        }
+      }
+      cells.push(value);
+    }
+
+    rows.push(cells);
+  }
+
+  return rows;
+}
+
+/** Resolves the first worksheet's zip-entry path via workbook.xml + its rels, falling back to the common default path if either is missing/unparseable. */
+function resolveFirstSheetPath(files: Record<string, Uint8Array>): string {
+  const fallback = "xl/worksheets/sheet1.xml";
+  const workbookXml = files["xl/workbook.xml"] ? strFromU8(files["xl/workbook.xml"]) : "";
+  const relsXml = files["xl/_rels/workbook.xml.rels"]
+    ? strFromU8(files["xl/_rels/workbook.xml.rels"])
+    : "";
+
+  const rId = workbookXml.match(/<sheet\b[^>]*\br:id="([^"]+)"/)?.[1];
+  if (!rId) return fallback;
+
+  const target = relsXml.match(
+    new RegExp(`<Relationship\\b[^>]*\\bId="${rId}"[^>]*\\bTarget="([^"]+)"`)
+  )?.[1];
+  if (!target) return fallback;
+
+  return `xl/${target.replace(/^\/?xl\//, "")}`;
+}
+
+function readXlsxRowsLenient(buffer: ArrayBuffer): string[][] {
+  const files = unzipSync(new Uint8Array(buffer));
+
+  const sheetPath = resolveFirstSheetPath(files);
+  const sheetXml = files[sheetPath] ? strFromU8(files[sheetPath]) : null;
+  if (!sheetXml) {
+    throw new Error("在 xlsx 檔案中找不到工作表資料(xl/worksheets/...)");
+  }
+
+  const sharedStrings = files["xl/sharedStrings.xml"]
+    ? parseSharedStrings(strFromU8(files["xl/sharedStrings.xml"]))
+    : [];
+
+  return parseSheetRowsLenient(sheetXml, sharedStrings);
+}
+
+/**
+ * Entry point for .xlsx/.xls uploads — auto-detects which of the two known
+ * xlsx variants a file is:
+ *  1. The "renamed header" messy export (Material/Description/Uni/Level/
+ *     Genealogy NN, comma-fractured cells) → parseExcelBom, unchanged.
+ *  2. The raw-SAP-named export (MATERIAL/.../GENE00..), which sometimes
+ *     also has the invalid-coordinate bug described on parseSheetRowsLenient
+ *     → read positionally and fed through the same field mapping as the CSV
+ *     format.
+ * Tries (1) first since it's a normal, fast XLSX.read(); only unzips by
+ * hand for (2) when (1)'s expected headers aren't found.
+ */
+export function parseXlsxBom(buffer: ArrayBuffer): ParsedBom {
+  try {
+    return parseExcelBom(buffer);
+  } catch (primaryErr) {
+    try {
+      return parseSapFieldRows(readXlsxRowsLenient(buffer));
+    } catch {
+      throw primaryErr instanceof Error ? primaryErr : new Error(String(primaryErr));
+    }
+  }
 }

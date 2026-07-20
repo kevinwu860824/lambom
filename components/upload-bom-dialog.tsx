@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { parseCsvBom, parseExcelBom, parseTxtBom, type ParsedBom } from "@/lib/bom-parse";
+import { parseCsvBom, parseTxtBom, parseXlsxBom, type ParsedBom } from "@/lib/bom-parse";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,7 +81,7 @@ export function UploadBomDialog({
         if (lowerName.endsWith(".txt")) {
           result = parseTxtBom(await file.text());
         } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
-          result = parseExcelBom(await file.arrayBuffer());
+          result = parseXlsxBom(await file.arrayBuffer());
         } else if (lowerName.endsWith(".csv")) {
           result = parseCsvBom(await file.text());
         } else {
