@@ -231,3 +231,165 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
 
   return { rootPartNo, rootDescription, items };
 }
+
+/**
+ * RFC4180-ish CSV tokenizer: comma-delimited, `"..."` quoting with `""` as
+ * an escaped quote, quoted fields may contain literal commas/newlines.
+ * Needed because this format's Description field legitimately contains
+ * commas and is properly quoted (unlike the messy-xlsx export handled by
+ * parseExcelBom, which needs a different, tab-based reconstruction hack).
+ */
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    const ch = text[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      field += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(field);
+      field = "";
+      i++;
+      continue;
+    }
+    if (ch === "\r") {
+      if (text[i + 1] === "\n") {
+        i++;
+        continue;
+      }
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      i++;
+      continue;
+    }
+    if (ch === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      i++;
+      continue;
+    }
+    field += ch;
+    i++;
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+/**
+ * Parses a raw SAP BOM export CSV — the ERP's native field names
+ * (MATERIAL/DESCRIPTION/UOM/BOMLEVEL/NEWBUILD_QTY/BOM_QTY/GENE00../GENEnn)
+ * rather than the renamed headers parseExcelBom expects (Material/
+ * Description/Uni/Level/New Build Qt/BOM Qty/Genealogy NN). Genealogy
+ * column GENE<nn> holds the part number at depth nn (GENE00 = the level-0
+ * root, GENE01 = the level-1 part, ...), so a row's ancestors are
+ * genealogy[0..level-1] — same convention parseExcelBom's "Genealogy NN"
+ * columns use, just under a different name and with the column count
+ * detected from the header instead of hardcoded.
+ */
+export function parseCsvBom(text: string): ParsedBom {
+  const rows = parseCsvRows(text.replace(/^﻿/, ""));
+
+  if (rows.length < 2) {
+    throw new Error("CSV 檔案內容不足(至少需要表頭 + 一筆資料)");
+  }
+
+  const headerFields = rows[0].map((h) => h.trim());
+  const colIndex = (name: string) => headerFields.indexOf(name);
+
+  const materialIdx = colIndex("MATERIAL");
+  const descriptionIdx = colIndex("DESCRIPTION");
+  const uomIdx = colIndex("UOM");
+  const bomQtyIdx = colIndex("BOM_QTY");
+  const newBuildQtyIdx = colIndex("NEWBUILD_QTY");
+  const levelIdx = colIndex("BOMLEVEL");
+
+  const genealogyIndices = headerFields
+    .map((name, idx) => ({ level: Number.parseInt(name.match(/^GENE(\d{2,})$/)?.[1] ?? "", 10), idx }))
+    .filter((entry) => !Number.isNaN(entry.level))
+    .sort((a, b) => a.level - b.level)
+    .map((entry) => entry.idx);
+
+  if (materialIdx === -1 || levelIdx === -1 || genealogyIndices.length === 0) {
+    throw new Error("CSV 表頭找不到必要欄位(MATERIAL / BOMLEVEL / GENE00...),請確認檔案格式");
+  }
+
+  const items: ParsedBomItem[] = [];
+  let rootPartNo = "";
+  let rootDescription = "";
+
+  for (let r = 1; r < rows.length; r++) {
+    const fields = rows[r];
+    if (!fields || fields.every((c) => !c.trim())) continue;
+
+    const partNo = (fields[materialIdx] ?? "").trim();
+    const levelRaw = (fields[levelIdx] ?? "").trim();
+    const level = Number.parseInt(levelRaw, 10);
+    if (!partNo || Number.isNaN(level)) continue;
+
+    const description = collapseSpaces(fields[descriptionIdx] ?? "");
+    const uom = (fields[uomIdx] ?? "").trim() || null;
+    const qtyRaw = (fields[bomQtyIdx] ?? "").trim() || (fields[newBuildQtyIdx] ?? "").trim();
+    const qty = qtyRaw ? Number.parseFloat(qtyRaw) : null;
+
+    const genealogy = genealogyIndices.map((idx) => (fields[idx] ?? "").trim());
+    const ancestors = genealogy.slice(0, level).filter((v) => v.length > 0);
+    const parentPartNo = ancestors.length > 0 ? ancestors[ancestors.length - 1] : null;
+    const parentPath = ancestors.join("/");
+
+    if (level === 0) {
+      rootPartNo = partNo;
+      rootDescription = description;
+    }
+
+    items.push({
+      part_no: partNo,
+      description: description || null,
+      qty: qty !== null && Number.isFinite(qty) ? qty : null,
+      uom,
+      level,
+      parent_part_no: parentPartNo,
+      parent_path: parentPath,
+      line_no: r + 1,
+    });
+  }
+
+  if (!rootPartNo) {
+    throw new Error("找不到 Level 0 的根節點,請確認 CSV 內容");
+  }
+
+  return { rootPartNo, rootDescription, items };
+}

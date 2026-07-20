@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { parseExcelBom, parseTxtBom, type ParsedBom } from "@/lib/bom-parse";
+import { parseCsvBom, parseExcelBom, parseTxtBom, type ParsedBom } from "@/lib/bom-parse";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,8 +82,10 @@ export function UploadBomDialog({
           result = parseTxtBom(await file.text());
         } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
           result = parseExcelBom(await file.arrayBuffer());
+        } else if (lowerName.endsWith(".csv")) {
+          result = parseCsvBom(await file.text());
         } else {
-          throw new Error("僅支援 .txt 或 .xlsx/.xls 檔案");
+          throw new Error("僅支援 .txt、.xlsx/.xls 或 .csv 檔案");
         }
         setFiles((prev) =>
           prev.map((e) => (e.file === file ? { ...e, status: "parsed", parsed: result } : e))
@@ -206,7 +208,7 @@ export function UploadBomDialog({
         <DialogHeader>
           <DialogTitle>上傳 BOM</DialogTitle>
           <DialogDescription>
-            支援 .txt(樹狀縮排報表)或 .xlsx/.xls 檔案,可一次選取多個檔案。同機台 + 同檔名會覆蓋舊資料。
+            支援 .txt(樹狀縮排報表)、.xlsx/.xls 或 .csv(原始 SAP 匯出)檔案,可一次選取多個檔案。同機台 + 同檔名會覆蓋舊資料。
           </DialogDescription>
         </DialogHeader>
 
@@ -251,13 +253,13 @@ export function UploadBomDialog({
             <UploadCloud className="text-muted-foreground h-8 w-8" />
             <p className="text-sm font-medium">拖曳檔案到這裡</p>
             <p className="text-muted-foreground text-xs">
-              或點擊選擇檔案,可一次選取多個(.txt / .xlsx / .xls)
+              或點擊選擇檔案,可一次選取多個(.txt / .xlsx / .xls / .csv)
             </p>
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".txt,.xlsx,.xls"
+              accept=".txt,.xlsx,.xls,.csv"
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
                 if (picked.length > 0) handleFiles(picked);
