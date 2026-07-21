@@ -122,6 +122,14 @@ export function formatAggregatedMatches(matches: AggregatedItem[]): string {
     .join("、");
 }
 
+export function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 export function checkKeyParts(
   keyParts: KeyPart[],
   targetItems: BomItem[]
@@ -225,6 +233,119 @@ export async function fetchAllBomItems(
   }
 
   return items;
+}
+
+const AMBIGUOUS = "ambiguous" as const;
+type Ambiguous = typeof AMBIGUOUS;
+
+/**
+ * Tracks, per lookup key (a part_no or a normalized description), whether
+ * every existing machine that uses that key agrees on a custom_name and
+ * (separately) on a slot_id. The two are tracked independently because the
+ * same custom_name legitimately gets its own slot_id per tool_type (e.g. a
+ * shared vendor part like "RPC" is its own row in three different
+ * tool_types' key_part_slots) — that shouldn't block classifying the part,
+ * only block guessing which tool_type's slot it belongs to.
+ */
+class KeyPartLookup {
+  private names = new Map<string, string | Ambiguous>();
+  private slots = new Map<string, number | null | Ambiguous>();
+
+  record(key: string, customName: string, slotId: number | null) {
+    if (!key) return;
+    const existingName = this.names.get(key);
+    if (existingName === undefined) this.names.set(key, customName);
+    else if (existingName !== AMBIGUOUS && existingName !== customName) this.names.set(key, AMBIGUOUS);
+
+    const existingSlot = this.slots.get(key);
+    if (existingSlot === undefined) this.slots.set(key, slotId);
+    else if (existingSlot !== AMBIGUOUS && existingSlot !== slotId) this.slots.set(key, AMBIGUOUS);
+  }
+
+  resolve(key: string): { custom_name: string; slot_id: number | null } | null {
+    const name = this.names.get(key);
+    if (name === undefined || name === AMBIGUOUS) return null;
+    const slot = this.slots.get(key);
+    return { custom_name: name, slot_id: slot === AMBIGUOUS ? null : (slot ?? null) };
+  }
+}
+
+/**
+ * After uploading a machine's BOM, treat every OTHER machine's existing
+ * key_parts as the pool of already-known "important parts". Any item in
+ * this machine's BOM whose part_no or (normalized) description matches one
+ * of them gets auto-classified as a key part too, inheriting custom_name
+ * (and slot_id when unambiguous, so it also shows up in the /fingerprint
+ * matrix for free). Only fills gaps — never touches a custom_name the
+ * machine already has — and skips any part_no/description that maps to a
+ * conflicting custom_name across different existing machines rather than
+ * guessing. Returns how many rows were inserted.
+ */
+export async function autoMatchKeyParts(
+  supabase: SupabaseClient,
+  machineName: string
+): Promise<number> {
+  const { data: existingRows, error: existingError } = await supabase
+    .from("key_parts")
+    .select("part_no,description,custom_name,machine_name,slot_id");
+  if (existingError) throw new Error(existingError.message);
+
+  const byPartNo = new KeyPartLookup();
+  const byDescription = new KeyPartLookup();
+  const ownCustomNames = new Set<string>();
+
+  for (const row of existingRows ?? []) {
+    if (row.machine_name === machineName) {
+      ownCustomNames.add(row.custom_name as string);
+      continue;
+    }
+    const customName = row.custom_name as string;
+    const slotId = (row.slot_id as number | null) ?? null;
+    byPartNo.record(row.part_no as string, customName, slotId);
+    byDescription.record(normalizeDescription(row.description as string | null), customName, slotId);
+  }
+
+  const { data: machineRows, error: machineError } = await supabase
+    .from("bom_machines")
+    .select("id,source_file")
+    .eq("machine_name", machineName);
+  if (machineError) throw new Error(machineError.message);
+
+  const allItems: BomItem[] = [];
+  for (const m of machineRows ?? []) {
+    allItems.push(...(await fetchAllBomItems(supabase, m.id as number, m.source_file as string)));
+  }
+  const aggregated = aggregateByPartNo(allItems);
+
+  const toInsert: {
+    part_no: string;
+    description: string | null;
+    custom_name: string;
+    machine_name: string;
+    slot_id: number | null;
+  }[] = [];
+
+  for (const item of aggregated.values()) {
+    const matched = byPartNo.resolve(item.part_no) ?? byDescription.resolve(normalizeDescription(item.description));
+
+    if (!matched || ownCustomNames.has(matched.custom_name)) continue;
+
+    toInsert.push({
+      part_no: item.part_no,
+      description: item.description,
+      custom_name: matched.custom_name,
+      machine_name: machineName,
+      slot_id: matched.slot_id,
+    });
+    ownCustomNames.add(matched.custom_name);
+  }
+
+  for (const batch of chunk(toInsert, 500)) {
+    const { error } = await supabase.from("key_parts").insert(batch);
+    if (error) throw new Error(error.message);
+  }
+
+  return toInsert.length;
 }
 
 export function toNumericQty(value: BomItem["qty"]): number {

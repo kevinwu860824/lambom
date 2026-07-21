@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseCsvBom, parseTxtBom, parseXlsxBom, type ParsedBom } from "@/lib/bom-parse";
+import { autoMatchKeyParts, chunk } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,14 +19,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
 
 interface FileEntry {
   file: File;
@@ -56,6 +49,7 @@ export function UploadBomDialog({
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [matchResult, setMatchResult] = useState<{ count: number; error?: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +57,7 @@ export function UploadBomDialog({
     setMachineName("");
     setFiles([]);
     setSubmitError(null);
+    setMatchResult(null);
   }
 
   async function handleFiles(newFiles: File[]) {
@@ -159,8 +154,10 @@ export function UploadBomDialog({
 
     setSubmitting(true);
     setSubmitError(null);
+    setMatchResult(null);
 
     let failureCount = 0;
+    let anySucceeded = false;
 
     for (const entry of toUpload) {
       setFiles((prev) =>
@@ -168,6 +165,7 @@ export function UploadBomDialog({
       );
       try {
         await uploadOne(entry.file.name, entry.parsed!, trimmedMachineName);
+        anySucceeded = true;
         setFiles((prev) =>
           prev.map((e) => (e.file === entry.file ? { ...e, status: "uploaded" } : e))
         );
@@ -180,13 +178,19 @@ export function UploadBomDialog({
       }
     }
 
+    if (anySucceeded) {
+      try {
+        const count = await autoMatchKeyParts(getSupabase(), trimmedMachineName);
+        setMatchResult({ count });
+      } catch (err) {
+        setMatchResult({ count: 0, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     setSubmitting(false);
     onUploaded();
 
-    if (failureCount === 0) {
-      setOpen(false);
-      resetForm();
-    } else {
+    if (failureCount > 0) {
       setSubmitError(`${failureCount} 個檔案上傳失敗,請檢查後重試(成功的部分不會重傳)。`);
     }
   }
@@ -313,19 +317,44 @@ export function UploadBomDialog({
           )}
 
           {submitError && <p className="text-destructive text-sm">{submitError}</p>}
+
+          {matchResult && (
+            <p className="text-sm">
+              {matchResult.error ? (
+                <span className="text-destructive">
+                  自動比對重要零件時發生錯誤:{matchResult.error}
+                </span>
+              ) : (
+                <span className="text-emerald-600">
+                  已自動比對到 {matchResult.count} 筆重要零件,加入「重要零件比對」清單。
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <DialogFooter>
-          <Button
-            onClick={handleSubmit}
-            disabled={!machineName.trim() || uploadableCount === 0 || submitting}
-          >
-            {submitting
-              ? "上傳中…"
-              : uploadableCount > 1
-                ? `確認上傳(${uploadableCount} 個檔案)`
-                : "確認上傳"}
-          </Button>
+          {uploadableCount === 0 && files.length > 0 && !submitting ? (
+            <Button
+              onClick={() => {
+                setOpen(false);
+                resetForm();
+              }}
+            >
+              完成
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSubmit}
+              disabled={!machineName.trim() || uploadableCount === 0 || submitting}
+            >
+              {submitting
+                ? "上傳中…"
+                : uploadableCount > 1
+                  ? `確認上傳(${uploadableCount} 個檔案)`
+                  : "確認上傳"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
