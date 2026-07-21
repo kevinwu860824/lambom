@@ -12,9 +12,11 @@ import { cn } from "@/lib/utils";
 export function FingerprintCell({
   value,
   onSave,
+  mismatch,
 }: {
   value: string;
   onSave: (newValue: string) => Promise<void>;
+  mismatch?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -55,7 +57,8 @@ export function FingerprintCell({
           "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
           "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
           saving && "opacity-50",
-          error && "border-destructive"
+          error && "border-destructive",
+          mismatch && "text-red-600 font-semibold"
         )}
       />
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}

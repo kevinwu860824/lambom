@@ -210,6 +210,42 @@ export default function FingerprintPage() {
 
   const existingCategories = Array.from(new Set(slots.map((s) => s.category)));
 
+  /** Per slot, which machines' part_no differs from that row's majority value. */
+  const mismatchesBySlot = useMemo(() => {
+    const result = new Map<number, Set<string>>();
+    for (const slot of slots) {
+      const values: { machine: string; partNo: string }[] = [];
+      for (const m of machines) {
+        const partNo = cells.get(cellKey(slot.id, m))?.part_no;
+        if (partNo) values.push({ machine: m, partNo });
+      }
+      if (values.length < 2) continue;
+
+      const counts = new Map<string, number>();
+      for (const { partNo } of values) {
+        counts.set(partNo, (counts.get(partNo) ?? 0) + 1);
+      }
+      if (counts.size < 2) continue; // all identical, nothing to flag
+
+      let majorityValue = values[0].partNo;
+      let majorityCount = 0;
+      for (const { partNo } of values) {
+        const count = counts.get(partNo)!;
+        if (count > majorityCount) {
+          majorityCount = count;
+          majorityValue = partNo;
+        }
+      }
+
+      const mismatched = new Set<string>();
+      for (const { machine, partNo } of values) {
+        if (partNo !== majorityValue) mismatched.add(machine);
+      }
+      result.set(slot.id, mismatched);
+    }
+    return result;
+  }, [slots, machines, cells]);
+
   async function addSlot() {
     const category = newRowCategory.trim();
     const customName = newRowName.trim();
@@ -548,6 +584,7 @@ export default function FingerprintPage() {
                                   <FingerprintCell
                                     value={cell?.part_no ?? ""}
                                     onSave={(newValue) => saveCell(slot, m, newValue)}
+                                    mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
                                   />
                                 </TableCell>
                               );
