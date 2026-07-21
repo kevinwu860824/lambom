@@ -26,6 +26,7 @@ import {
 import { FingerprintCell } from "@/components/fingerprint-cell";
 import { EditableField } from "@/components/editable-field";
 import { ColorPickerPopover, ColorSwatchTrigger } from "@/components/color-picker-popover";
+import { RenamePopover } from "@/components/rename-popover";
 
 interface KeyPartSlot {
   id: number;
@@ -212,6 +213,19 @@ export default function FingerprintPage() {
       }))
       .sort((a, b) => a.minSortOrder - b.minSortOrder);
   }, [slots]);
+
+  async function renameCategory(oldCategory: string, newCategory: string) {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("key_part_slots")
+      .update({ category: newCategory })
+      .eq("tool_type", selectedToolType)
+      .eq("category", oldCategory);
+    if (error) throw new Error(error.message);
+    setSlots((prev) =>
+      prev.map((s) => (s.category === oldCategory ? { ...s, category: newCategory } : s))
+    );
+  }
 
   async function setCategoryColor(category: string, color: string | null) {
     const { error } = await getSupabase()
@@ -617,20 +631,27 @@ export default function FingerprintPage() {
                                 style={group.color ? { backgroundColor: group.color } : undefined}
                               >
                                 <div className="flex flex-col items-center gap-1">
-                                  <ColorPickerPopover
-                                    value={group.color}
-                                    onChange={(c) => setCategoryColor(group.category, c)}
-                                  >
-                                    <button
-                                      type="button"
-                                      aria-label={`更改「${group.category}」分類顏色`}
-                                      className={cn(
-                                        "h-3 w-3 shrink-0 rounded-full border border-black/20",
-                                        !group.color && categoryColor(group.category)
-                                      )}
-                                      style={group.color ? { backgroundColor: group.color } : undefined}
+                                  <div className="flex items-center gap-1">
+                                    <ColorPickerPopover
+                                      value={group.color}
+                                      onChange={(c) => setCategoryColor(group.category, c)}
+                                    >
+                                      <button
+                                        type="button"
+                                        aria-label={`更改「${group.category}」分類顏色`}
+                                        className={cn(
+                                          "h-3 w-3 shrink-0 rounded-full border border-black/20",
+                                          !group.color && categoryColor(group.category)
+                                        )}
+                                        style={group.color ? { backgroundColor: group.color } : undefined}
+                                      />
+                                    </ColorPickerPopover>
+                                    <RenamePopover
+                                      value={group.category}
+                                      onSave={(newValue) => renameCategory(group.category, newValue)}
+                                      triggerLabel={`重新命名分類「${group.category}」`}
                                     />
-                                  </ColorPickerPopover>
+                                  </div>
                                   <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
                                     {group.category}
                                   </span>
