@@ -651,7 +651,7 @@ export default function FingerprintPage() {
                                 style={group.color ? { backgroundColor: group.color } : undefined}
                               >
                                 <div className="flex flex-col items-center gap-1">
-                                  {editMode ? (
+                                  {editMode && (
                                     <CategoryEditPopover
                                       category={group.category}
                                       color={group.color}
@@ -661,21 +661,11 @@ export default function FingerprintPage() {
                                       <button
                                         type="button"
                                         aria-label={`編輯分類「${group.category}」`}
-                                        className={cn(
-                                          "h-3 w-3 shrink-0 rounded-full border border-black/20",
-                                          !group.color && categoryColor(group.category)
-                                        )}
-                                        style={group.color ? { backgroundColor: group.color } : undefined}
-                                      />
+                                        className="shrink-0 rounded p-0.5 hover:bg-black/10"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                      </button>
                                     </CategoryEditPopover>
-                                  ) : (
-                                    <span
-                                      className={cn(
-                                        "h-3 w-3 shrink-0 rounded-full border border-black/20",
-                                        !group.color && categoryColor(group.category)
-                                      )}
-                                      style={group.color ? { backgroundColor: group.color } : undefined}
-                                    />
                                   )}
                                   <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
                                     {group.category}
