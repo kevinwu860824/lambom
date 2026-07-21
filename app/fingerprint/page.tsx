@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Plus, Trash2, X as XIcon } from "lucide-react";
+import { Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -84,6 +84,7 @@ export default function FingerprintPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
 
   const [newRowCategory, setNewRowCategory] = useState("");
   const [newRowName, setNewRowName] = useState("");
@@ -100,6 +101,7 @@ export default function FingerprintPage() {
   }, []);
 
   useEffect(() => {
+    setEditMode(false);
     if (selectedToolType) {
       loadForToolType(selectedToolType);
     } else {
@@ -594,19 +596,37 @@ export default function FingerprintPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-10" />
-                        <TableHead className="min-w-[180px]">插槽</TableHead>
+                        <TableHead className="min-w-[180px]">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              aria-label={editMode ? "完成編輯" : "編輯整張表"}
+                              onClick={() => setEditMode((v) => !v)}
+                            >
+                              {editMode ? (
+                                <Check className="h-4 w-4 text-emerald-600" />
+                              ) : (
+                                <Pencil className="h-4 w-4" />
+                              )}
+                            </Button>
+                            插槽
+                          </div>
+                        </TableHead>
                         {machines.map((m) => (
                           <TableHead key={m} className="min-w-[160px]">
                             <div className="flex items-center justify-between gap-1">
                               {m}
-                              <Button
-                                size="icon-sm"
-                                variant="ghost"
-                                aria-label={`移除機台 ${m}`}
-                                onClick={() => removeMachine(m)}
-                              >
-                                <XIcon className="h-3 w-3" />
-                              </Button>
+                              {editMode && (
+                                <Button
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label={`移除機台 ${m}`}
+                                  onClick={() => removeMachine(m)}
+                                >
+                                  <XIcon className="h-3 w-3" />
+                                </Button>
+                              )}
                             </div>
                           </TableHead>
                         ))}
@@ -631,22 +651,32 @@ export default function FingerprintPage() {
                                 style={group.color ? { backgroundColor: group.color } : undefined}
                               >
                                 <div className="flex flex-col items-center gap-1">
-                                  <CategoryEditPopover
-                                    category={group.category}
-                                    color={group.color}
-                                    onRename={(newValue) => renameCategory(group.category, newValue)}
-                                    onColorChange={(c) => setCategoryColor(group.category, c)}
-                                  >
-                                    <button
-                                      type="button"
-                                      aria-label={`編輯分類「${group.category}」`}
+                                  {editMode ? (
+                                    <CategoryEditPopover
+                                      category={group.category}
+                                      color={group.color}
+                                      onRename={(newValue) => renameCategory(group.category, newValue)}
+                                      onColorChange={(c) => setCategoryColor(group.category, c)}
+                                    >
+                                      <button
+                                        type="button"
+                                        aria-label={`編輯分類「${group.category}」`}
+                                        className={cn(
+                                          "h-3 w-3 shrink-0 rounded-full border border-black/20",
+                                          !group.color && categoryColor(group.category)
+                                        )}
+                                        style={group.color ? { backgroundColor: group.color } : undefined}
+                                      />
+                                    </CategoryEditPopover>
+                                  ) : (
+                                    <span
                                       className={cn(
                                         "h-3 w-3 shrink-0 rounded-full border border-black/20",
                                         !group.color && categoryColor(group.category)
                                       )}
                                       style={group.color ? { backgroundColor: group.color } : undefined}
                                     />
-                                  </CategoryEditPopover>
+                                  )}
                                   <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
                                     {group.category}
                                   </span>
@@ -656,19 +686,25 @@ export default function FingerprintPage() {
                             <TableCell className="font-medium whitespace-normal">
                               <div className="flex items-center gap-1">
                                 <div className="min-w-0 flex-1">
-                                  <EditableField
-                                    value={slot.custom_name}
-                                    onSave={(newValue) => renameSlot(slot, newValue)}
-                                  />
+                                  {editMode ? (
+                                    <EditableField
+                                      value={slot.custom_name}
+                                      onSave={(newValue) => renameSlot(slot, newValue)}
+                                    />
+                                  ) : (
+                                    <span className="px-1.5 text-sm">{slot.custom_name}</span>
+                                  )}
                                 </div>
-                                <Button
-                                  size="icon-sm"
-                                  variant="ghost"
-                                  aria-label="刪除這一列"
-                                  onClick={() => deleteSlot(slot)}
-                                >
-                                  <Trash2 className="text-destructive h-3.5 w-3.5" />
-                                </Button>
+                                {editMode && (
+                                  <Button
+                                    size="icon-sm"
+                                    variant="ghost"
+                                    aria-label="刪除這一列"
+                                    onClick={() => deleteSlot(slot)}
+                                  >
+                                    <Trash2 className="text-destructive h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                             {machines.map((m) => {
@@ -679,6 +715,7 @@ export default function FingerprintPage() {
                                     value={cell?.part_no ?? ""}
                                     onSave={(newValue) => saveCell(slot, m, newValue)}
                                     mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
+                                    readOnly={!editMode}
                                   />
                                 </TableCell>
                               );

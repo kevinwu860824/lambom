@@ -13,10 +13,12 @@ export function FingerprintCell({
   value,
   onSave,
   mismatch,
+  readOnly,
 }: {
   value: string;
   onSave: (newValue: string) => Promise<void>;
   mismatch?: boolean;
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -47,6 +49,7 @@ export function FingerprintCell({
       <input
         value={draft}
         disabled={saving}
+        readOnly={readOnly}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -55,7 +58,8 @@ export function FingerprintCell({
         }}
         className={cn(
           "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
-          "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
+          !readOnly &&
+            "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
           saving && "opacity-50",
           error && "border-destructive",
           mismatch && "text-red-600 font-semibold"
