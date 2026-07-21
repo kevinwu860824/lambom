@@ -312,8 +312,8 @@ export default function FingerprintPage() {
         .eq("machine_name", name);
       if (error) throw new Error(error.message);
 
-      setMachines((prev) => [...prev, name].sort());
       setAddMachineValue("");
+      await loadForToolType(selectedToolType);
       loadToolTypes();
     } catch (err) {
       setAddMachineError(err instanceof Error ? err.message : String(err));
