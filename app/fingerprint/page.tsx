@@ -24,6 +24,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { FingerprintCell } from "@/components/fingerprint-cell";
+import { EditableField } from "@/components/editable-field";
+import { ColorPickerPopover, ColorSwatchTrigger } from "@/components/color-picker-popover";
 
 interface KeyPartSlot {
   id: number;
@@ -31,6 +33,7 @@ interface KeyPartSlot {
   category: string;
   custom_name: string;
   sort_order: number;
+  color: string | null;
 }
 
 interface CellValue {
@@ -83,6 +86,7 @@ export default function FingerprintPage() {
 
   const [newRowCategory, setNewRowCategory] = useState("");
   const [newRowName, setNewRowName] = useState("");
+  const [newRowColor, setNewRowColor] = useState<string | null>(null);
   const [addRowError, setAddRowError] = useState<string | null>(null);
 
   const [addMachineValue, setAddMachineValue] = useState("");
@@ -139,7 +143,7 @@ export default function FingerprintPage() {
       const [slotsRes, machinesRes] = await Promise.all([
         supabase
           .from("key_part_slots")
-          .select("id,tool_type,category,custom_name,sort_order")
+          .select("id,tool_type,category,custom_name,sort_order,color")
           .eq("tool_type", toolType),
         supabase.from("bom_machines").select("machine_name").eq("tool_type", toolType),
       ]);
@@ -203,10 +207,46 @@ export default function FingerprintPage() {
       .map(([category, rows]) => ({
         category,
         rows,
+        color: rows.find((r) => r.color)?.color ?? null,
         minSortOrder: Math.min(...rows.map((r) => r.sort_order)),
       }))
       .sort((a, b) => a.minSortOrder - b.minSortOrder);
   }, [slots]);
+
+  async function setCategoryColor(category: string, color: string | null) {
+    const { error } = await getSupabase()
+      .from("key_part_slots")
+      .update({ color })
+      .eq("tool_type", selectedToolType)
+      .eq("category", category);
+    if (error) throw new Error(error.message);
+    setSlots((prev) => prev.map((s) => (s.category === category ? { ...s, color } : s)));
+  }
+
+  async function renameSlot(slot: KeyPartSlot, newCustomName: string) {
+    if (
+      slots.some(
+        (s) => s.id !== slot.id && s.category === slot.category && s.custom_name === newCustomName
+      )
+    ) {
+      throw new Error("這個分類底下已經有同名的插槽了");
+    }
+
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("key_part_slots")
+      .update({ custom_name: newCustomName })
+      .eq("id", slot.id);
+    if (error) throw new Error(error.message);
+
+    const { error: cascadeError } = await supabase
+      .from("key_parts")
+      .update({ custom_name: newCustomName })
+      .eq("slot_id", slot.id);
+    if (cascadeError) throw new Error(cascadeError.message);
+
+    setSlots((prev) => prev.map((s) => (s.id === slot.id ? { ...s, custom_name: newCustomName } : s)));
+  }
 
   const existingCategories = Array.from(new Set(slots.map((s) => s.category)));
 
@@ -260,6 +300,9 @@ export default function FingerprintPage() {
 
     setAddRowError(null);
     const nextSortOrder = slots.length > 0 ? Math.max(...slots.map((s) => s.sort_order)) + 10 : 0;
+    // an existing category always keeps its own established color; the picker
+    // here only decides the color for a brand-new category.
+    const color = slots.find((s) => s.category === category)?.color ?? newRowColor;
 
     try {
       const { data, error } = await getSupabase()
@@ -269,13 +312,15 @@ export default function FingerprintPage() {
           category,
           custom_name: customName,
           sort_order: nextSortOrder,
+          color,
         })
-        .select("id,tool_type,category,custom_name,sort_order")
+        .select("id,tool_type,category,custom_name,sort_order,color")
         .single();
       if (error) throw new Error(error.message);
 
       setSlots((prev) => [...prev, data as KeyPartSlot]);
       setNewRowName("");
+      setNewRowColor(null);
     } catch (err) {
       setAddRowError(err instanceof Error ? err.message : String(err));
     }
@@ -507,11 +552,20 @@ export default function FingerprintPage() {
                     }}
                   />
                 </div>
+                <div className="grid gap-1.5">
+                  <label className="text-xs font-medium">顏色</label>
+                  <ColorPickerPopover value={newRowColor} onChange={(c) => setNewRowColor(c)}>
+                    <ColorSwatchTrigger color={newRowColor} />
+                  </ColorPickerPopover>
+                </div>
                 <Button size="sm" onClick={addSlot}>
                   <Plus className="h-4 w-4" />
                   新增一列
                 </Button>
                 {addRowError && <p className="text-destructive text-xs">{addRowError}</p>}
+                <p className="text-muted-foreground w-full text-xs">
+                  顏色只用在新分類;分類已存在的話會沿用該分類原本的顏色(可在下方表格分類色塊上更改)。
+                </p>
               </div>
 
               {loading ? (
@@ -557,16 +611,40 @@ export default function FingerprintPage() {
                               <TableCell
                                 rowSpan={group.rows.length}
                                 className={cn(
-                                  "w-10 text-center align-middle text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]",
-                                  categoryColor(group.category)
+                                  "w-10 p-1 text-center align-middle",
+                                  !group.color && categoryColor(group.category)
                                 )}
+                                style={group.color ? { backgroundColor: group.color } : undefined}
                               >
-                                {group.category}
+                                <div className="flex flex-col items-center gap-1">
+                                  <ColorPickerPopover
+                                    value={group.color}
+                                    onChange={(c) => setCategoryColor(group.category, c)}
+                                  >
+                                    <button
+                                      type="button"
+                                      aria-label={`更改「${group.category}」分類顏色`}
+                                      className={cn(
+                                        "h-3 w-3 shrink-0 rounded-full border border-black/20",
+                                        !group.color && categoryColor(group.category)
+                                      )}
+                                      style={group.color ? { backgroundColor: group.color } : undefined}
+                                    />
+                                  </ColorPickerPopover>
+                                  <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
+                                    {group.category}
+                                  </span>
+                                </div>
                               </TableCell>
                             )}
                             <TableCell className="font-medium whitespace-normal">
-                              <div className="flex items-center justify-between gap-1">
-                                {slot.custom_name}
+                              <div className="flex items-center gap-1">
+                                <div className="min-w-0 flex-1">
+                                  <EditableField
+                                    value={slot.custom_name}
+                                    onSave={(newValue) => renameSlot(slot, newValue)}
+                                  />
+                                </div>
                                 <Button
                                   size="icon-sm"
                                   variant="ghost"
