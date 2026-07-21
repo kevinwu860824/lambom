@@ -1,0 +1,64 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
+
+/**
+ * Lightweight blur-to-save cell editor for the fingerprint matrix — unlike
+ * EditableField (which needs an explicit confirm click, meant for a single
+ * rename field), a dense grid with many columns wants "type, tab/click
+ * away, it's saved" like a spreadsheet.
+ */
+export function FingerprintCell({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (newValue: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  async function commit() {
+    const trimmed = draft.trim();
+    if (trimmed === value) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(trimmed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDraft(value);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="min-w-[140px]">
+      <input
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setDraft(value);
+        }}
+        className={cn(
+          "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
+          "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
+          saving && "opacity-50",
+          error && "border-destructive"
+        )}
+      />
+      {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}
+    </div>
+  );
+}

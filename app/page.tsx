@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
@@ -405,6 +406,9 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-start gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/fingerprint">重要零件指紋表</Link>
+            </Button>
             <EditMachinesDialog machineGroups={machineGroups} onChanged={handleUploaded} />
             <UploadBomDialog
               existingMachines={machineGroups.map((g) => g.machine)}
