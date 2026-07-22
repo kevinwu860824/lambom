@@ -202,6 +202,37 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
   return { machineGroups, bomData };
 }
 
+// A page fetch occasionally hits "canceling statement due to statement
+// timeout" on its first touch of cold, un-cached table pages (observed on
+// bom_items, which can hold 500k+ rows) — the identical query reliably
+// succeeds a moment later once Postgres has warmed its cache. Retry a
+// couple of times with backoff before giving up, instead of failing the
+// whole comparison over a transient timeout.
+async function fetchBomItemsPage(
+  supabase: SupabaseClient,
+  bomId: number,
+  from: number,
+  pageSize: number
+): Promise<BomItem[]> {
+  const maxAttempts = 3;
+  let lastMessage = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { data, error } = await supabase
+      .from("bom_items")
+      .select("part_no,description,qty,uom")
+      .eq("bom_id", bomId)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (!error) return data ?? [];
+    lastMessage = error.message;
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw new Error(lastMessage);
+}
+
 export async function fetchAllBomItems(
   supabase: SupabaseClient,
   bomId: number,
@@ -215,18 +246,15 @@ export async function fetchAllBomItems(
   // so a single request with a high .limit() is silently truncated.
   // Page through with .range() until a page comes back short.
   for (;;) {
-    const { data, error } = await supabase
-      .from("bom_items")
-      .select("part_no,description,qty,uom")
-      .eq("bom_id", bomId)
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
-
-    if (error) {
-      throw new Error(`載入子項失敗 (${sourceFile}):${error.message}`);
+    let data: BomItem[];
+    try {
+      data = await fetchBomItemsPage(supabase, bomId, from, pageSize);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`載入子項失敗 (${sourceFile}):${message}`);
     }
 
-    if (!data || data.length === 0) break;
+    if (data.length === 0) break;
     items.push(...data);
     if (data.length < pageSize) break;
     from += pageSize;
