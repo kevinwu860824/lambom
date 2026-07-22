@@ -591,131 +591,129 @@ export default function FingerprintPage() {
                   這個機型還沒有任何列,先在上面新增一列。
                 </p>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-10" />
-                        <TableHead className="min-w-[180px]">
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="icon-sm"
-                              variant="ghost"
-                              aria-label={editMode ? "完成編輯" : "編輯整張表"}
-                              onClick={() => setEditMode((v) => !v)}
-                            >
-                              {editMode ? (
-                                <Check className="h-4 w-4 text-emerald-600" />
-                              ) : (
-                                <Pencil className="h-4 w-4" />
-                              )}
-                            </Button>
-                            插槽
+                <Table containerClassName="max-h-[70vh] overflow-y-auto">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="bg-card sticky top-0 z-10 w-10" />
+                      <TableHead className="bg-card sticky top-0 z-10 min-w-[180px]">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label={editMode ? "完成編輯" : "編輯整張表"}
+                            onClick={() => setEditMode((v) => !v)}
+                          >
+                            {editMode ? (
+                              <Check className="h-4 w-4 text-emerald-600" />
+                            ) : (
+                              <Pencil className="h-4 w-4" />
+                            )}
+                          </Button>
+                          插槽
+                        </div>
+                      </TableHead>
+                      {machines.map((m) => (
+                        <TableHead key={m} className="bg-card sticky top-0 z-10 min-w-[160px]">
+                          <div className="flex items-center justify-between gap-1">
+                            {m}
+                            {editMode && (
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`移除機台 ${m}`}
+                                onClick={() => removeMachine(m)}
+                              >
+                                <XIcon className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
                         </TableHead>
-                        {machines.map((m) => (
-                          <TableHead key={m} className="min-w-[160px]">
-                            <div className="flex items-center justify-between gap-1">
-                              {m}
+                      ))}
+                      {machines.length === 0 && (
+                        <TableHead className="bg-card sticky top-0 z-10 text-muted-foreground font-normal">
+                          還沒有機台,先在上面加入
+                        </TableHead>
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {groups.map((group) =>
+                      group.rows.map((slot, i) => (
+                        <TableRow key={slot.id}>
+                          {i === 0 && (
+                            <TableCell
+                              rowSpan={group.rows.length}
+                              className={cn(
+                                "w-10 p-1 text-center align-middle",
+                                !group.color && categoryColor(group.category)
+                              )}
+                              style={group.color ? { backgroundColor: group.color } : undefined}
+                            >
+                              <div className="flex flex-col items-center gap-1">
+                                {editMode && (
+                                  <CategoryEditPopover
+                                    category={group.category}
+                                    color={group.color}
+                                    onRename={(newValue) => renameCategory(group.category, newValue)}
+                                    onColorChange={(c) => setCategoryColor(group.category, c)}
+                                  >
+                                    <button
+                                      type="button"
+                                      aria-label={`編輯分類「${group.category}」`}
+                                      className="shrink-0 rounded p-0.5 hover:bg-black/10"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                  </CategoryEditPopover>
+                                )}
+                                <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
+                                  {group.category}
+                                </span>
+                              </div>
+                            </TableCell>
+                          )}
+                          <TableCell className="font-medium whitespace-normal">
+                            <div className="flex items-center gap-1">
+                              <div className="min-w-0 flex-1">
+                                {editMode ? (
+                                  <EditableField
+                                    value={slot.custom_name}
+                                    onSave={(newValue) => renameSlot(slot, newValue)}
+                                  />
+                                ) : (
+                                  <span className="px-1.5 text-sm">{slot.custom_name}</span>
+                                )}
+                              </div>
                               {editMode && (
                                 <Button
                                   size="icon-sm"
                                   variant="ghost"
-                                  aria-label={`移除機台 ${m}`}
-                                  onClick={() => removeMachine(m)}
+                                  aria-label="刪除這一列"
+                                  onClick={() => deleteSlot(slot)}
                                 >
-                                  <XIcon className="h-3 w-3" />
+                                  <Trash2 className="text-destructive h-3.5 w-3.5" />
                                 </Button>
                               )}
                             </div>
-                          </TableHead>
-                        ))}
-                        {machines.length === 0 && (
-                          <TableHead className="text-muted-foreground font-normal">
-                            還沒有機台,先在上面加入
-                          </TableHead>
-                        )}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {groups.map((group) =>
-                        group.rows.map((slot, i) => (
-                          <TableRow key={slot.id}>
-                            {i === 0 && (
-                              <TableCell
-                                rowSpan={group.rows.length}
-                                className={cn(
-                                  "w-10 p-1 text-center align-middle",
-                                  !group.color && categoryColor(group.category)
-                                )}
-                                style={group.color ? { backgroundColor: group.color } : undefined}
-                              >
-                                <div className="flex flex-col items-center gap-1">
-                                  {editMode && (
-                                    <CategoryEditPopover
-                                      category={group.category}
-                                      color={group.color}
-                                      onRename={(newValue) => renameCategory(group.category, newValue)}
-                                      onColorChange={(c) => setCategoryColor(group.category, c)}
-                                    >
-                                      <button
-                                        type="button"
-                                        aria-label={`編輯分類「${group.category}」`}
-                                        className="shrink-0 rounded p-0.5 hover:bg-black/10"
-                                      >
-                                        <Pencil className="h-3 w-3" />
-                                      </button>
-                                    </CategoryEditPopover>
-                                  )}
-                                  <span className="text-xs font-semibold whitespace-normal [writing-mode:vertical-rl]">
-                                    {group.category}
-                                  </span>
-                                </div>
+                          </TableCell>
+                          {machines.map((m) => {
+                            const cell = cells.get(cellKey(slot.id, m));
+                            return (
+                              <TableCell key={m} className="p-0">
+                                <FingerprintCell
+                                  value={cell?.part_no ?? ""}
+                                  onSave={(newValue) => saveCell(slot, m, newValue)}
+                                  mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
+                                  readOnly={!editMode}
+                                />
                               </TableCell>
-                            )}
-                            <TableCell className="font-medium whitespace-normal">
-                              <div className="flex items-center gap-1">
-                                <div className="min-w-0 flex-1">
-                                  {editMode ? (
-                                    <EditableField
-                                      value={slot.custom_name}
-                                      onSave={(newValue) => renameSlot(slot, newValue)}
-                                    />
-                                  ) : (
-                                    <span className="px-1.5 text-sm">{slot.custom_name}</span>
-                                  )}
-                                </div>
-                                {editMode && (
-                                  <Button
-                                    size="icon-sm"
-                                    variant="ghost"
-                                    aria-label="刪除這一列"
-                                    onClick={() => deleteSlot(slot)}
-                                  >
-                                    <Trash2 className="text-destructive h-3.5 w-3.5" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                            {machines.map((m) => {
-                              const cell = cells.get(cellKey(slot.id, m));
-                              return (
-                                <TableCell key={m} className="p-0">
-                                  <FingerprintCell
-                                    value={cell?.part_no ?? ""}
-                                    onSave={(newValue) => saveCell(slot, m, newValue)}
-                                    mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
-                                    readOnly={!editMode}
-                                  />
-                                </TableCell>
-                              );
-                            })}
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                            );
+                          })}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>
