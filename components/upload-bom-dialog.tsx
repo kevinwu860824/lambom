@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseCsvBom, parseTxtBom, parseXlsxBom, type ParsedBom } from "@/lib/bom-parse";
-import { autoMatchKeyParts, chunk } from "@/lib/bom";
+import { autoMatchKeyParts, chunk, withRetry } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -123,7 +123,9 @@ export function UploadBomDialog({
         .eq("id", bomId);
       if (updateError) throw new Error(updateError.message);
 
-      const { error: deleteError } = await supabase.from("bom_items").delete().eq("bom_id", bomId);
+      const { error: deleteError } = await withRetry(() =>
+        supabase.from("bom_items").delete().eq("bom_id", bomId)
+      );
       if (deleteError) throw new Error(deleteError.message);
     } else {
       const { data: inserted, error: insertMachineError } = await supabase
@@ -142,7 +144,9 @@ export function UploadBomDialog({
 
     const rows = parsed.items.map((item) => ({ ...item, bom_id: bomId }));
     for (const batch of chunk(rows, 500)) {
-      const { error: insertItemsError } = await supabase.from("bom_items").insert(batch);
+      const { error: insertItemsError } = await withRetry(() =>
+        supabase.from("bom_items").insert(batch)
+      );
       if (insertItemsError) throw new Error(insertItemsError.message);
     }
   }

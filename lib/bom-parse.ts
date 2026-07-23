@@ -234,6 +234,97 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
 }
 
 /**
+ * Parses the flat "Part Number / Description / Indent(raw tab depth) / Qty
+ * / Unit" xlsx export — unlike parseExcelBom/parseSapFieldRows, hierarchy
+ * isn't given via genealogy columns; each row just carries its own
+ * indentation depth as a number. Reconstructed with the same indent-stack
+ * approach parseTxtBom uses for raw text indentation width, just keyed off
+ * this column's value instead of counting leading whitespace.
+ */
+function parseIndentedRows(rows: string[][]): ParsedBom {
+  if (rows.length < 2) {
+    throw new Error("檔案內容不足(至少需要表頭 + 一筆資料)");
+  }
+
+  const headerFields = rows[0].map((h) => h.trim());
+  const colIndex = (name: string) => headerFields.indexOf(name);
+
+  const partNoIdx = colIndex("Part Number");
+  const descriptionIdx = colIndex("Description");
+  const indentIdx = headerFields.findIndex((h) => /^Indent/i.test(h));
+  const qtyIdx = colIndex("Qty");
+  const uomIdx = colIndex("Unit");
+
+  if (partNoIdx === -1 || indentIdx === -1) {
+    throw new Error("表頭找不到必要欄位(Part Number / Indent),請確認檔案格式");
+  }
+
+  const items: ParsedBomItem[] = [];
+  const stack: { indent: number; partNo: string }[] = [];
+  let rootPartNo = "";
+  let rootDescription = "";
+
+  for (let r = 1; r < rows.length; r++) {
+    const fields = rows[r];
+    if (!fields || fields.every((c) => !c.trim())) continue;
+
+    const partNo = (fields[partNoIdx] ?? "").trim();
+    const indentRaw = (fields[indentIdx] ?? "").trim();
+    const indent = Number.parseInt(indentRaw, 10);
+    if (!partNo || Number.isNaN(indent)) continue;
+
+    const description = collapseSpaces(fields[descriptionIdx] ?? "");
+    const uom = (fields[uomIdx] ?? "").trim() || null;
+    const qtyRaw = (fields[qtyIdx] ?? "").trim();
+    const qty = qtyRaw ? Number.parseFloat(qtyRaw) : null;
+
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const level = stack.length;
+    const parentPartNo = stack.length > 0 ? stack[stack.length - 1].partNo : null;
+    const parentPath = stack.map((entry) => entry.partNo).join("/");
+
+    if (level === 0) {
+      rootPartNo = partNo;
+      rootDescription = description;
+    }
+
+    items.push({
+      part_no: partNo,
+      description: description || null,
+      qty: qty !== null && Number.isFinite(qty) ? qty : null,
+      uom,
+      level,
+      parent_part_no: parentPartNo,
+      parent_path: parentPath,
+      line_no: r + 1,
+    });
+
+    stack.push({ indent, partNo });
+  }
+
+  if (!rootPartNo) {
+    throw new Error("找不到根節點,請確認檔案內容");
+  }
+
+  return { rootPartNo, rootDescription, items };
+}
+
+export function parseIndentedExcelBom(buffer: ArrayBuffer): ParsedBom {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+  });
+  return parseIndentedRows(rows);
+}
+
+/**
  * RFC4180-ish CSV tokenizer: comma-delimited, `"..."` quoting with `""` as
  * an escaped quote, quoted fields may contain literal commas/newlines.
  * Needed because this format's Description field legitimately contains
@@ -518,25 +609,32 @@ function readXlsxRowsLenient(buffer: ArrayBuffer): string[][] {
 }
 
 /**
- * Entry point for .xlsx/.xls uploads — auto-detects which of the two known
- * xlsx variants a file is:
+ * Entry point for .xlsx/.xls uploads — auto-detects which of the known xlsx
+ * variants a file is:
  *  1. The "renamed header" messy export (Material/Description/Uni/Level/
  *     Genealogy NN, comma-fractured cells) → parseExcelBom, unchanged.
- *  2. The raw-SAP-named export (MATERIAL/.../GENE00..), which sometimes
+ *  2. The flat "Part Number/Description/Indent(raw tab depth)/Qty/Unit"
+ *     export, hierarchy given as a per-row depth number rather than
+ *     genealogy columns → parseIndentedExcelBom.
+ *  3. The raw-SAP-named export (MATERIAL/.../GENE00..), which sometimes
  *     also has the invalid-coordinate bug described on parseSheetRowsLenient
  *     → read positionally and fed through the same field mapping as the CSV
  *     format.
- * Tries (1) first since it's a normal, fast XLSX.read(); only unzips by
- * hand for (2) when (1)'s expected headers aren't found.
+ * Tries (1) and (2) first since they're a normal, fast XLSX.read(); only
+ * unzips by hand for (3) when neither's expected headers are found.
  */
 export function parseXlsxBom(buffer: ArrayBuffer): ParsedBom {
   try {
     return parseExcelBom(buffer);
   } catch (primaryErr) {
     try {
-      return parseSapFieldRows(readXlsxRowsLenient(buffer));
+      return parseIndentedExcelBom(buffer);
     } catch {
-      throw primaryErr instanceof Error ? primaryErr : new Error(String(primaryErr));
+      try {
+        return parseSapFieldRows(readXlsxRowsLenient(buffer));
+      } catch {
+        throw primaryErr instanceof Error ? primaryErr : new Error(String(primaryErr));
+      }
     }
   }
 }

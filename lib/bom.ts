@@ -202,35 +202,45 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
   return { machineGroups, bomData };
 }
 
-// A page fetch occasionally hits "canceling statement due to statement
-// timeout" on its first touch of cold, un-cached table pages (observed on
-// bom_items, which can hold 500k+ rows) — the identical query reliably
-// succeeds a moment later once Postgres has warmed its cache. Retry a
-// couple of times with backoff before giving up, instead of failing the
-// whole comparison over a transient timeout.
+/**
+ * Retries a Supabase read/write a couple of times with backoff. Covers
+ * transient "canceling statement due to statement timeout" errors seen on
+ * bom_items (500k+ rows, growing) when a query or insert touches cold,
+ * un-cached table pages — the identical operation reliably succeeds a
+ * moment later once Postgres' cache has warmed. Not meant to paper over
+ * persistent errors: those still throw once attempts are exhausted.
+ */
+export async function withRetry<T extends { error: { message: string } | null }>(
+  run: () => PromiseLike<T>,
+  maxAttempts = 3
+): Promise<T> {
+  let last!: T;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last = await run();
+    if (!last.error) return last;
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  return last;
+}
+
 async function fetchBomItemsPage(
   supabase: SupabaseClient,
   bomId: number,
   from: number,
   pageSize: number
 ): Promise<BomItem[]> {
-  const maxAttempts = 3;
-  let lastMessage = "";
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const { data, error } = await supabase
+  const { data, error } = await withRetry(() =>
+    supabase
       .from("bom_items")
       .select("part_no,description,qty,uom")
       .eq("bom_id", bomId)
       .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
-
-    if (!error) return data ?? [];
-    lastMessage = error.message;
-    if (attempt < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-    }
-  }
-  throw new Error(lastMessage);
+      .range(from, from + pageSize - 1)
+  );
+  if (error) throw new Error(error.message);
+  return data ?? [];
 }
 
 export async function fetchAllBomItems(
