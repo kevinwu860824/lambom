@@ -36,6 +36,12 @@ import time
 import win32com.client
 import openpyxl
 
+# 被 Electron 當子程序執行時,stdout/stderr 沒有接到真正的主控台,Windows 上
+# Python 預設會退回 cp1252 之類編不了中文的編碼,一印中文 log 就會
+# UnicodeEncodeError 崩潰。強制改成 utf-8,編不了的字元用替代符號頂著,不當機。
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 # 公司 Portal 裡「開啟 SAP」那個連結的網址，開這個網址會透過 SSO 自動幫你連進 SAP。
 # 這是你個人的 navurl，換人用要換成那個人自己的連結。
