@@ -16,6 +16,14 @@
 *.xls
 PM2.txt
 
+# desktop (Electron shell + SAP downloader) build artifacts
+desktop/electron/node_modules/
+desktop/electron/dist/
+desktop/sap-downloader/dist/
+desktop/sap-downloader/build/
+desktop/sap-downloader/__pycache__/
+desktop/sap-downloader/*.spec
+
 # misc
 .DS_Store
 *.pem

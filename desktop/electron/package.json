@@ -1,0 +1,35 @@
+{
+  "name": "lambom-desktop",
+  "version": "1.0.0",
+  "description": "lambom 桌面版 - 用 Electron 包裝現有網頁版,並內建 SAP FID 下載工具",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.lambom.desktop",
+    "productName": "lambom",
+    "files": [
+      "main.js",
+      "preload.js",
+      "fid-downloader.html",
+      "fid-downloader-renderer.js",
+      "config.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../sap-downloader/dist/fid_downloader_cli.exe",
+        "to": "fid_downloader_cli.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
