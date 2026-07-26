@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { Check, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { fetchMachineGroups, type BomEntry, type MachineGroup } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ export default function MachinesPage() {
   const [error, setError] = useState<string | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -159,9 +160,19 @@ export default function MachinesPage() {
               改完按 Enter 或點確認就會立即更新到 Supabase。
             </p>
           </div>
-          <Link href="/" className="text-sm underline underline-offset-4">
-            回到比對工具
-          </Link>
+          <div className="flex items-center gap-3">
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label={editMode ? "完成編輯" : "編輯機台/子項"}
+              onClick={() => setEditMode((v) => !v)}
+            >
+              {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
+            </Button>
+            <Link href="/" className="text-sm underline underline-offset-4">
+              回到比對工具
+            </Link>
+          </div>
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
@@ -180,20 +191,26 @@ export default function MachinesPage() {
                   <Label className="mb-1.5">機台名稱</Label>
                   <div className="flex items-center gap-2">
                     <div className="flex-1">
-                      <EditableField
-                        value={group.machine}
-                        onSave={(newValue) => renameMachine(group.machine, newValue)}
-                      />
+                      {editMode ? (
+                        <EditableField
+                          value={group.machine}
+                          onSave={(newValue) => renameMachine(group.machine, newValue)}
+                        />
+                      ) : (
+                        <p className="px-1.5 py-1 text-sm font-medium">{group.machine}</p>
+                      )}
                     </div>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="刪除機台"
-                      disabled={deletingKey === `machine:${group.machine}`}
-                      onClick={() => deleteMachine(group)}
-                    >
-                      <Trash2 className="text-destructive h-4 w-4" />
-                    </Button>
+                    {editMode && (
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="刪除機台"
+                        disabled={deletingKey === `machine:${group.machine}`}
+                        onClick={() => deleteMachine(group)}
+                      >
+                        <Trash2 className="text-destructive h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
 
                   <Label className="mt-4 mb-1.5 block">子項(檔名)</Label>
@@ -201,20 +218,28 @@ export default function MachinesPage() {
                     {group.subparts.map((entry) => (
                       <div key={entry.bomId} className="flex items-center gap-2">
                         <div className="flex-1">
-                          <EditableField
-                            value={entry.source_file}
-                            onSave={(newValue) => renameSourceFile(entry.bomId, newValue)}
-                          />
+                          {editMode ? (
+                            <EditableField
+                              value={entry.source_file}
+                              onSave={(newValue) => renameSourceFile(entry.bomId, newValue)}
+                            />
+                          ) : (
+                            <p className="text-muted-foreground px-1.5 py-1 text-sm">
+                              {entry.source_file}
+                            </p>
+                          )}
                         </div>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label="刪除子項"
-                          disabled={deletingKey === `subpart:${entry.bomId}`}
-                          onClick={() => deleteSubpart(group.machine, entry)}
-                        >
-                          <Trash2 className="text-destructive h-4 w-4" />
-                        </Button>
+                        {editMode && (
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label="刪除子項"
+                            disabled={deletingKey === `subpart:${entry.bomId}`}
+                            onClick={() => deleteSubpart(group.machine, entry)}
+                          >
+                            <Trash2 className="text-destructive h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
