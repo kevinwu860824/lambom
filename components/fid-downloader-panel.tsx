@@ -5,9 +5,21 @@ import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+export type FidDownloadMode = "tool" | "modules";
 
 interface FidDownloaderApi {
-  start: (fid: string) => Promise<{ ok: boolean; resultPath: string | null }>;
+  start: (
+    fid: string,
+    mode: FidDownloadMode
+  ) => Promise<{ ok: boolean; resultPath: string | null }>;
   onLog: (callback: (line: string) => void) => () => void;
   openFolder: (filePath: string) => Promise<void>;
 }
@@ -26,6 +38,7 @@ declare global {
  */
 export function FidDownloaderPanel() {
   const [available, setAvailable] = useState(false);
+  const [mode, setMode] = useState<FidDownloadMode>("tool");
   const [fid, setFid] = useState("");
   const [log, setLog] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -53,7 +66,7 @@ export function FidDownloaderPanel() {
     setResultPath(null);
     setLog(`開始下載 FID ${trimmed} ...\n`);
 
-    const { ok, resultPath: path } = await window.fidDownloader.start(trimmed);
+    const { ok, resultPath: path } = await window.fidDownloader.start(trimmed, mode);
 
     if (ok && path) {
       setLog((prev) => `${prev}完成!檔案位置:${path}\n`);
@@ -73,6 +86,15 @@ export function FidDownloaderPanel() {
       </CardHeader>
       <CardContent>
         <div className="mb-3 flex gap-2">
+          <Select value={mode} onValueChange={(v) => setMode(v as FidDownloadMode)}>
+            <SelectTrigger className="w-40" disabled={downloading}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tool">完整 BOM</SelectItem>
+              <SelectItem value="modules">Modules</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             value={fid}
             onChange={(e) => setFid(e.target.value)}

@@ -221,7 +221,16 @@ def write_bom_xlsx(rows, out_path):
 
 # ---------- CLI 進入點 ----------
 
-def run(fid, out_dir):
+def run(fid, out_dir, mode="tool"):
+    if mode == "modules":
+        # Module BOM 要走 VA03 + ZOOBOM_CE_FMT,SAP 畫面實際操作步驟還沒錄製、
+        # 還沒寫進這支程式(跟 Tool BOM 用的 IB53 是完全不同的畫面流程)。
+        # 先明確回報「尚未實作」,不要假裝在跑卻不知道會卡在哪一步。
+        raise RuntimeError(
+            "Module BOM 下載尚未實作(VA03 + ZOOBOM_CE_FMT 的操作步驟還沒補上),"
+            "目前只支援「完整 BOM」(IB53)。"
+        )
+
     os.makedirs(out_dir, exist_ok=True)
     txt_name = f"{fid}.txt"
     xlsx_name = f"{fid}.xlsx"
@@ -256,13 +265,19 @@ def run(fid, out_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="用 FID 從 SAP 下載 Tool BOM，轉存成 xlsx")
+    parser = argparse.ArgumentParser(description="用 FID 從 SAP 下載 BOM，轉存成 xlsx")
     parser.add_argument("fid", help="要查詢的 FID")
     parser.add_argument("--out-dir", default=os.getcwd(), help="輸出資料夾(預設目前工作目錄)")
+    parser.add_argument(
+        "--mode",
+        choices=["tool", "modules"],
+        default="tool",
+        help="tool = 完整 BOM(IB53,預設);modules = 依模組拆分(尚未實作)",
+    )
     args = parser.parse_args()
 
     try:
-        xlsx_path = run(args.fid.strip(), args.out_dir)
+        xlsx_path = run(args.fid.strip(), args.out_dir, args.mode)
     except Exception as e:
         log(f"[錯誤] {e}")
         sys.exit(1)

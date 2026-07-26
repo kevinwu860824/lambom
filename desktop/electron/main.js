@@ -45,7 +45,7 @@ function getDownloaderExePath() {
   return path.join(__dirname, "..", "sap-downloader", "dist", "fid_downloader_cli.exe");
 }
 
-ipcMain.handle("fid-download:start", async (event, fid) => {
+ipcMain.handle("fid-download:start", async (event, fid, mode) => {
   const exePath = getDownloaderExePath();
 
   if (!fs.existsSync(exePath)) {
@@ -59,7 +59,7 @@ ipcMain.handle("fid-download:start", async (event, fid) => {
   const outDir = app.getPath("downloads");
 
   return new Promise((resolve) => {
-    const child = spawn(exePath, [fid, "--out-dir", outDir]);
+    const child = spawn(exePath, [fid, "--out-dir", outDir, "--mode", mode]);
     let resultPath = null;
 
     child.stdout.on("data", (chunk) => {
