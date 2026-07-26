@@ -1,0 +1,229 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Trash2 } from "lucide-react";
+import { createClient } from "@/lib/supabase";
+import { fetchMachineGroups, type BomEntry, type MachineGroup } from "@/lib/bom";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { EditableField } from "@/components/editable-field";
+
+export default function MachinesPage() {
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  function getSupabase() {
+    if (!supabaseRef.current) supabaseRef.current = createClient();
+    return supabaseRef.current;
+  }
+
+  const [groups, setGroups] = useState<MachineGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    setError(null);
+    try {
+      const { machineGroups } = await fetchMachineGroups(getSupabase());
+      setGroups(machineGroups);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function renameMachine(oldName: string, newName: string) {
+    const supabase = getSupabase();
+    const { error: renameError } = await supabase
+      .from("bom_machines")
+      .update({ machine_name: newName })
+      .eq("machine_name", oldName);
+    if (renameError) throw new Error(renameError.message);
+
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.machine === oldName
+          ? { machine: newName, subparts: g.subparts.map((s) => ({ ...s, machine: newName })) }
+          : g
+      )
+    );
+  }
+
+  async function renameSourceFile(bomId: number, newSourceFile: string) {
+    const supabase = getSupabase();
+    const { error: renameError } = await supabase
+      .from("bom_machines")
+      .update({ source_file: newSourceFile })
+      .eq("id", bomId);
+    if (renameError) throw new Error(renameError.message);
+
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        subparts: g.subparts.map((s) => (s.bomId === bomId ? { ...s, source_file: newSourceFile } : s)),
+      }))
+    );
+  }
+
+  async function deleteMachine(group: MachineGroup) {
+    if (
+      !window.confirm(
+        `確定要刪除機台「${group.machine}」嗎?這會一併刪除底下 ${group.subparts.length} 個子項與所有明細資料,無法復原。`
+      )
+    ) {
+      return;
+    }
+
+    setDeleteError(null);
+    setDeletingKey(`machine:${group.machine}`);
+    try {
+      const supabase = getSupabase();
+      const bomIds = group.subparts.map((s) => s.bomId);
+
+      if (bomIds.length > 0) {
+        const { error: itemsError } = await supabase.from("bom_items").delete().in("bom_id", bomIds);
+        if (itemsError) throw new Error(itemsError.message);
+      }
+
+      const { error: machinesError } = await supabase
+        .from("bom_machines")
+        .delete()
+        .eq("machine_name", group.machine);
+      if (machinesError) throw new Error(machinesError.message);
+
+      setGroups((prev) => prev.filter((g) => g.machine !== group.machine));
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  async function deleteSubpart(machineName: string, entry: BomEntry) {
+    if (
+      !window.confirm(
+        `確定要刪除子項「${entry.source_file}」嗎?這會刪除該子項所有明細資料,無法復原。`
+      )
+    ) {
+      return;
+    }
+
+    setDeleteError(null);
+    setDeletingKey(`subpart:${entry.bomId}`);
+    try {
+      const supabase = getSupabase();
+      const { error: itemsError } = await supabase
+        .from("bom_items")
+        .delete()
+        .eq("bom_id", entry.bomId);
+      if (itemsError) throw new Error(itemsError.message);
+
+      const { error: machineError } = await supabase
+        .from("bom_machines")
+        .delete()
+        .eq("id", entry.bomId);
+      if (machineError) throw new Error(machineError.message);
+
+      setGroups((prev) =>
+        prev
+          .map((g) =>
+            g.machine === machineName
+              ? { ...g, subparts: g.subparts.filter((s) => s.bomId !== entry.bomId) }
+              : g
+          )
+          .filter((g) => g.subparts.length > 0)
+      );
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  return (
+    <div className="bg-background min-h-screen">
+      <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">編輯機台 / 子項名稱</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              改完按 Enter 或點確認就會立即更新到 Supabase。
+            </p>
+          </div>
+          <Link href="/" className="text-sm underline underline-offset-4">
+            回到比對工具
+          </Link>
+        </div>
+
+        {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
+
+        <Card>
+          <CardContent className="grid gap-4">
+            {deleteError && <p className="text-destructive text-sm">刪除失敗:{deleteError}</p>}
+
+            {loading ? (
+              <p className="text-muted-foreground text-sm">載入中…</p>
+            ) : groups.length === 0 ? (
+              <p className="text-muted-foreground text-sm">尚無機台資料</p>
+            ) : (
+              groups.map((group) => (
+                <div key={group.machine} className="rounded-md border p-3">
+                  <Label className="mb-1.5">機台名稱</Label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <EditableField
+                        value={group.machine}
+                        onSave={(newValue) => renameMachine(group.machine, newValue)}
+                      />
+                    </div>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="刪除機台"
+                      disabled={deletingKey === `machine:${group.machine}`}
+                      onClick={() => deleteMachine(group)}
+                    >
+                      <Trash2 className="text-destructive h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <Label className="mt-4 mb-1.5 block">子項(檔名)</Label>
+                  <div className="grid gap-2 pl-2">
+                    {group.subparts.map((entry) => (
+                      <div key={entry.bomId} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <EditableField
+                            value={entry.source_file}
+                            onSave={(newValue) => renameSourceFile(entry.bomId, newValue)}
+                          />
+                        </div>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="刪除子項"
+                          disabled={deletingKey === `subpart:${entry.bomId}`}
+                          onClick={() => deleteSubpart(group.machine, entry)}
+                        >
+                          <Trash2 className="text-destructive h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

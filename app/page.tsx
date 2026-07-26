@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Download } from "lucide-react";
+import { ChevronDown, Download, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -47,7 +47,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { UploadBomDialog } from "@/components/upload-bom-dialog";
-import { EditMachinesDialog } from "@/components/edit-machines-dialog";
 import { DescriptionSearch } from "@/components/description-search";
 import { KeyPartsPanel } from "@/components/key-parts-panel";
 import { exportCompareToExcel } from "@/lib/export-excel";
@@ -409,7 +408,11 @@ export default function Home() {
             <Button variant="outline" asChild>
               <Link href="/fingerprint">重要零件指紋表</Link>
             </Button>
-            <EditMachinesDialog machineGroups={machineGroups} onChanged={handleUploaded} />
+            <Button variant="outline" size="icon" asChild>
+              <Link href="/machines" aria-label="編輯機台名稱">
+                <Settings className="h-4 w-4" />
+              </Link>
+            </Button>
             <UploadBomDialog
               existingMachines={machineGroups.map((g) => g.machine)}
               onUploaded={handleUploaded}
