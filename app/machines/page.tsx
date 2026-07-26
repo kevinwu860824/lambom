@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { EditableField } from "@/components/editable-field";
+import { FidDownloaderPanel } from "@/components/fid-downloader-panel";
 
 export default function MachinesPage() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -187,6 +188,8 @@ export default function MachinesPage() {
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
+
+        <FidDownloaderPanel />
 
         <Card>
           <CardContent className="grid gap-4">

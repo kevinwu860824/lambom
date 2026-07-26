@@ -5,7 +5,6 @@ const { spawn } = require("node:child_process");
 const { LAMBOM_URL } = require("./config");
 
 let mainWindow = null;
-let fidWindow = null;
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -14,6 +13,10 @@ function createMainWindow() {
     title: "lambom",
     webPreferences: {
       contextIsolation: true,
+      // 讓 lambom 網頁版(不管是這個 exe 載入的還是一般瀏覽器打開的同一個網址)
+      // 都能透過 window.fidDownloader 呼叫這裡的功能。網頁版程式碼會先檢查
+      // 這個 API 存不存在,不存在(一般瀏覽器情境)就不顯示 SAP 下載那個區塊。
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -21,8 +24,6 @@ function createMainWindow() {
     {
       label: "工具",
       submenu: [
-        { label: "SAP 下載", click: () => openFidDownloaderWindow() },
-        { type: "separator" },
         { label: "重新整理", role: "reload" },
         { label: "結束", role: "quit" },
       ],
@@ -34,30 +35,6 @@ function createMainWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
-  });
-}
-
-function openFidDownloaderWindow() {
-  if (fidWindow) {
-    fidWindow.focus();
-    return;
-  }
-
-  fidWindow = new BrowserWindow({
-    width: 560,
-    height: 460,
-    title: "SAP FID 下載",
-    parent: mainWindow ?? undefined,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-    },
-  });
-  fidWindow.setMenuBarVisibility(false);
-  fidWindow.loadFile(path.join(__dirname, "fid-downloader.html"));
-
-  fidWindow.on("closed", () => {
-    fidWindow = null;
   });
 }
 

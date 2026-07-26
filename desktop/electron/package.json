@@ -15,13 +15,7 @@
   "build": {
     "appId": "com.lambom.desktop",
     "productName": "lambom",
-    "files": [
-      "main.js",
-      "preload.js",
-      "fid-downloader.html",
-      "fid-downloader-renderer.js",
-      "config.js"
-    ],
+    "files": ["main.js", "preload.js", "config.js"],
     "extraResources": [
       {
         "from": "../sap-downloader/dist/fid_downloader_cli.exe",
