@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
 import { fetchMachineGroups, type BomEntry, type MachineGroup } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,16 @@ export default function MachinesPage() {
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
+  const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(machine: string) {
+    setExpandedMachines((prev) => {
+      const next = new Set(prev);
+      if (next.has(machine)) next.delete(machine);
+      else next.add(machine);
+      return next;
+    });
+  }
 
   useEffect(() => {
     loadData();
@@ -186,65 +197,86 @@ export default function MachinesPage() {
             ) : groups.length === 0 ? (
               <p className="text-muted-foreground text-sm">尚無機台資料</p>
             ) : (
-              groups.map((group) => (
-                <div key={group.machine} className="rounded-md border p-3">
-                  <Label className="mb-1.5">機台名稱</Label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      {editMode ? (
-                        <EditableField
-                          value={group.machine}
-                          onSave={(newValue) => renameMachine(group.machine, newValue)}
-                        />
-                      ) : (
-                        <p className="px-1.5 py-1 text-sm font-medium">{group.machine}</p>
-                      )}
-                    </div>
-                    {editMode && (
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="刪除機台"
-                        disabled={deletingKey === `machine:${group.machine}`}
-                        onClick={() => deleteMachine(group)}
-                      >
-                        <Trash2 className="text-destructive h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
+              groups.map((group) => {
+                const expanded = expandedMachines.has(group.machine);
+                return (
+                <div key={group.machine} className="rounded-md border">
+                  <button
+                    type="button"
+                    className="hover:bg-accent flex w-full items-center gap-2 p-3 text-left"
+                    onClick={() => toggleExpanded(group.machine)}
+                  >
+                    <ChevronDown
+                      className={cn("h-4 w-4 shrink-0 transition-transform", expanded && "rotate-180")}
+                    />
+                    <span className="flex-1 text-sm font-medium">{group.machine}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {group.subparts.length} 個子項
+                    </span>
+                  </button>
 
-                  <Label className="mt-4 mb-1.5 block">子項(檔名)</Label>
-                  <div className="grid gap-2 pl-2">
-                    {group.subparts.map((entry) => (
-                      <div key={entry.bomId} className="flex items-center gap-2">
+                  {expanded && (
+                    <div className="border-t p-3">
+                      <Label className="mb-1.5">機台名稱</Label>
+                      <div className="flex items-center gap-2">
                         <div className="flex-1">
                           {editMode ? (
                             <EditableField
-                              value={entry.source_file}
-                              onSave={(newValue) => renameSourceFile(entry.bomId, newValue)}
+                              value={group.machine}
+                              onSave={(newValue) => renameMachine(group.machine, newValue)}
                             />
                           ) : (
-                            <p className="text-muted-foreground px-1.5 py-1 text-sm">
-                              {entry.source_file}
-                            </p>
+                            <p className="px-1.5 py-1 text-sm font-medium">{group.machine}</p>
                           )}
                         </div>
                         {editMode && (
                           <Button
                             size="icon-sm"
                             variant="ghost"
-                            aria-label="刪除子項"
-                            disabled={deletingKey === `subpart:${entry.bomId}`}
-                            onClick={() => deleteSubpart(group.machine, entry)}
+                            aria-label="刪除機台"
+                            disabled={deletingKey === `machine:${group.machine}`}
+                            onClick={() => deleteMachine(group)}
                           >
                             <Trash2 className="text-destructive h-4 w-4" />
                           </Button>
                         )}
                       </div>
-                    ))}
-                  </div>
+
+                      <Label className="mt-4 mb-1.5 block">子項(檔名)</Label>
+                      <div className="grid gap-2 pl-2">
+                        {group.subparts.map((entry) => (
+                          <div key={entry.bomId} className="flex items-center gap-2">
+                            <div className="flex-1">
+                              {editMode ? (
+                                <EditableField
+                                  value={entry.source_file}
+                                  onSave={(newValue) => renameSourceFile(entry.bomId, newValue)}
+                                />
+                              ) : (
+                                <p className="text-muted-foreground px-1.5 py-1 text-sm">
+                                  {entry.source_file}
+                                </p>
+                              )}
+                            </div>
+                            {editMode && (
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label="刪除子項"
+                                disabled={deletingKey === `subpart:${entry.bomId}`}
+                                onClick={() => deleteSubpart(group.machine, entry)}
+                              >
+                                <Trash2 className="text-destructive h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))
+                );
+              })
             )}
           </CardContent>
         </Card>
