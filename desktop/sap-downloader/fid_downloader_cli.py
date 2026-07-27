@@ -7,14 +7,17 @@ FID BOM Downloader (CLI 版)
 這支負責真正去跑 SAP。
 
 使用方式：
-    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM,單一 xlsx)
-    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,ZOOBOM_CE_FMT,輸出到一個資料夾,裡面多個檔案)
+    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM)
+    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,ZOOBOM_CE_FMT)
+    fid_downloader_cli.exe <FID> --mode modules [--out-dir 輸出資料夾]      (Module BOM,SO 留空會用 FID 反查)
 
 行為：
 - 進度訊息一行一行印到 stdout(供呼叫端即時顯示)。
-- tool 模式執行成功的最後一行一定是 `RESULT_PATH:<輸出的 xlsx 完整路徑>`；
-  modules 模式則是 `RESULT_PATH:<輸出資料夾路徑>`(資料夾裡有多個檔案)，
-  呼叫端可以用這個 marker 抓出結果檔案位置，不用去猜字串。
+- 兩種模式最後都只會產生「一份」乾淨的 xlsx(中繼檔、原始多檔都會自動清掉)：
+  tool 模式是 `<FID>.xlsx`；modules 模式是 `<SO>_modules.xlsx`,裡面依模組
+  分頁,座標問題也已修好。執行成功的最後一行一定是
+  `RESULT_PATH:<輸出的 xlsx 完整路徑>`，呼叫端可以用這個 marker 抓出結果
+  檔案位置，不用去猜字串。
 - 任何失敗都印 `[錯誤] ...` 並以非 0 的 exit code 結束。
 
 使用前提（跟 fid_downloader_gui.py 一樣）：
@@ -31,9 +34,12 @@ FID BOM Downloader (CLI 版)
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
+import zipfile
 
 import win32com.client
 import openpyxl
@@ -297,6 +303,203 @@ def download_module_bom(session, so, out_dir):
     return [os.path.join(out_dir, name) for name in new_files]
 
 
+# ---------- Module BOM 原始檔案清理:座標修復 + 合併成一份多分頁 xlsx ----------
+#
+# ZOOBOM_CE_FMT 直接產生的每個模組檔案,儲存格座標(<c r="...">)是壞的
+# (例如 r=" 11" 這種格式),標準的 xlsx 函式庫(這裡用的 openpyxl 也一樣)
+# 沒辦法直接讀,會丟例外。Excel/Numbers 桌面版能正常打開,是因為它們容錯,
+# 改用「文件順序」讀儲存格而不是相信 r= 屬性——下面這組函式就是照這個邏輯
+# 手動解析 xlsx 內部的 XML(跟 lib/bom-parse.ts 的 readXlsxRowsLenient 是
+# 同一套做法,只是搬到 Python),讀出乾淨的資料後,再用 openpyxl 重新寫一份
+# 座標正常、多個模組分頁合併在一起的 xlsx。
+
+
+def decode_xml_entities(text):
+    text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&apos;", "'")
+    text = re.sub(r"&#x([0-9a-fA-F]+);", lambda m: chr(int(m.group(1), 16)), text)
+    text = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), text)
+    return text.replace("&amp;", "&")
+
+
+def parse_shared_strings(xml_text):
+    strings = []
+    for m in re.finditer(r"<si>(.*?)</si>", xml_text, re.S):
+        texts = re.findall(r"<t[^>]*>(.*?)</t>", m.group(1), re.S)
+        strings.append(decode_xml_entities("".join(texts)))
+    return strings
+
+
+def parse_sheet_rows_lenient(xml_text, shared_strings):
+    rows = []
+    for row_match in re.finditer(r"<row\b[^>]*>(.*?)</row>", xml_text, re.S):
+        cells = []
+        for cell_match in re.finditer(r"<c\b([^>]*?)(?:/>|>(.*?)</c>)", row_match.group(1), re.S):
+            attrs, inner = cell_match.group(1), cell_match.group(2) or ""
+            type_match = re.search(r'\st="([^"]*)"', attrs)
+            cell_type = type_match.group(1) if type_match else "n"
+            if cell_type == "inlineStr":
+                is_body = re.search(r"<is>(.*?)</is>", inner, re.S)
+                texts = re.findall(r"<t[^>]*>(.*?)</t>", is_body.group(1), re.S) if is_body else []
+                value = decode_xml_entities("".join(texts))
+            else:
+                v_match = re.search(r"<v>(.*?)</v>", inner, re.S)
+                raw = v_match.group(1) if v_match else ""
+                if cell_type == "s" and raw:
+                    try:
+                        idx = int(raw)
+                        value = shared_strings[idx] if 0 <= idx < len(shared_strings) else ""
+                    except ValueError:
+                        value = ""
+                else:
+                    value = decode_xml_entities(raw) if raw else ""
+            cells.append(value)
+        rows.append(cells)
+    return rows
+
+
+def resolve_first_sheet_path(names, workbook_xml, rels_xml):
+    fallback = "xl/worksheets/sheet1.xml"
+    m = re.search(r'<sheet\b[^>]*\br:id="([^"]+)"', workbook_xml)
+    if not m:
+        return fallback
+    m2 = re.search(
+        rf'<Relationship\b[^>]*\bId="{re.escape(m.group(1))}"[^>]*\bTarget="([^"]+)"', rels_xml
+    )
+    if not m2:
+        return fallback
+    return f"xl/{re.sub(r'^/?xl/', '', m2.group(1))}"
+
+
+def read_xlsx_rows_lenient(path):
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        workbook_xml = z.read("xl/workbook.xml").decode("utf-8", "replace") if "xl/workbook.xml" in names else ""
+        rels_xml = (
+            z.read("xl/_rels/workbook.xml.rels").decode("utf-8", "replace")
+            if "xl/_rels/workbook.xml.rels" in names
+            else ""
+        )
+        sheet_path = resolve_first_sheet_path(names, workbook_xml, rels_xml)
+        if sheet_path not in names:
+            sheet_path = "xl/worksheets/sheet1.xml"
+        sheet_xml = z.read(sheet_path).decode("utf-8", "replace")
+        shared_strings = (
+            parse_shared_strings(z.read("xl/sharedStrings.xml").decode("utf-8", "replace"))
+            if "xl/sharedStrings.xml" in names
+            else []
+        )
+    return parse_sheet_rows_lenient(sheet_xml, shared_strings)
+
+
+def collapse_spaces(value):
+    return re.sub(r"\s{2,}", " ", value or "").strip()
+
+
+def parse_sap_field_rows(rows):
+    """把原始 SAP 欄位名稱(MATERIAL/DESCRIPTION/UOM/BOMLEVEL/GENE00...)的
+    行資料轉成乾淨的 Part Number/Description/Level/Path/Qty/Unit 結構,跟
+    lib/bom-parse.ts 的 parseSapFieldRows 是同一套規則。不是這個格式的話
+    回傳 None,呼叫端會保留原始行資料,不會整個放棄這個模組的內容。"""
+    if len(rows) < 2:
+        return None
+
+    header = [h.strip() for h in rows[0]]
+
+    def col_index(name):
+        return header.index(name) if name in header else -1
+
+    material_idx = col_index("MATERIAL")
+    description_idx = col_index("DESCRIPTION")
+    uom_idx = col_index("UOM")
+    bom_qty_idx = col_index("BOM_QTY")
+    newbuild_qty_idx = col_index("NEWBUILD_QTY")
+    level_idx = col_index("BOMLEVEL")
+
+    genealogy_indices = sorted(
+        (int(m.group(1)), idx)
+        for idx, name in enumerate(header)
+        for m in [re.match(r"^GENE(\d{2,})$", name)]
+        if m
+    )
+    genealogy_indices = [idx for _, idx in genealogy_indices]
+
+    if material_idx == -1 or level_idx == -1 or not genealogy_indices:
+        return None
+
+    items = []
+    for r in range(1, len(rows)):
+        fields = rows[r]
+        if not fields or all(not c.strip() for c in fields):
+            continue
+
+        def get(idx, fields=fields):
+            return fields[idx].strip() if 0 <= idx < len(fields) else ""
+
+        part_no = get(material_idx)
+        level_raw = get(level_idx)
+        if not part_no or not level_raw.lstrip("-").isdigit():
+            continue
+        level = int(level_raw)
+
+        description = collapse_spaces(get(description_idx))
+        uom = get(uom_idx) or None
+        qty_raw = get(bom_qty_idx) or get(newbuild_qty_idx)
+        try:
+            qty = float(qty_raw) if qty_raw else None
+        except ValueError:
+            qty = None
+
+        genealogy = [get(idx) for idx in genealogy_indices]
+        ancestors = [g for g in genealogy[:level] if g]
+
+        items.append(
+            {
+                "part_no": part_no,
+                "description": description or None,
+                "level": level,
+                "path": "/".join(ancestors),
+                "qty": qty,
+                "unit": uom,
+            }
+        )
+
+    return items
+
+
+def derive_sheet_name(path):
+    """從檔名(例如 "R0670_130 - GB1 --- LVL02 2026-...xlsx")抓出模組簡稱
+    (GB1)當分頁名稱。抓不出來就退回用不含副檔名的完整檔名。"""
+    name_no_ext = os.path.splitext(os.path.basename(path))[0]
+    left = name_no_ext.split(" --- ")[0]
+    parts = left.split(" - ")
+    return (parts[-1].strip() if len(parts) > 1 else name_no_ext)[:31]
+
+
+def merge_module_files(file_paths, out_path):
+    """把好幾個模組原始檔案(座標可能是壞的)合併成一份乾淨的多分頁 xlsx,
+    每個模組一個分頁,欄位統一成 Part Number/Description/Level/Path/Qty/
+    Unit。"""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    for path in file_paths:
+        rows = read_xlsx_rows_lenient(path)
+        items = parse_sap_field_rows(rows)
+        ws = wb.create_sheet(title=derive_sheet_name(path))
+        ws.append(["Part Number", "Description", "Level", "Path", "Qty", "Unit"])
+        if items is not None:
+            for item in items:
+                ws.append(
+                    [item["part_no"], item["description"], item["level"], item["path"], item["qty"], item["unit"]]
+                )
+        else:
+            # 不是預期的 SAP 欄位格式,保留原始行資料,不要整個放棄這個模組。
+            for row in rows:
+                ws.append(row)
+
+    wb.save(out_path)
+
+
 def parse_tab_export(txt_path):
     with open(txt_path, encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
@@ -341,14 +544,19 @@ def run(fid, out_dir, mode="tool", so=None):
             log(f"沒有輸入 SO,改用 FID {fid} 反查對應的 SO...")
             so = resolve_so_from_fid(session, fid)
 
+        # module_dir 只是暫存資料夾,給 SAP 傾印原始檔案用;合併整理完就會
+        # 整個刪掉,呼叫端拿到的是最終那份乾淨的單一 xlsx。
         module_dir = os.path.join(out_dir, f"{so}_modules")
         log(f"開啟 ZOOBOM_CE_FMT,用 SO {so} 執行...")
-        files = download_module_bom(session, so, module_dir)
+        raw_files = download_module_bom(session, so, module_dir)
 
-        log(f"完成!共產生 {len(files)} 個檔案:")
-        for f in files:
-            log(f"  - {f}")
-        return module_dir
+        log(f"下載完成,共 {len(raw_files)} 個原始檔案,整理成一份乾淨的 xlsx...")
+        merged_path = os.path.join(out_dir, f"{so}_modules.xlsx")
+        merge_module_files(raw_files, merged_path)
+        shutil.rmtree(module_dir, ignore_errors=True)
+
+        log(f"完成!已合併成 {merged_path}(原始檔案已清除)。")
+        return merged_path
 
     os.makedirs(out_dir, exist_ok=True)
     txt_name = f"{fid}.txt"
@@ -378,6 +586,9 @@ def run(fid, out_dir, mode="tool", so=None):
 
     xlsx_path = os.path.join(out_dir, xlsx_name)
     write_bom_xlsx(rows, xlsx_path)
+
+    # txt 只是轉換用的中繼檔,轉完就沒用了,清掉只留最終的 xlsx。
+    os.remove(txt_path)
 
     log(f"完成！共 {len(rows)} 筆料號。")
     return xlsx_path

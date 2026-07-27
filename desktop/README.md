@@ -22,14 +22,18 @@ desktop/
 (`components/fid-downloader-panel.tsx`),透過 `window.fidDownloader`(preload
 注入)判斷是不是在桌面版裡執行,一般瀏覽器打開同一個網址完全看不到這塊。
 
-- **FID** 欄位 → 完整 BOM(IB53),輸出單一 xlsx
-- **SO** 欄位 → Modules(ZOOBOM_CE_FMT),輸出一個資料夾,裡面多個檔案(檔名由
-  SAP 自己決定,不固定)
+- **FID** 欄位 → 完整 BOM(IB53),輸出 `<FID>.xlsx`
+- **SO** 欄位(選填,留空會用 FID 反查)→ Modules(ZOOBOM_CE_FMT),輸出
+  `<SO>_modules.xlsx`,裡面每個模組一個分頁
+
+ZOOBOM_CE_FMT 原本會一次產生好幾個檔案(檔名由 SAP 決定、儲存格座標也是壞
+的,只有容錯過的解析器讀得出來),程式會自動把這些原始檔案讀出來、合併成一份
+座標正常的多分頁 xlsx,原始檔案跟 Tool BOM 用的中繼 txt 都會自動清掉,你拿到
+的永遠是「一份」乾淨的 xlsx。
 
 兩個欄位填哪個就跑哪個,都填就依序都跑。下載完只會把檔案存到你的「下載」資料
 夾,不會自動上傳——你一樣照現在的習慣,去 lambom 網頁版的「上傳 BOM」手動選
-檔案(Modules 那個資料夾裡的多個檔案可以一次全選上傳,跟現在上傳多個子項檔案
-的方式一樣)。
+檔案。
 
 ## 設定正式網址
 
@@ -73,8 +77,8 @@ dist\fid_downloader_cli.exe 264059
 dist\fid_downloader_cli.exe --mode modules --so R0542
 ```
 
-跑完應該會在目前資料夾看到一個 `R0542_modules` 資料夾,裡面有 SAP 產生的多個
-檔案。
+跑完應該會在目前資料夾看到一份 `R0542_modules.xlsx`,裡面每個模組一個分頁
+(SAP 原始產生的多個檔案已經自動合併、清除)。
 
 **第二步:包 Electron 桌面版**
 
