@@ -189,7 +189,7 @@ export default function MachinesPage() {
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
-        <FidDownloaderPanel />
+        <FidDownloaderPanel existingMachines={groups.map((g) => g.machine)} onUploaded={loadData} />
 
         <Card>
           <CardContent className="grid gap-4">

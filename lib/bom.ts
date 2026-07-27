@@ -1,4 +1,5 @@
 import type { createClient } from "@/lib/supabase";
+import type { ParsedBom } from "@/lib/bom-parse";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -384,6 +385,92 @@ export async function autoMatchKeyParts(
   }
 
   return toInsert.length;
+}
+
+/**
+ * Insert-or-overwrite one (machine_name, source_file) BOM into bom_machines
+ * + bom_items. Shared by the manual upload dialog and the SAP 下載 panel's
+ * auto-upload, so both paths always agree on overwrite/insert semantics.
+ */
+export async function uploadBomEntry(
+  supabase: SupabaseClient,
+  sourceFile: string,
+  parsed: ParsedBom,
+  machineName: string
+): Promise<void> {
+  const { data: existing, error: findError } = await supabase
+    .from("bom_machines")
+    .select("id")
+    .eq("machine_name", machineName)
+    .eq("source_file", sourceFile)
+    .maybeSingle();
+  if (findError) throw new Error(findError.message);
+
+  let bomId: number;
+
+  if (existing) {
+    bomId = existing.id;
+    const { error: updateError } = await supabase
+      .from("bom_machines")
+      .update({
+        root_part_no: parsed.rootPartNo,
+        root_description: parsed.rootDescription,
+      })
+      .eq("id", bomId);
+    if (updateError) throw new Error(updateError.message);
+
+    const { error: deleteError } = await withRetry(() =>
+      supabase.from("bom_items").delete().eq("bom_id", bomId)
+    );
+    if (deleteError) throw new Error(deleteError.message);
+  } else {
+    const { data: inserted, error: insertMachineError } = await supabase
+      .from("bom_machines")
+      .insert({
+        machine_name: machineName,
+        source_file: sourceFile,
+        root_part_no: parsed.rootPartNo,
+        root_description: parsed.rootDescription,
+      })
+      .select("id")
+      .single();
+    if (insertMachineError) throw new Error(insertMachineError.message);
+    bomId = inserted.id;
+  }
+
+  const rows = parsed.items.map((item) => ({ ...item, bom_id: bomId }));
+  for (const batch of chunk(rows, 500)) {
+    const { error: insertItemsError } = await withRetry(() =>
+      supabase.from("bom_items").insert(batch)
+    );
+    if (insertItemsError) throw new Error(insertItemsError.message);
+  }
+}
+
+/** FID -> 機台名稱對照表(fid_machine_map),讓 SAP 下載自動上傳時知道要
+ * 寫進哪台機台,不用每次手動輸入。 */
+export async function lookupMachineForFid(
+  supabase: SupabaseClient,
+  fid: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("fid_machine_map")
+    .select("machine_name")
+    .eq("fid", fid)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.machine_name ?? null;
+}
+
+export async function saveMachineForFid(
+  supabase: SupabaseClient,
+  fid: string,
+  machineName: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("fid_machine_map")
+    .upsert({ fid, machine_name: machineName }, { onConflict: "fid" });
+  if (error) throw new Error(error.message);
 }
 
 export function toNumericQty(value: BomItem["qty"]): number {

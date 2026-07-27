@@ -98,6 +98,11 @@ ipcMain.handle("fid-download:open-folder", async (_event, targetPath) => {
   shell.showItemInFolder(targetPath);
 });
 
+ipcMain.handle("fid-download:read-file", async (_event, targetPath) => {
+  const buffer = fs.readFileSync(targetPath);
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+});
+
 app.whenReady().then(createMainWindow);
 
 app.on("window-all-closed", () => {

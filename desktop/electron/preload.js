@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld("fidDownloader", {
     return () => ipcRenderer.removeListener("fid-download:log", listener);
   },
   openFolder: (filePath) => ipcRenderer.invoke("fid-download:open-folder", filePath),
+  readFile: (filePath) => ipcRenderer.invoke("fid-download:read-file", filePath),
 });

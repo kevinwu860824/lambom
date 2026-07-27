@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { UploadCloud, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseCsvBom, parseTxtBom, parseXlsxBom, type ParsedBom } from "@/lib/bom-parse";
-import { autoMatchKeyParts, chunk, withRetry } from "@/lib/bom";
+import { autoMatchKeyParts, uploadBomEntry } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,59 +98,6 @@ export function UploadBomDialog({
     setFiles((prev) => prev.filter((e) => e.file !== file));
   }
 
-  async function uploadOne(sourceFile: string, parsed: ParsedBom, trimmedMachineName: string) {
-    const supabase = getSupabase();
-
-    const { data: existing, error: findError } = await supabase
-      .from("bom_machines")
-      .select("id")
-      .eq("machine_name", trimmedMachineName)
-      .eq("source_file", sourceFile)
-      .maybeSingle();
-
-    if (findError) throw new Error(findError.message);
-
-    let bomId: number;
-
-    if (existing) {
-      bomId = existing.id;
-      const { error: updateError } = await supabase
-        .from("bom_machines")
-        .update({
-          root_part_no: parsed.rootPartNo,
-          root_description: parsed.rootDescription,
-        })
-        .eq("id", bomId);
-      if (updateError) throw new Error(updateError.message);
-
-      const { error: deleteError } = await withRetry(() =>
-        supabase.from("bom_items").delete().eq("bom_id", bomId)
-      );
-      if (deleteError) throw new Error(deleteError.message);
-    } else {
-      const { data: inserted, error: insertMachineError } = await supabase
-        .from("bom_machines")
-        .insert({
-          machine_name: trimmedMachineName,
-          source_file: sourceFile,
-          root_part_no: parsed.rootPartNo,
-          root_description: parsed.rootDescription,
-        })
-        .select("id")
-        .single();
-      if (insertMachineError) throw new Error(insertMachineError.message);
-      bomId = inserted.id;
-    }
-
-    const rows = parsed.items.map((item) => ({ ...item, bom_id: bomId }));
-    for (const batch of chunk(rows, 500)) {
-      const { error: insertItemsError } = await withRetry(() =>
-        supabase.from("bom_items").insert(batch)
-      );
-      if (insertItemsError) throw new Error(insertItemsError.message);
-    }
-  }
-
   async function handleSubmit() {
     const trimmedMachineName = machineName.trim();
     const toUpload = files.filter((e) => e.parsed && e.status !== "uploaded");
@@ -168,7 +115,7 @@ export function UploadBomDialog({
         prev.map((e) => (e.file === entry.file ? { ...e, status: "uploading" } : e))
       );
       try {
-        await uploadOne(entry.file.name, entry.parsed!, trimmedMachineName);
+        await uploadBomEntry(getSupabase(), entry.file.name, entry.parsed!, trimmedMachineName);
         anySucceeded = true;
         setFiles((prev) =>
           prev.map((e) => (e.file === entry.file ? { ...e, status: "uploaded" } : e))

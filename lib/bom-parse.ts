@@ -638,3 +638,80 @@ export function parseXlsxBom(buffer: ArrayBuffer): ParsedBom {
     }
   }
 }
+
+/**
+ * Parses one sheet of the "<SO>_modules.xlsx" produced by the desktop SAP
+ * downloader's merge_module_files (see desktop/sap-downloader/
+ * fid_downloader_cli.py) — columns Part Number/Description/Level/Path/Qty/
+ * Unit, where Path is already a "/"-joined chain of ancestor part numbers
+ * (not descriptions), so unlike the other formats no genealogy/indent-stack
+ * reconstruction is needed: level and parent path are given directly.
+ */
+function parseModuleSheetRows(rows: string[][]): ParsedBom {
+  if (rows.length < 2) {
+    throw new Error("這個分頁沒有資料");
+  }
+
+  const items: ParsedBomItem[] = [];
+  let rootPartNo = "";
+  let rootDescription = "";
+
+  for (let r = 1; r < rows.length; r++) {
+    const [partNo, description, levelRaw, path, qtyRaw, uom] = rows[r] ?? [];
+    if (!partNo) continue;
+
+    const level = Number.parseInt(levelRaw ?? "", 10);
+    if (Number.isNaN(level)) continue;
+
+    const qty = qtyRaw ? Number.parseFloat(qtyRaw) : null;
+    const parentPath = path ?? "";
+    const ancestors = parentPath ? parentPath.split("/") : [];
+    const parentPartNo = ancestors.length > 0 ? ancestors[ancestors.length - 1] : null;
+
+    if (level === 0) {
+      rootPartNo = partNo;
+      rootDescription = description ?? "";
+    }
+
+    items.push({
+      part_no: partNo,
+      description: description || null,
+      qty: qty !== null && Number.isFinite(qty) ? qty : null,
+      uom: uom || null,
+      level,
+      parent_part_no: parentPartNo,
+      parent_path: parentPath,
+      line_no: r + 1,
+    });
+  }
+
+  if (!rootPartNo) {
+    throw new Error("找不到 Level 0 的根節點");
+  }
+
+  return { rootPartNo, rootDescription, items };
+}
+
+/**
+ * Reads every sheet of a merged Modules workbook — each sheet is one module
+ * (its own independent BOM tree), matching how the app already treats a
+ * machine's separate uploaded files as separate 子項/subparts.
+ */
+export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; parsed: ParsedBom }[] {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  return workbook.SheetNames.map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    });
+    try {
+      return { sheetName, parsed: parseModuleSheetRows(rows) };
+    } catch (err) {
+      throw new Error(
+        `分頁「${sheetName}」解析失敗:${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  });
+}
