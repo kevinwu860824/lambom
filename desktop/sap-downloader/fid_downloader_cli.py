@@ -7,7 +7,8 @@ FID BOM Downloader (CLI 版)
 這支負責真正去跑 SAP。
 
 使用方式：
-    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]
+    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM)
+    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,目前只做到 VA03+輸入SO 就停)
 
 行為：
 - 進度訊息一行一行印到 stdout(供呼叫端即時顯示)。
@@ -188,6 +189,34 @@ def export_installed_base(session, save_path, filename):
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
 
 
+def download_module_bom(session, so, save_path, filename):
+    """
+    Module BOM 下載——目前只做到「打開 VA03、輸入 SO」這一步有把握,因為
+    VA03 訂單欄位(VBAK-VBELN)是標準 SAP 畫面,不是自訂的。
+
+    再來「執行 ZOOBOM_CE_FMT」跟「匯出成 Excel」這兩步,因為沒有實際畫面
+    可以參考,不確定精確的欄位/選單/按鈕路徑,用猜的直接寫可能會在你的
+    SAP 畫面上點到不知道什麼東西,所以先不自動做——自動化到這裡就停下來、
+    清楚回報現況,讓你在畫面上親眼確認接下來要點什麼,再把細節告訴我
+    (或用 SAP GUI 的 Script Recording and Playback 錄一次),我再補完
+    後面兩步的自動化邏輯。
+    """
+    session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(1)
+
+    session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text = so
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(1)
+
+    raise RuntimeError(
+        "已經打開 VA03 並輸入 SO,但「執行 ZOOBOM_CE_FMT」跟「匯出成 Excel」"
+        "這兩步還沒有把握的自動化寫法,先停在這裡。"
+        "麻煩看一下現在畫面,把接下來要點的每一步告訴我(或用 SAP GUI 的 "
+        "Script Recording and Playback 錄一次),我再把後面補完。"
+    )
+
+
 def parse_tab_export(txt_path):
     with open(txt_path, encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
@@ -221,15 +250,16 @@ def write_bom_xlsx(rows, out_path):
 
 # ---------- CLI 進入點 ----------
 
-def run(fid, out_dir, mode="tool"):
+def run(fid, out_dir, mode="tool", so=None):
     if mode == "modules":
-        # Module BOM 要走 VA03 + ZOOBOM_CE_FMT,SAP 畫面實際操作步驟還沒錄製、
-        # 還沒寫進這支程式(跟 Tool BOM 用的 IB53 是完全不同的畫面流程)。
-        # 先明確回報「尚未實作」,不要假裝在跑卻不知道會卡在哪一步。
-        raise RuntimeError(
-            "Module BOM 下載尚未實作(VA03 + ZOOBOM_CE_FMT 的操作步驟還沒補上),"
-            "目前只支援「完整 BOM」(IB53)。"
-        )
+        if not so:
+            raise RuntimeError("Module BOM 下載需要 SO 號碼,請輸入 SO。")
+        session = ensure_sap_connected()
+        log(f"開啟 VA03,用 SO {so} 開啟訂單...")
+        module_xlsx_name = f"{so}_modules.xlsx"
+        download_module_bom(session, so, out_dir, module_xlsx_name)
+        # download_module_bom 目前一定會丟例外(見函式內註解),不會走到這裡。
+        return os.path.join(out_dir, module_xlsx_name)
 
     os.makedirs(out_dir, exist_ok=True)
     txt_name = f"{fid}.txt"
@@ -265,19 +295,26 @@ def run(fid, out_dir, mode="tool"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="用 FID 從 SAP 下載 BOM，轉存成 xlsx")
-    parser.add_argument("fid", help="要查詢的 FID")
+    parser = argparse.ArgumentParser(description="用 FID/SO 從 SAP 下載 BOM，轉存成 xlsx")
+    parser.add_argument("fid", nargs="?", default=None, help="要查詢的 FID(tool 模式需要)")
     parser.add_argument("--out-dir", default=os.getcwd(), help="輸出資料夾(預設目前工作目錄)")
     parser.add_argument(
         "--mode",
         choices=["tool", "modules"],
         default="tool",
-        help="tool = 完整 BOM(IB53,預設);modules = 依模組拆分(尚未實作)",
+        help="tool = 完整 BOM(IB53,預設,需要 FID);modules = 依模組拆分(VA03,需要 SO)",
     )
+    parser.add_argument("--so", default=None, help="SO 號碼(modules 模式需要)")
     args = parser.parse_args()
 
+    if args.mode == "tool" and not args.fid:
+        log("[錯誤] tool 模式需要 FID。")
+        sys.exit(1)
+
     try:
-        xlsx_path = run(args.fid.strip(), args.out_dir, args.mode)
+        fid = args.fid.strip() if args.fid else None
+        so = args.so.strip() if args.so else None
+        xlsx_path = run(fid, args.out_dir, args.mode, so)
     except Exception as e:
         log(f"[錯誤] {e}")
         sys.exit(1)

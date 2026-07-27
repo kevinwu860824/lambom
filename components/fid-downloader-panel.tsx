@@ -5,6 +5,7 @@ import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export type FidDownloadMode = "tool" | "modules";
 
@@ -13,16 +14,12 @@ const MODE_LABELS: Record<FidDownloadMode, string> = {
   modules: "Modules",
 };
 
-// 目前一次下載會依序跑這兩種模式(SAP GUI 是同一個 session,不能同時跑兩個
-// 自動化流程,所以是「依序」而不是「同時」)。modules 目前尚未實作,會回報
-// 清楚的錯誤,不影響 tool 那筆已經下載成功的結果。
-const MODES: FidDownloadMode[] = ["tool", "modules"];
-
 interface FidDownloaderApi {
-  start: (
-    fid: string,
-    mode: FidDownloadMode
-  ) => Promise<{ ok: boolean; resultPath: string | null }>;
+  start: (params: {
+    fid?: string;
+    mode: FidDownloadMode;
+    so?: string;
+  }) => Promise<{ ok: boolean; resultPath: string | null }>;
   onLog: (callback: (line: string) => void) => () => void;
   openFolder: (filePath: string) => Promise<void>;
 }
@@ -44,10 +41,15 @@ interface ModeResult {
  * window.fidDownloader via a preload script — on the public web deployment
  * (same code, opened in a regular browser) that API doesn't exist, so this
  * renders nothing.
+ *
+ * 完整 BOM(IB53)用 FID 查詢;Modules(VA03 + ZOOBOM_CE_FMT)用 SO 查詢 ——
+ * 兩者是不同的 SAP 識別碼,所以是兩個獨立欄位。按一次下載,哪個欄位有填就
+ * 跑哪個,兩個都填就依序都跑(SAP GUI 是同一個 session,不能同時跑兩個)。
  */
 export function FidDownloaderPanel() {
   const [available, setAvailable] = useState(false);
   const [fid, setFid] = useState("");
+  const [so, setSo] = useState("");
   const [log, setLog] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [results, setResults] = useState<ModeResult[]>([]);
@@ -67,24 +69,48 @@ export function FidDownloaderPanel() {
   }, [log]);
 
   async function startDownload() {
-    const trimmed = fid.trim();
-    if (!trimmed || !window.fidDownloader) return;
+    const trimmedFid = fid.trim();
+    const trimmedSo = so.trim();
+    if ((!trimmedFid && !trimmedSo) || !window.fidDownloader) return;
 
     setDownloading(true);
     setResults([]);
-    setLog(`開始下載 FID ${trimmed} ...\n`);
+    setLog("開始下載...\n");
 
     const newResults: ModeResult[] = [];
-    for (const mode of MODES) {
-      setLog((prev) => `${prev}\n--- ${MODE_LABELS[mode]} ---\n`);
-      const { ok, resultPath } = await window.fidDownloader.start(trimmed, mode);
-      newResults.push({ mode, ok, resultPath });
+
+    if (trimmedFid) {
+      setLog((prev) => `${prev}\n--- 完整 BOM(FID ${trimmedFid})---\n`);
+      const { ok, resultPath } = await window.fidDownloader.start({
+        fid: trimmedFid,
+        mode: "tool",
+      });
+      newResults.push({ mode: "tool", ok, resultPath });
       setResults([...newResults]);
       setLog((prev) =>
         ok && resultPath
-          ? `${prev}${MODE_LABELS[mode]} 完成:${resultPath}\n`
-          : `${prev}[錯誤] ${MODE_LABELS[mode]} 下載失敗,請檢查上面的訊息。\n`
+          ? `${prev}完整 BOM 完成:${resultPath}\n`
+          : `${prev}[錯誤] 完整 BOM 下載失敗,請檢查上面的訊息。\n`
       );
+    } else {
+      setLog((prev) => `${prev}\n(沒有輸入 FID,跳過完整 BOM)\n`);
+    }
+
+    if (trimmedSo) {
+      setLog((prev) => `${prev}\n--- Modules(SO ${trimmedSo})---\n`);
+      const { ok, resultPath } = await window.fidDownloader.start({
+        mode: "modules",
+        so: trimmedSo,
+      });
+      newResults.push({ mode: "modules", ok, resultPath });
+      setResults([...newResults]);
+      setLog((prev) =>
+        ok && resultPath
+          ? `${prev}Modules 完成:${resultPath}\n`
+          : `${prev}[錯誤] Modules 下載失敗,請檢查上面的訊息。\n`
+      );
+    } else {
+      setLog((prev) => `${prev}\n(沒有輸入 SO,跳過 Modules)\n`);
     }
 
     setDownloading(false);
@@ -98,19 +124,39 @@ export function FidDownloaderPanel() {
         <CardTitle>SAP 下載</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-3 flex gap-2">
-          <Input
-            value={fid}
-            onChange={(e) => setFid(e.target.value)}
-            placeholder="輸入 FID,例如 264059"
-            disabled={downloading}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") startDownload();
-            }}
-          />
-          <Button onClick={startDownload} disabled={downloading || !fid.trim()}>
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">FID(完整 BOM)</Label>
+            <Input
+              value={fid}
+              onChange={(e) => setFid(e.target.value)}
+              placeholder="例如 264059"
+              disabled={downloading}
+              className="w-40"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") startDownload();
+              }}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">SO(Modules)</Label>
+            <Input
+              value={so}
+              onChange={(e) => setSo(e.target.value)}
+              placeholder="例如 R0542"
+              disabled={downloading}
+              className="w-40"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") startDownload();
+              }}
+            />
+          </div>
+          <Button
+            onClick={startDownload}
+            disabled={downloading || (!fid.trim() && !so.trim())}
+          >
             <Download className="h-4 w-4" />
-            {downloading ? "下載中…" : "下載(完整 BOM + Modules)"}
+            {downloading ? "下載中…" : "下載"}
           </Button>
         </div>
 
