@@ -196,6 +196,47 @@ def export_installed_base(session, save_path, filename):
     session.findById("wnd[0]").sendVKey(3)
 
 
+def resolve_so_from_fid(session, fid):
+    """
+    用 FID 反查對應的 SO——開 VA03、對 Sales Document 欄位按 F4,切到分頁
+    「A: Sales document according to customer PO number」,用 FID 當
+    wildcard(<FID>*)搜尋,選搜尋結果清單第一筆,再讀回 VA03 訂單欄位
+    (VBAK-VBELN)確認選到的 SO。這段已經用 SAP GUI 的 Script Recording and
+    Playback 錄過、逐行對過。
+
+    已知風險(使用者確認過,不是我猜的):同一個 FID 如果 BOM 改版過,可能
+    會搜到不只一筆結果。這裡目前固定選清單第一筆,不保證一定是你要的那個
+    版本——如果之後發現抓到的 SO 不對,要再調整規則(例如改成選最後一筆,
+    或是先列出所有結果讓你自己選)。
+    """
+    session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
+    session.findById("wnd[0]/tbar[0]/btn[0]").press()
+    session.findById("wnd[0]").sendVKey(4)
+    time.sleep(1)
+
+    session.findById(
+        "wnd[1]/usr/tabsG_SELONETABSTRIP/tabpTAB001"
+        "/ssubSUBSCR_PRESEL:SAPLSDH4:0220/sub:SAPLSDH4:0220/txtG_SELFLD_TAB-LOW[2,24]"
+    ).text = f"{fid}*"
+    session.findById("wnd[1]").sendVKey(0)
+    time.sleep(1)
+
+    session.findById("wnd[1]/usr/lbl[1,3]").caretPosition = 10
+    session.findById("wnd[1]").sendVKey(2)
+    time.sleep(1)
+
+    so = (session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text or "").strip()
+    if not so:
+        raise RuntimeError(
+            "用 FID 反查 SO 失敗,VA03 的訂單欄位讀不到值——可能卡在某個清單"
+            "畫面需要人工確認(例如出現不只一筆搜尋結果),請檢查 SAP 畫面,"
+            "或改成直接輸入 SO。"
+        )
+
+    log(f"從 VA03 反查到 SO:{so}")
+    return so
+
+
 def download_module_bom(session, so, out_dir):
     """
     Module BOM 下載——完整流程已經用 SAP GUI 的 Script Recording and
@@ -291,11 +332,16 @@ def write_bom_xlsx(rows, out_path):
 
 def run(fid, out_dir, mode="tool", so=None):
     if mode == "modules":
-        if not so:
-            raise RuntimeError("Module BOM 下載需要 SO 號碼,請輸入 SO。")
-        module_dir = os.path.join(out_dir, f"{so}_modules")
+        if not so and not fid:
+            raise RuntimeError("Module BOM 下載需要 SO 或 FID(沒有 SO 的話,會用 FID 自動反查)。")
 
         session = ensure_sap_connected()
+
+        if not so:
+            log(f"沒有輸入 SO,改用 FID {fid} 反查對應的 SO...")
+            so = resolve_so_from_fid(session, fid)
+
+        module_dir = os.path.join(out_dir, f"{so}_modules")
         log(f"開啟 ZOOBOM_CE_FMT,用 SO {so} 執行...")
         files = download_module_bom(session, so, module_dir)
 

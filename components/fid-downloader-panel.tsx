@@ -42,9 +42,10 @@ interface ModeResult {
  * (same code, opened in a regular browser) that API doesn't exist, so this
  * renders nothing.
  *
- * 完整 BOM(IB53)用 FID 查詢;Modules(VA03 + ZOOBOM_CE_FMT)用 SO 查詢 ——
- * 兩者是不同的 SAP 識別碼,所以是兩個獨立欄位。按一次下載,哪個欄位有填就
- * 跑哪個,兩個都填就依序都跑(SAP GUI 是同一個 session,不能同時跑兩個)。
+ * 完整 BOM(IB53)用 FID 查詢;Modules(ZOOBOM_CE_FMT)用 SO 查詢 —— 兩者是
+ * 不同的 SAP 識別碼。SO 留空的話,Modules 那步會自動用 FID 反查對應的 SO
+ * (透過 VA03),所以正常只要填 FID 就好;SO 欄位是給你想手動指定特定版本
+ * 時用的(同一個 FID 如果 BOM 改版過,自動反查不保證抓到你要的那個版本)。
  */
 export function FidDownloaderPanel() {
   const [available, setAvailable] = useState(false);
@@ -96,11 +97,13 @@ export function FidDownloaderPanel() {
       setLog((prev) => `${prev}\n(沒有輸入 FID,跳過完整 BOM)\n`);
     }
 
-    if (trimmedSo) {
-      setLog((prev) => `${prev}\n--- Modules(SO ${trimmedSo})---\n`);
+    if (trimmedFid || trimmedSo) {
+      const label = trimmedSo ? `SO ${trimmedSo}` : `FID ${trimmedFid} 反查 SO`;
+      setLog((prev) => `${prev}\n--- Modules(${label})---\n`);
       const { ok, resultPath } = await window.fidDownloader.start({
         mode: "modules",
-        so: trimmedSo,
+        fid: trimmedFid || undefined,
+        so: trimmedSo || undefined,
       });
       newResults.push({ mode: "modules", ok, resultPath });
       setResults([...newResults]);
@@ -110,7 +113,7 @@ export function FidDownloaderPanel() {
           : `${prev}[錯誤] Modules 下載失敗,請檢查上面的訊息。\n`
       );
     } else {
-      setLog((prev) => `${prev}\n(沒有輸入 SO,跳過 Modules)\n`);
+      setLog((prev) => `${prev}\n(沒有輸入 FID 或 SO,跳過 Modules)\n`);
     }
 
     setDownloading(false);
@@ -139,7 +142,7 @@ export function FidDownloaderPanel() {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label className="text-xs">SO(Modules)</Label>
+            <Label className="text-xs">SO(選填,留空會用 FID 反查)</Label>
             <Input
               value={so}
               onChange={(e) => setSo(e.target.value)}
