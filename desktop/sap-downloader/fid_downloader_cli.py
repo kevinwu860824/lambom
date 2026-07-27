@@ -191,29 +191,33 @@ def export_installed_base(session, save_path, filename):
 
 def download_module_bom(session, so, save_path, filename):
     """
-    Module BOM 下載——目前只做到「打開 VA03、輸入 SO」這一步有把握,因為
-    VA03 訂單欄位(VBAK-VBELN)是標準 SAP 畫面,不是自訂的。
+    Module BOM 下載——開啟 ZOOBOM_CE_FMT、輸入 SO、按 Execute 這段已經用
+    SAP GUI 的 Script Recording and Playback 錄過、逐行對過,以下完全照
+    錄製結果寫(注意交易代碼欄位打的是 "ZOOBOM_CE_FMT",沒有 "/n" 前綴,
+    這是錄製結果,不是漏打):
+      1. 交易代碼欄位輸入 ZOOBOM_CE_FMT,按 Enter(tbar[0]/btn[0])
+      2. Sales Document 欄位技術名稱是 S_VBELN-LOW,輸入 SO
+      3. 按 Execute(tbar[1]/btn[8],等同 F8)
 
-    再來「執行 ZOOBOM_CE_FMT」跟「匯出成 Excel」這兩步,因為沒有實際畫面
-    可以參考,不確定精確的欄位/選單/按鈕路徑,用猜的直接寫可能會在你的
-    SAP 畫面上點到不知道什麼東西,所以先不自動做——自動化到這裡就停下來、
-    清楚回報現況,讓你在畫面上親眼確認接下來要點什麼,再把細節告訴我
-    (或用 SAP GUI 的 Script Recording and Playback 錄一次),我再補完
-    後面兩步的自動化邏輯。
+    按下 Execute 之後「自動下載多個 Excel 檔案」實際上是怎麼運作的(有沒
+    有跳出存檔視窗、跳幾次、還是完全自動生成到某個路徑)還沒確認,錄製
+    到這裡就停了,所以自動化也先做到這裡——停下來清楚回報現況,請你確認
+    Execute 之後實際發生了什麼(一樣可以繼續用 Script Recording 錄下去)。
     """
-    session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
-    session.findById("wnd[0]").sendVKey(0)
+    session.findById("wnd[0]/tbar[0]/okcd").text = "ZOOBOM_CE_FMT"
+    session.findById("wnd[0]/tbar[0]/btn[0]").press()
     time.sleep(1)
 
-    session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text = so
-    session.findById("wnd[0]").sendVKey(0)
-    time.sleep(1)
+    session.findById("wnd[0]/usr/ctxtS_VBELN-LOW").text = so
+    session.findById("wnd[0]/usr/ctxtS_VBELN-LOW").caretPosition = len(so)
+    session.findById("wnd[0]/tbar[1]/btn[8]").press()
+    time.sleep(2)
 
     raise RuntimeError(
-        "已經打開 VA03 並輸入 SO,但「執行 ZOOBOM_CE_FMT」跟「匯出成 Excel」"
-        "這兩步還沒有把握的自動化寫法,先停在這裡。"
-        "麻煩看一下現在畫面,把接下來要點的每一步告訴我(或用 SAP GUI 的 "
-        "Script Recording and Playback 錄一次),我再把後面補完。"
+        "已經開啟 ZOOBOM_CE_FMT、輸入 SO 並按下 Execute,但按下去之後"
+        "「自動下載多個 Excel 檔案」實際怎麼運作還不確定,先停在這裡。"
+        "麻煩確認 Execute 之後實際發生了什麼(有沒有跳出存檔視窗、跳幾次),"
+        "一樣可以繼續用 Script Recording 錄下去,我再把後面補完。"
     )
 
 
@@ -255,7 +259,7 @@ def run(fid, out_dir, mode="tool", so=None):
         if not so:
             raise RuntimeError("Module BOM 下載需要 SO 號碼,請輸入 SO。")
         session = ensure_sap_connected()
-        log(f"開啟 VA03,用 SO {so} 開啟訂單...")
+        log(f"開啟 ZOOBOM_CE_FMT,用 SO {so} 執行...")
         module_xlsx_name = f"{so}_modules.xlsx"
         download_module_bom(session, so, out_dir, module_xlsx_name)
         # download_module_bom 目前一定會丟例外(見函式內註解),不會走到這裡。
