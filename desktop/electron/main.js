@@ -94,8 +94,14 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
   });
 });
 
-ipcMain.handle("fid-download:open-folder", async (_event, filePath) => {
-  shell.showItemInFolder(filePath);
+ipcMain.handle("fid-download:open-folder", async (_event, targetPath) => {
+  // Tool BOM 的結果是單一檔案(顯示在檔案總管裡並選取它);Modules 的結果
+  // 是一個資料夾(裡面有好幾個檔案,直接開資料夾本身即可)。
+  if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
+    shell.openPath(targetPath);
+  } else {
+    shell.showItemInFolder(targetPath);
+  }
 });
 
 app.whenReady().then(createMainWindow);

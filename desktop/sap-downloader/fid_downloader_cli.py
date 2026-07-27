@@ -7,12 +7,13 @@ FID BOM Downloader (CLI 版)
 這支負責真正去跑 SAP。
 
 使用方式：
-    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM)
-    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,目前只做到 VA03+輸入SO 就停)
+    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM,單一 xlsx)
+    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,ZOOBOM_CE_FMT,輸出到一個資料夾,裡面多個檔案)
 
 行為：
 - 進度訊息一行一行印到 stdout(供呼叫端即時顯示)。
-- 執行成功的最後一行一定是 `RESULT_PATH:<輸出的 xlsx 完整路徑>`，
+- tool 模式執行成功的最後一行一定是 `RESULT_PATH:<輸出的 xlsx 完整路徑>`；
+  modules 模式則是 `RESULT_PATH:<輸出資料夾路徑>`(資料夾裡有多個檔案)，
   呼叫端可以用這個 marker 抓出結果檔案位置，不用去猜字串。
 - 任何失敗都印 `[錯誤] ...` 並以非 0 的 exit code 結束。
 
@@ -188,37 +189,71 @@ def export_installed_base(session, save_path, filename):
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
 
+    # 存完之後按 3 次 F3 退回到基礎畫面,讓 session 回到乾淨狀態(跟 Script
+    # Recording 錄製結果一致),避免殘留畫面影響後面接著跑 Modules。
+    session.findById("wnd[0]").sendVKey(3)
+    session.findById("wnd[0]").sendVKey(3)
+    session.findById("wnd[0]").sendVKey(3)
 
-def download_module_bom(session, so, save_path, filename):
-    """
-    Module BOM 下載——開啟 ZOOBOM_CE_FMT、輸入 SO、按 Execute 這段已經用
-    SAP GUI 的 Script Recording and Playback 錄過、逐行對過,以下完全照
-    錄製結果寫(注意交易代碼欄位打的是 "ZOOBOM_CE_FMT",沒有 "/n" 前綴,
-    這是錄製結果,不是漏打):
-      1. 交易代碼欄位輸入 ZOOBOM_CE_FMT,按 Enter(tbar[0]/btn[0])
-      2. Sales Document 欄位技術名稱是 S_VBELN-LOW,輸入 SO
-      3. 按 Execute(tbar[1]/btn[8],等同 F8)
 
-    按下 Execute 之後「自動下載多個 Excel 檔案」實際上是怎麼運作的(有沒
-    有跳出存檔視窗、跳幾次、還是完全自動生成到某個路徑)還沒確認,錄製
-    到這裡就停了,所以自動化也先做到這裡——停下來清楚回報現況,請你確認
-    Execute 之後實際發生了什麼(一樣可以繼續用 Script Recording 錄下去)。
+def download_module_bom(session, so, out_dir):
     """
-    session.findById("wnd[0]/tbar[0]/okcd").text = "ZOOBOM_CE_FMT"
-    session.findById("wnd[0]/tbar[0]/btn[0]").press()
+    Module BOM 下載——完整流程已經用 SAP GUI 的 Script Recording and
+    Playback 錄過、逐行對過:
+      1. 交易代碼輸入 /nZOOBOM_CE_FMT,按 Enter
+      2. Sales Document 欄位(S_VBELN-LOW)輸入 SO
+      3. Folder 欄位(P_FOLDER)按 F4,跳出資料夾選擇視窗,用跟 Tool BOM
+         匯出一樣的 DY_PATH 欄位指定輸出資料夾、按確認
+      4. 按 Execute(tbar[1]/btn[8],F8)——ZOOBOM_CE_FMT 會自動把多個
+         Excel 檔案直接寫進剛剛指定的資料夾,不會再跳出任何存檔視窗
+      5. 按 2 次 F3 返回
+
+    跟 Tool BOM 不同,這裡不知道 SAP 會產生幾個檔案、確切檔名是什麼(由
+    ZOOBOM_CE_FMT 自己決定),所以用「執行前後資料夾內容的差異」來抓出
+    新產生的檔案,而不是等單一固定檔名。
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    before = set(os.listdir(out_dir))
+
+    session.findById("wnd[0]/tbar[0]/okcd").text = "/nZOOBOM_CE_FMT"
+    session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
 
     session.findById("wnd[0]/usr/ctxtS_VBELN-LOW").text = so
-    session.findById("wnd[0]/usr/ctxtS_VBELN-LOW").caretPosition = len(so)
-    session.findById("wnd[0]/tbar[1]/btn[8]").press()
-    time.sleep(2)
 
-    raise RuntimeError(
-        "已經開啟 ZOOBOM_CE_FMT、輸入 SO 並按下 Execute,但按下去之後"
-        "「自動下載多個 Excel 檔案」實際怎麼運作還不確定,先停在這裡。"
-        "麻煩確認 Execute 之後實際發生了什麼(有沒有跳出存檔視窗、跳幾次),"
-        "一樣可以繼續用 Script Recording 錄下去,我再把後面補完。"
-    )
+    session.findById("wnd[0]/usr/ctxtP_FOLDER").setFocus()
+    session.findById("wnd[0]/usr/ctxtP_FOLDER").caretPosition = 0
+    session.findById("wnd[0]").sendVKey(4)  # F4 -> 資料夾選擇
+    time.sleep(1)
+
+    session.findById("wnd[1]/usr/ctxtDY_PATH").text = out_dir
+    session.findById("wnd[1]/usr/ctxtDY_PATH").setFocus()
+    session.findById("wnd[1]/usr/ctxtDY_PATH").caretPosition = len(out_dir)
+    session.findById("wnd[1]/tbar[0]/btn[0]").press()
+    time.sleep(1)
+
+    session.findById("wnd[0]/tbar[1]/btn[8]").press()  # Execute (F8)
+    time.sleep(3)
+
+    session.findById("wnd[0]").sendVKey(3)
+    session.findById("wnd[0]").sendVKey(3)
+
+    log("等待 SAP 寫入檔案...")
+    new_files = []
+    for _ in range(30):
+        time.sleep(1)
+        after = set(os.listdir(out_dir))
+        new_files = sorted(after - before)
+        if new_files:
+            time.sleep(2)  # 再多等一下,確保檔案是不是還在陸續寫入
+            after = set(os.listdir(out_dir))
+            new_files = sorted(after - before)
+            break
+
+    if not new_files:
+        raise RuntimeError("等不到新的檔案,請檢查 SAP 畫面是否卡住,或確認輸出資料夾是否正確。")
+
+    return [os.path.join(out_dir, name) for name in new_files]
 
 
 def parse_tab_export(txt_path):
@@ -258,12 +293,16 @@ def run(fid, out_dir, mode="tool", so=None):
     if mode == "modules":
         if not so:
             raise RuntimeError("Module BOM 下載需要 SO 號碼,請輸入 SO。")
+        module_dir = os.path.join(out_dir, f"{so}_modules")
+
         session = ensure_sap_connected()
         log(f"開啟 ZOOBOM_CE_FMT,用 SO {so} 執行...")
-        module_xlsx_name = f"{so}_modules.xlsx"
-        download_module_bom(session, so, out_dir, module_xlsx_name)
-        # download_module_bom 目前一定會丟例外(見函式內註解),不會走到這裡。
-        return os.path.join(out_dir, module_xlsx_name)
+        files = download_module_bom(session, so, module_dir)
+
+        log(f"完成!共產生 {len(files)} 個檔案:")
+        for f in files:
+            log(f"  - {f}")
+        return module_dir
 
     os.makedirs(out_dir, exist_ok=True)
     txt_name = f"{fid}.txt"
@@ -306,7 +345,7 @@ def main():
         "--mode",
         choices=["tool", "modules"],
         default="tool",
-        help="tool = 完整 BOM(IB53,預設,需要 FID);modules = 依模組拆分(VA03,需要 SO)",
+        help="tool = 完整 BOM(IB53,預設,需要 FID);modules = 依模組拆分(ZOOBOM_CE_FMT,需要 SO)",
     )
     parser.add_argument("--so", default=None, help="SO 號碼(modules 模式需要)")
     args = parser.parse_args()

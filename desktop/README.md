@@ -10,7 +10,7 @@ SAP FID 下載工具(從 `fid_downloader_gui.py` 搬過來的自動化邏輯)。
 
 ```
 desktop/
-  electron/          Electron 桌面殼(視窗、選單、SAP 下載小視窗)
+  electron/          Electron 桌面殼(視窗、preload 橋接)
   sap-downloader/     fid_downloader_gui.py 拿掉視窗介面後的命令列版本
 ```
 
@@ -18,10 +18,18 @@ desktop/
 你以後 push 到 main、Vercel 自動部署,桌面版看到的也會自動是最新版本,不用重新
 發一次 exe。
 
-**「工具 > SAP 下載」**選單會開一個小視窗(長得像 fid_downloader_gui.py 那個
-tkinter 視窗),輸入 FID、按下載,背後會呼叫包好的 `fid_downloader_cli.exe` 去
-跑 SAP 自動化,即時把進度顯示出來。下載完只會把 xlsx 存到你的「下載」資料夾,
-不會自動上傳——你一樣照現在的習慣,去 lambom 網頁版的「上傳 BOM」手動選檔案。
+**「SAP 下載」不是獨立視窗,是內嵌在 `/machines`(編輯機台)頁面裡的一個區塊**
+(`components/fid-downloader-panel.tsx`),透過 `window.fidDownloader`(preload
+注入)判斷是不是在桌面版裡執行,一般瀏覽器打開同一個網址完全看不到這塊。
+
+- **FID** 欄位 → 完整 BOM(IB53),輸出單一 xlsx
+- **SO** 欄位 → Modules(ZOOBOM_CE_FMT),輸出一個資料夾,裡面多個檔案(檔名由
+  SAP 自己決定,不固定)
+
+兩個欄位填哪個就跑哪個,都填就依序都跑。下載完只會把檔案存到你的「下載」資料
+夾,不會自動上傳——你一樣照現在的習慣,去 lambom 網頁版的「上傳 BOM」手動選
+檔案(Modules 那個資料夾裡的多個檔案可以一次全選上傳,跟現在上傳多個子項檔案
+的方式一樣)。
 
 ## 設定正式網址
 
@@ -58,6 +66,15 @@ dist\fid_downloader_cli.exe 264059
 
 (把 264059 換成你要測試的真實 FID,跑完應該會在目前資料夾看到 `264059.xlsx`,
 最後一行印出 `RESULT_PATH:...`。)
+
+測試 Modules(需要真實 SO):
+
+```bat
+dist\fid_downloader_cli.exe --mode modules --so R0542
+```
+
+跑完應該會在目前資料夾看到一個 `R0542_modules` 資料夾,裡面有 SAP 產生的多個
+檔案。
 
 **第二步:包 Electron 桌面版**
 
