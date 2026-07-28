@@ -39,7 +39,7 @@ function uploadFileWithProgress(
         resolve();
         return;
       }
-      let message = `上傳失敗 (HTTP ${xhr.status})`;
+      let message = `Upload failed (HTTP ${xhr.status})`;
       try {
         const body = JSON.parse(xhr.responseText);
         message = body.message || body.error || message;
@@ -49,7 +49,7 @@ function uploadFileWithProgress(
       reject(new Error(message));
     };
 
-    xhr.onerror = () => reject(new Error("網路錯誤,上傳失敗"));
+    xhr.onerror = () => reject(new Error("Network error, upload failed"));
 
     xhr.send(file);
   });
@@ -116,7 +116,7 @@ export default function DocPage() {
     refreshCurrentFile()
       .catch((err) => {
         if (cancelled) return;
-        setInitError(`載入失敗:${err instanceof Error ? err.message : String(err)}`);
+        setInitError(`Failed to load: ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
         if (!cancelled) setInitLoading(false);
@@ -165,9 +165,10 @@ export default function DocPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">檔案取代</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">File Replace</h1>
           <p className="mt-1 text-sm text-white/70">
-            左邊是目前儲存的檔案,可點擊下載;右邊選擇新檔案上傳後會取代舊檔案。
+            The left side shows the currently stored file — click to download; select a new file
+            on the right to upload and replace it.
           </p>
         </div>
 
@@ -179,18 +180,18 @@ export default function DocPage() {
 
         {uploadError && (
           <Card className="mb-6 border-destructive/50">
-            <CardContent className="text-destructive text-sm">上傳失敗:{uploadError}</CardContent>
+            <CardContent className="text-destructive text-sm">Upload failed: {uploadError}</CardContent>
           </Card>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>目前檔案</CardTitle>
+              <CardTitle>Current File</CardTitle>
             </CardHeader>
             <CardContent>
               {initLoading ? (
-                <p className="text-muted-foreground text-sm">載入中…</p>
+                <p className="text-muted-foreground text-sm">Loading…</p>
               ) : currentFile ? (
                 <div className="flex flex-col gap-2">
                   <a
@@ -205,14 +206,14 @@ export default function DocPage() {
                   )}
                 </div>
               ) : (
-                <p className="text-muted-foreground text-sm italic">尚無檔案</p>
+                <p className="text-muted-foreground text-sm italic">No file yet</p>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>上傳新檔案</CardTitle>
+              <CardTitle>Upload New File</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
@@ -241,8 +242,8 @@ export default function DocPage() {
                     <p className="text-sm font-medium">{selectedFile.name}</p>
                   ) : (
                     <>
-                      <p className="text-sm font-medium">拖曳檔案到這裡</p>
-                      <p className="text-muted-foreground text-xs">或點擊選擇檔案</p>
+                      <p className="text-sm font-medium">Drag a file here</p>
+                      <p className="text-muted-foreground text-xs">or click to select a file</p>
                     </>
                   )}
                   <input
@@ -256,9 +257,9 @@ export default function DocPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Button onClick={handleReplace} disabled={!selectedFile || uploading}>
-                    {uploading ? "上傳中…" : "取代"}
+                    {uploading ? "Uploading…" : "Replace"}
                   </Button>
-                  {uploadSuccess && <span className="text-sm text-emerald-600">已更新</span>}
+                  {uploadSuccess && <span className="text-sm text-emerald-600">Updated</span>}
                 </div>
                 {uploading && (
                   <div className="flex items-center gap-3">

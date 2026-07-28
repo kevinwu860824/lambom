@@ -192,13 +192,13 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>料號 / 描述搜尋</CardTitle>
+        <CardTitle>Part No. / Description Search</CardTitle>
       </CardHeader>
       <CardContent>
         <Input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="輸入關鍵字搜尋所有機台的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
+          placeholder="Enter keywords to search part numbers or descriptions across all machines — separate multiple keywords with spaces (all must match)"
         />
 
         <div className="mt-3">
@@ -210,7 +210,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
             <ChevronDown
               className={cn("h-3.5 w-3.5 transition-transform", filterOpen && "rotate-180")}
             />
-            篩選機台 / 子項
+            Filter Machines / Subparts
             {isFiltering && (
               <Badge variant="secondary" className="ml-1">
                 {selectedBomIds.size}
@@ -226,7 +226,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
                   onClick={clearFilter}
                   className="text-muted-foreground mb-2 block text-xs underline"
                 >
-                  清除篩選
+                  Clear filter
                 </button>
               )}
 
@@ -241,7 +241,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
                   }
                   onCheckedChange={toggleAllMachines}
                 />
-                全部機台
+                All machines
               </label>
               <div className="mt-1 max-h-[160px] overflow-y-auto grid gap-1 pl-6">
                 {machineGroups.map((group) => (
@@ -258,7 +258,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
               {checkedMachines.size > 0 && (
                 <div className="mt-3 grid gap-3 border-t pt-3">
                   <p className="text-muted-foreground text-xs font-medium">
-                    子項(預設全部,可個別取消)
+                    Subparts (all included by default, uncheck individually to exclude)
                   </p>
                   <div className="max-h-[240px] overflow-y-auto grid gap-2">
                     {machineGroups
@@ -270,7 +270,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
                               checked={machineSubpartState(group)}
                               onCheckedChange={() => toggleAllSubpartsForMachine(group)}
                             />
-                            {group.machine}(全部)
+                            {group.machine} (all)
                           </label>
                           <div className="mt-1 grid gap-1 pl-6">
                             {group.subparts.map((s) => (
@@ -293,28 +293,28 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
         </div>
 
         <div className="mt-4">
-          {loading && <p className="text-muted-foreground text-sm">搜尋中…</p>}
-          {error && <p className="text-destructive text-sm">搜尋失敗:{error}</p>}
+          {loading && <p className="text-muted-foreground text-sm">Searching…</p>}
+          {error && <p className="text-destructive text-sm">Search failed: {error}</p>}
           {!loading && !error && results && results.length === 0 && (
-            <p className="text-muted-foreground text-sm italic">沒有符合的結果</p>
+            <p className="text-muted-foreground text-sm italic">No matching results</p>
           )}
           {!loading && results && results.length > 0 && (
             <>
               <p className="text-muted-foreground mb-2 text-xs">
-                共 {results.length} 筆
-                {results.length === RESULT_LIMIT ? `(僅顯示前 ${RESULT_LIMIT} 筆)` : ""}
+                {results.length} result(s)
+                {results.length === RESULT_LIMIT ? ` (showing only the first ${RESULT_LIMIT})` : ""}
               </p>
               <div className="max-h-[400px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>機台</TableHead>
-                      <TableHead>子項</TableHead>
-                      <TableHead>料號</TableHead>
-                      <TableHead>描述</TableHead>
+                      <TableHead>Machine</TableHead>
+                      <TableHead>Subpart</TableHead>
+                      <TableHead>Part No.</TableHead>
+                      <TableHead>Description</TableHead>
                       <TableHead>Qty</TableHead>
                       <TableHead>Unit</TableHead>
-                      <TableHead>操作</TableHead>
+                      <TableHead>Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -414,7 +414,7 @@ function AddKeyPartButton({
       }}
     >
       <DialogTrigger asChild>
-        <Button size="icon-sm" variant="ghost" aria-label="加入重要零件">
+        <Button size="icon-sm" variant="ghost" aria-label="Add key part">
           {saved ? (
             <Check className="h-4 w-4 text-emerald-600" />
           ) : (
@@ -424,8 +424,8 @@ function AddKeyPartButton({
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>加入重要零件</DialogTitle>
-          <DialogDescription>幫這個零件取一個好記的自訂名稱。</DialogDescription>
+          <DialogTitle>Add Key Part</DialogTitle>
+          <DialogDescription>Give this part a memorable custom name.</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
@@ -434,12 +434,12 @@ function AddKeyPartButton({
             <p className="text-muted-foreground">{description}</p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`custom-name-${partNo}`}>自訂名稱</Label>
+            <Label htmlFor={`custom-name-${partNo}`}>Custom Name</Label>
             <Input
               id={`custom-name-${partNo}`}
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
-              placeholder="例如:主電源開關"
+              placeholder="e.g. Main Power Switch"
               disabled={saving}
             />
           </div>
@@ -448,7 +448,7 @@ function AddKeyPartButton({
 
         <DialogFooter>
           <Button onClick={handleSave} disabled={!customName.trim() || saving}>
-            {saving ? "儲存中…" : "儲存"}
+            {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

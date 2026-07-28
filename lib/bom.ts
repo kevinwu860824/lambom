@@ -86,7 +86,7 @@ export interface KeyPartDisplayRow {
   renameText: string | null;
 }
 
-// Shared by the on-screen 僅存在於 A/B tables and the Excel export, so both
+// Shared by the on-screen Only in A/B tables and the Excel export, so both
 // always agree on ordering/highlighting: suspected-renamed rows first, then
 // plain key parts, then everything else. `renameRank`, when given, orders the
 // renamed group to match the position of the key part it corresponds to on
@@ -120,7 +120,7 @@ export function formatAggregatedMatches(matches: AggregatedItem[]): string {
   if (matches.length === 0) return "-";
   return matches
     .map((m) => `${m.part_no}${m.description ? `(${m.description})` : ""}`)
-    .join("、");
+    .join(", ");
 }
 
 export function chunk<T>(items: T[], size: number): T[][] {
@@ -170,7 +170,7 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
     .select("id,machine_name,source_file");
 
   if (error) {
-    throw new Error(`載入 Supabase 失敗:${error.message}`);
+    throw new Error(`Failed to load from Supabase: ${error.message}`);
   }
 
   if (!machines || machines.length === 0) {
@@ -262,7 +262,7 @@ export async function fetchAllBomItems(
       data = await fetchBomItemsPage(supabase, bomId, from, pageSize);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`載入子項失敗 (${sourceFile}):${message}`);
+      throw new Error(`Failed to load subpart (${sourceFile}): ${message}`);
     }
 
     if (data.length === 0) break;
@@ -389,8 +389,8 @@ export async function autoMatchKeyParts(
 
 /**
  * Insert-or-overwrite one (machine_name, source_file) BOM into bom_machines
- * + bom_items. Shared by the manual upload dialog and the SAP 下載 panel's
- * auto-upload, so both paths always agree on overwrite/insert semantics.
+ * + bom_items. Shared by the manual upload dialog and the SAP Download
+ * panel's auto-upload, so both paths always agree on overwrite/insert semantics.
  */
 export async function uploadBomEntry(
   supabase: SupabaseClient,
@@ -447,8 +447,8 @@ export async function uploadBomEntry(
   }
 }
 
-/** FID -> 機台名稱對照表(fid_machine_map),讓 SAP 下載自動上傳時知道要
- * 寫進哪台機台,不用每次手動輸入。 */
+/** FID -> machine name mapping (fid_machine_map), so the SAP Download
+ * auto-upload knows which machine to write to without manual entry every time. */
 export async function lookupMachineForFid(
   supabase: SupabaseClient,
   fid: string

@@ -65,7 +65,7 @@ export function EditableField({
             <XIcon className="h-4 w-4" />
           </Button>
         )}
-        {saved && <span className="text-xs text-emerald-600">已儲存</span>}
+        {saved && <span className="text-xs text-emerald-600">Saved</span>}
       </div>
       {error && <p className="text-destructive mt-1 text-xs">{error}</p>}
     </div>

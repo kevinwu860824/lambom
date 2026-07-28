@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "資料編輯",
-  description: "檢視並取代 Supabase Data 表的內容",
+  title: "Data Editor",
+  description: "View and replace the content of Supabase's Data table",
 };
 
 export default function DataLayout({ children }: { children: React.ReactNode }) {

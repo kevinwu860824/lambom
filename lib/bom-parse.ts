@@ -86,7 +86,7 @@ export function parseTxtBom(text: string): ParsedBom {
   }
 
   if (rootLineIndex === -1) {
-    throw new Error("找不到根節點(第一行料號),請確認這是 BOM 報表格式的 txt 檔");
+    throw new Error("Root node not found (first-row part number) — check this is a BOM report txt file");
   }
 
   const items: ParsedBomItem[] = [
@@ -162,7 +162,7 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
   });
 
   if (rows.length < 2) {
-    throw new Error("Excel 檔案內容不足(至少需要表頭 + 一筆資料)");
+    throw new Error("Excel file has insufficient content (at least a header + one data row required)");
   }
 
   const headerFields = rows[0].join("").split("\t").map((h) => h.trim());
@@ -179,7 +179,7 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
   );
 
   if (materialIdx === -1 || levelIdx === -1) {
-    throw new Error("Excel 表頭找不到必要欄位(Material / Level),請確認檔案格式");
+    throw new Error("Required columns not found in Excel header (Material / Level) — check the file format");
   }
 
   const items: ParsedBomItem[] = [];
@@ -227,7 +227,7 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
   }
 
   if (!rootPartNo) {
-    throw new Error("找不到 Level 0 的根節點,請確認 Excel 內容");
+    throw new Error("Level 0 root node not found — check the Excel content");
   }
 
   return { rootPartNo, rootDescription, items };
@@ -243,7 +243,7 @@ export function parseExcelBom(buffer: ArrayBuffer): ParsedBom {
  */
 function parseIndentedRows(rows: string[][]): ParsedBom {
   if (rows.length < 2) {
-    throw new Error("檔案內容不足(至少需要表頭 + 一筆資料)");
+    throw new Error("File has insufficient content (at least a header + one data row required)");
   }
 
   const headerFields = rows[0].map((h) => h.trim());
@@ -256,7 +256,7 @@ function parseIndentedRows(rows: string[][]): ParsedBom {
   const uomIdx = colIndex("Unit");
 
   if (partNoIdx === -1 || indentIdx === -1) {
-    throw new Error("表頭找不到必要欄位(Part Number / Indent),請確認檔案格式");
+    throw new Error("Required columns not found in header (Part Number / Indent) — check the file format");
   }
 
   const items: ParsedBomItem[] = [];
@@ -306,7 +306,7 @@ function parseIndentedRows(rows: string[][]): ParsedBom {
   }
 
   if (!rootPartNo) {
-    throw new Error("找不到根節點,請確認檔案內容");
+    throw new Error("Root node not found — check the file content");
   }
 
   return { rootPartNo, rootDescription, items };
@@ -418,7 +418,7 @@ function parseCsvRows(text: string): string[][] {
  */
 function parseSapFieldRows(rows: string[][]): ParsedBom {
   if (rows.length < 2) {
-    throw new Error("檔案內容不足(至少需要表頭 + 一筆資料)");
+    throw new Error("File has insufficient content (at least a header + one data row required)");
   }
 
   const headerFields = rows[0].map((h) => h.trim());
@@ -438,7 +438,7 @@ function parseSapFieldRows(rows: string[][]): ParsedBom {
     .map((entry) => entry.idx);
 
   if (materialIdx === -1 || levelIdx === -1 || genealogyIndices.length === 0) {
-    throw new Error("表頭找不到必要欄位(MATERIAL / BOMLEVEL / GENE00...),請確認檔案格式");
+    throw new Error("Required columns not found in header (MATERIAL / BOMLEVEL / GENE00...) — check the file format");
   }
 
   const items: ParsedBomItem[] = [];
@@ -482,7 +482,7 @@ function parseSapFieldRows(rows: string[][]): ParsedBom {
   }
 
   if (!rootPartNo) {
-    throw new Error("找不到 Level 0 的根節點,請確認檔案內容");
+    throw new Error("Level 0 root node not found — check the file content");
   }
 
   return { rootPartNo, rootDescription, items };
@@ -598,7 +598,7 @@ function readXlsxRowsLenient(buffer: ArrayBuffer): string[][] {
   const sheetPath = resolveFirstSheetPath(files);
   const sheetXml = files[sheetPath] ? strFromU8(files[sheetPath]) : null;
   if (!sheetXml) {
-    throw new Error("在 xlsx 檔案中找不到工作表資料(xl/worksheets/...)");
+    throw new Error("No worksheet data found in the xlsx file (xl/worksheets/...)");
   }
 
   const sharedStrings = files["xl/sharedStrings.xml"]
@@ -649,7 +649,7 @@ export function parseXlsxBom(buffer: ArrayBuffer): ParsedBom {
  */
 function parseModuleSheetRows(rows: string[][]): ParsedBom {
   if (rows.length < 2) {
-    throw new Error("這個分頁沒有資料");
+    throw new Error("This sheet has no data");
   }
 
   const items: ParsedBomItem[] = [];
@@ -686,7 +686,7 @@ function parseModuleSheetRows(rows: string[][]): ParsedBom {
   }
 
   if (!rootPartNo) {
-    throw new Error("找不到 Level 0 的根節點");
+    throw new Error("Level 0 root node not found");
   }
 
   return { rootPartNo, rootDescription, items };
@@ -695,7 +695,7 @@ function parseModuleSheetRows(rows: string[][]): ParsedBom {
 /**
  * Reads every sheet of a merged Modules workbook — each sheet is one module
  * (its own independent BOM tree), matching how the app already treats a
- * machine's separate uploaded files as separate 子項/subparts.
+ * machine's separate uploaded files as separate subparts.
  */
 export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; parsed: ParsedBom }[] {
   const workbook = XLSX.read(buffer, { type: "array" });
@@ -710,7 +710,7 @@ export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; 
       return { sheetName, parsed: parseModuleSheetRows(rows) };
     } catch (err) {
       throw new Error(
-        `分頁「${sheetName}」解析失敗:${err instanceof Error ? err.message : String(err)}`
+        `Failed to parse sheet "${sheetName}": ${err instanceof Error ? err.message : String(err)}`
       );
     }
   });

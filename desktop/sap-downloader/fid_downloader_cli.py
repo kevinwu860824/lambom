@@ -1,35 +1,38 @@
 r"""
-FID BOM Downloader (CLI 版)
----------------------------
-跟 fid_downloader_gui.py 是同一套 SAP 自動化邏輯(IB53 搜尋 + 展開匯出 +
-轉存 Excel),差別只在這支沒有自己的 tkinter 視窗——改成純命令列工具,
-專門給 lambom 桌面版(Electron)呼叫用:Electron 負責畫視窗、顯示進度,
-這支負責真正去跑 SAP。
+FID BOM Downloader (CLI version)
+---------------------------------
+Same SAP automation logic as fid_downloader_gui.py (IB53 search + expand/
+export + convert to Excel), the only difference being this one has no
+tkinter window of its own — it's a pure command-line tool built for the
+lambom desktop app (Electron) to call: Electron handles the window and
+progress display, this tool handles actually driving SAP.
 
-使用方式：
-    fid_downloader_cli.exe <FID> [--out-dir 輸出資料夾]                      (預設 tool 模式,完整 BOM)
-    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir 輸出資料夾]   (Module BOM,ZOOBOM_CE_FMT)
-    fid_downloader_cli.exe <FID> --mode modules [--out-dir 輸出資料夾]      (Module BOM,SO 留空會用 FID 反查)
+Usage:
+    fid_downloader_cli.exe <FID> [--out-dir OUTPUT_DIR]                      (default tool mode, Full BOM)
+    fid_downloader_cli.exe --mode modules --so <SO> [--out-dir OUTPUT_DIR]   (Module BOM, ZOOBOM_CE_FMT)
+    fid_downloader_cli.exe <FID> --mode modules [--out-dir OUTPUT_DIR]      (Module BOM, leave SO blank to resolve it from FID)
 
-行為：
-- 進度訊息一行一行印到 stdout(供呼叫端即時顯示)。
-- 兩種模式最後都只會產生「一份」乾淨的 xlsx(中繼檔、原始多檔都會自動清掉)：
-  tool 模式是 `<FID>.xlsx`；modules 模式是 `<SO>_modules.xlsx`,裡面依模組
-  分頁,座標問題也已修好。執行成功的最後一行一定是
-  `RESULT_PATH:<輸出的 xlsx 完整路徑>`，呼叫端可以用這個 marker 抓出結果
-  檔案位置，不用去猜字串。
-- 任何失敗都印 `[錯誤] ...` 並以非 0 的 exit code 結束。
+Behavior:
+- Progress messages are printed to stdout one line at a time (for the caller to display live).
+- Both modes always produce exactly ONE clean xlsx in the end (intermediate
+  files and raw multi-file output are cleaned up automatically): tool mode
+  produces `<FID>.xlsx`; modules mode produces `<SO>_modules.xlsx`, split
+  into sheets by module, with the coordinate issue already fixed. The last
+  line on success is always `RESULT_PATH:<full path to the output xlsx>`,
+  so the caller can extract the result file's location from this marker
+  instead of guessing from other output.
+- Any failure prints `[Error] ...` and exits with a non-zero exit code.
 
-使用前提（跟 fid_downloader_gui.py 一樣）：
-1. Windows 電腦，SAP 帳號是自動登入(SSO)，不需要手動打帳密。
-2. 先安裝套件：pip install pywin32 openpyxl
-3. SAP GUI Scripting 要是開啟狀態。
-4. SAP_PORTAL_URL 換成你自己的公司 Portal 開啟 SAP 那個連結。
+Prerequisites (same as fid_downloader_gui.py):
+1. A Windows machine with SAP auto-login (SSO) — no manual login required.
+2. Install packages first: pip install pywin32 openpyxl
+3. SAP GUI Scripting must be enabled.
+4. Replace SAP_PORTAL_URL with your own company Portal's "Open SAP" link.
 
-打包成 exe（在 Windows 上執行）：
+Packaging into an exe (run on Windows):
     pip install pyinstaller
     pyinstaller --onefile --console --name fid_downloader_cli fid_downloader_cli.py
-   （這支要保留 console 輸出，不能加 --noconsole，Electron 要讀 stdout。）
+   (Keep console output — don't add --noconsole, since Electron needs to read stdout.)
 """
 
 import argparse
@@ -44,15 +47,18 @@ import zipfile
 import win32com.client
 import openpyxl
 
-# 被 Electron 當子程序執行時,stdout/stderr 沒有接到真正的主控台,Windows 上
-# Python 預設會退回 cp1252 之類編不了中文的編碼,一印中文 log 就會
-# UnicodeEncodeError 崩潰。強制改成 utf-8,編不了的字元用替代符號頂著,不當機。
+# When run as a child process by Electron, stdout/stderr aren't attached to a
+# real console, so Windows falls back to a codepage like cp1252 that can't
+# encode Chinese/CJK text by default, crashing with UnicodeEncodeError the
+# moment such a log line is printed. Force utf-8, substituting a placeholder
+# for characters that still can't be encoded, so it never crashes on this.
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-# 公司 Portal 裡「開啟 SAP」那個連結的網址，開這個網址會透過 SSO 自動幫你連進 SAP。
-# 這是你個人的 navurl，換人用要換成那個人自己的連結。
+# The URL of the "Open SAP" link in the company Portal — opening it logs you
+# into SAP automatically via SSO. This is YOUR personal navurl; whoever else
+# uses this needs to swap in their own link.
 SAP_PORTAL_URL = (
     "https://epp.fremont.lamrc.net/irj/portal"
     "?NavigationTarget=navurl://e9dc0731c19963b952ca3fbeceed6db3"
@@ -64,10 +70,10 @@ def log(msg):
     print(msg, flush=True)
 
 
-# ---------- SAP 自動化邏輯(跟 fid_downloader_gui.py 完全相同) ----------
+# ---------- SAP automation logic (identical to fid_downloader_gui.py) ----------
 
 def is_sap_process_running():
-    """用 tasklist 檢查 SAP 相關程序是否在跑。"""
+    """Check via tasklist whether any SAP-related process is running."""
     try:
         output = subprocess.check_output(
             ["tasklist"], text=True, errors="ignore",
@@ -90,12 +96,12 @@ def kill_sap_processes():
 
 
 def launch_sap_logon():
-    """模擬你平常點公司 Portal 連結開 SAP 的動作：直接開網址，交給預設瀏覽器 + SSO 處理。"""
+    """Simulates what you'd normally do — click the company Portal link to open SAP: just open the URL and let the default browser + SSO handle it."""
     os.startfile(SAP_PORTAL_URL)
 
 
 def try_connect_sap():
-    """嘗試連線並簡單測試一下是否真的可用，成功回傳 session，失敗回傳 None。"""
+    """Try connecting and do a quick sanity check that it's actually usable; returns the session on success, None on failure."""
     try:
         sap_gui_auto = win32com.client.GetObject("SAPGUI")
         application = sap_gui_auto.GetScriptingEngine
@@ -105,7 +111,7 @@ def try_connect_sap():
         if connection.Children.Count == 0:
             return None
         session = connection.Children(0)
-        _ = session.Info.SystemName  # 順手測試一下 session 是否真的能動
+        _ = session.Info.SystemName  # quick check that the session actually responds
         return session
     except Exception:
         return None
@@ -113,28 +119,28 @@ def try_connect_sap():
 
 def ensure_sap_connected(max_wait_seconds=120):
     """
-    確保 SAP 已連線並回傳可用的 session：
-      1. 先測試目前有沒有能用的連線，能連就直接用
-      2. 連不上但 SAP 程序有在跑 -> 砍掉重開
-      3. SAP 根本沒開 -> 直接啟動
-      4. 啟動後輪詢等待自動登入(SSO) + Scripting 註冊完成
+    Ensure SAP is connected and return a usable session:
+      1. First test whether there's already a usable connection; use it directly if so
+      2. Can't connect but an SAP process is running -> kill it and relaunch
+      3. SAP isn't open at all -> launch it directly
+      4. After launching, poll and wait for auto-login (SSO) + Scripting registration to complete
     """
-    log("測試目前 SAP 連線...")
+    log("Testing current SAP connection...")
     session = try_connect_sap()
     if session is not None:
-        log("已有可用連線，直接使用。")
+        log("Usable connection already exists, using it directly.")
         return session
 
     if is_sap_process_running():
-        log("偵測到 SAP 程序在跑但連不上，砍掉重開...")
+        log("Detected an SAP process running but couldn't connect, killing and relaunching...")
         kill_sap_processes()
     else:
-        log("SAP 目前沒有開啟，準備啟動...")
+        log("SAP isn't currently open, preparing to launch...")
 
-    log("啟動 SAP Logon...")
+    log("Launching SAP Logon...")
     launch_sap_logon()
 
-    log("等待 SAP 自動登入、Scripting 就緒...")
+    log("Waiting for SAP auto-login and Scripting to become ready...")
     waited = 0
     interval = 2
     while waited < max_wait_seconds:
@@ -142,12 +148,12 @@ def ensure_sap_connected(max_wait_seconds=120):
         waited += interval
         session = try_connect_sap()
         if session is not None:
-            log(f"SAP 連線成功（等待約 {waited} 秒）。")
+            log(f"SAP connected successfully (waited about {waited}s).")
             return session
         if waited % 10 == 0:
-            log(f"還在等待登入完成...（已等 {waited} 秒）")
+            log(f"Still waiting for login to complete... ({waited}s elapsed)")
 
-    raise RuntimeError(f"等了 {max_wait_seconds} 秒仍無法連上 SAP，請確認自動登入是否正常完成。")
+    raise RuntimeError(f"Waited {max_wait_seconds}s and still couldn't connect to SAP — check whether auto-login completed properly.")
 
 
 def open_ib53_with_fid(session, fid):
@@ -162,7 +168,7 @@ def open_ib53_with_fid(session, fid):
 
     session.findById("wnd[0]/usr/subENTRANCE:SAPLIBOF_R3:0100/ctxtRIBOFO-EQUNO").setFocus()
     session.findById("wnd[0]/usr/subENTRANCE:SAPLIBOF_R3:0100/ctxtRIBOFO-EQUNO").caretPosition = 0
-    session.findById("wnd[0]").sendVKey(4)  # F4 -> 搜尋輔助
+    session.findById("wnd[0]").sendVKey(4)  # F4 -> search help
     time.sleep(1)
 
     # Tab 5 = "F: Equipment by technical ID number"
@@ -195,8 +201,10 @@ def export_installed_base(session, save_path, filename):
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
 
-    # 存完之後按 3 次 F3 退回到基礎畫面,讓 session 回到乾淨狀態(跟 Script
-    # Recording 錄製結果一致),避免殘留畫面影響後面接著跑 Modules。
+    # After saving, press F3 3 times to go back to the base screen so the
+    # session returns to a clean state (matching the verified Script
+    # Recording), avoiding leftover screens interfering with the Modules run
+    # that follows.
     session.findById("wnd[0]").sendVKey(3)
     session.findById("wnd[0]").sendVKey(3)
     session.findById("wnd[0]").sendVKey(3)
@@ -204,33 +212,44 @@ def export_installed_base(session, save_path, filename):
 
 def resolve_so_from_fid(session, fid):
     """
-    用 FID 反查對應的 SO——開 VA03、對 Sales Document 欄位按 F4,切到分頁
-    「A: Sales document according to customer PO number」,用 FID 當
-    wildcard(<FID>*)搜尋,選搜尋結果清單「最下面一筆」,再讀回 VA03 訂單
-    欄位(VBAK-VBELN)確認選到的 SO(同一個 FID 如果 BOM 改版過,可能會搜到
-    不只一筆結果,使用者確認要固定選最下面那筆)。
+    Resolve the corresponding SO from a FID — open VA03, press F4 on the
+    Sales Document field, switch to the "A: Sales document according to
+    customer PO number" tab, search using the FID as a wildcard (<FID>*),
+    select the "bottom-most" row in the results list, then read back VA03's
+    order field (VBAK-VBELN) to confirm the selected SO (if a FID's BOM has
+    been revised, the search may return more than one result — confirmed
+    with the user that the bottom-most one should always be picked).
 
-    這個清單的元件用 lbl[列,欄] 定址,列/欄的數字不是「第幾筆」的序號,是
-    畫面內部座標。已經用 SAP GUI 的 Script Recording and Playback 驗證過
-    4 個真實案例:
-      - FID 255678,只有 1 筆結果:唯一一筆在 lbl[1,3](欄 3)
-      - FID 246845,2 筆結果:最上面那筆在 lbl[1,4],最下面那筆在
-        lbl[130,4](欄 4)
-      - FID 245828,5 筆結果:其中一筆在 lbl[1,7](欄 7)
-    一開始以為「欄」是跟著「單筆 vs 多筆」切換(單筆用 3、多筆用 4),但
-    245828 也是多筆卻用欄 7,推翻了這個假設——欄位其實是每次搜尋結果各自
-    不同,沒有固定值,不能用猜的。改成:
-      - 欄:先在第 1 列掃過一段欄位範圍,找出這次搜尋結果實際用的是哪一欄
-        (掃到第一個有文字的就是)。掃描範圍從 2 開始,不從 0——實測過
-        FID 245828 掃到欄 1 時,那欄其實是跟資料無關的東西(可能是目前
-        選取格子的游標框),選了之後 VA03 讀不到 SO;3 個真實驗證過的欄位
-        (3、4、7)都不小於 3,所以把下限抬高到 2 排除這種誤判。
-      - 列:找到欄之後,從 1 開始用同一欄位、每多一筆結果往下位移 129
-        (1、130、259…)去找最下面一列——這個間距是從 246845 的 2 筆真實
-        案例(第 1、2 筆都對得上)反推出來的,3 筆以上還沒有實際驗證過。
-      - 保險:選完之後如果 VA03 訂單欄位讀不到值,會直接報錯(不會用一個
-        沒驗證過的 SO 值繼續跑),所以就算欄位掃錯,也不會讓錯誤的 SO 混
-        進 Supabase 資料裡。
+    This list's elements are addressed via lbl[row,col], where the row/col
+    numbers are NOT a "which result number" sequence — they're internal
+    screen coordinates. Verified against 4 real cases using SAP GUI's Script
+    Recording and Playback:
+      - FID 255678, 1 result only: the sole result is at lbl[1,3] (col 3)
+      - FID 246845, 2 results: the top one is at lbl[1,4], the bottom one at
+        lbl[130,4] (col 4)
+      - FID 245828, 5 results: one of them is at lbl[1,7] (col 7)
+    Initially assumed the "column" switched based on "single vs multiple
+    results" (single uses 3, multiple uses 4), but 245828 is also multiple
+    results yet uses column 7, disproving that assumption — the column is
+    actually different for each search, with no fixed value, so it can't be
+    guessed. Changed to:
+      - Column: scan a range of columns at row 1 first to find which column
+        this search's results actually use (whichever has text first). The
+        scan range starts at 2, not 0 — testing showed that when FID 245828
+        scanned to column 1, that column turned out to be unrelated to the
+        data (possibly a leftover cursor-box artifact from the currently
+        selected cell); selecting it left VA03 unable to read an SO. The 3
+        real verified columns (3, 4, 7) are never below 3, so the floor was
+        raised to 2 to exclude this kind of false positive.
+      - Row: once the column is found, starting from row 1 and using that
+        same column, step down by 129 per additional result (1, 130,
+        259, ...) to find the bottom-most row — this spacing was derived
+        from 246845's 2 real results (both the 1st and 2nd line up); 3+
+        results hasn't actually been verified yet.
+      - Safety net: if VA03's order field can't be read after selecting, it
+        raises an error right away (never proceeds with an unverified SO
+        value), so even if the column scan picks the wrong one, a wrong SO
+        never ends up mixed into the Supabase data.
     """
     session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
     session.findById("wnd[0]/tbar[0]/btn[0]").press()
@@ -254,10 +273,12 @@ def resolve_so_from_fid(session, fid):
         text = (label.text or "").strip()
         return text if text else None
 
-    # 搜尋結果清單需要時間查詢/渲染,手動操作時不會感覺到,但緊接在完整 BOM
-    # 匯出後自動連續執行時,偶爾會比固定睡 1 秒還慢,導致明明有結果卻被誤判
-    # 成空清單。改成最多輪詢 5 秒(每 0.5 秒掃一次欄位),而不是固定睡 1 秒
-    # 就檢查一次。
+    # The results list takes time to query/render — not noticeable when
+    # operating manually, but running automatically right after a Full BOM
+    # export can occasionally be slower than a fixed 1-second sleep, causing
+    # real results to be misjudged as an empty list. Changed to polling for
+    # up to 5 seconds (scanning columns every 0.5s), instead of a fixed
+    # 1-second sleep followed by a single check.
     col = None
     for _ in range(10):
         for c in COL_RANGE:
@@ -269,7 +290,7 @@ def resolve_so_from_fid(session, fid):
         time.sleep(0.5)
 
     if col is None:
-        raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
+        raise RuntimeError("Failed to resolve SO from FID — the search results list is empty, check the SAP screen.")
 
     last_row = 1
     count = 1
@@ -280,7 +301,7 @@ def resolve_so_from_fid(session, fid):
         last_row = next_row
         count += 1
 
-    log(f"搜尋結果共 {count} 筆(欄 {col}),選最下面一筆。")
+    log(f"Search found {count} result(s) (column {col}), selecting the bottom-most one.")
     target = session.findById(f"wnd[1]/usr/lbl[{last_row},{col}]")
     target.setFocus()
     target.caretPosition = 0
@@ -291,29 +312,33 @@ def resolve_so_from_fid(session, fid):
     so = (session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text or "").strip()
     if not so:
         raise RuntimeError(
-            "用 FID 反查 SO 失敗,VA03 的訂單欄位讀不到值——可能卡在某個清單"
-            "畫面需要人工確認,請檢查 SAP 畫面。"
+            "Failed to resolve SO from FID — VA03's order field came back empty; the screen "
+            "may be stuck needing manual confirmation on some list, check the SAP screen."
         )
 
-    log(f"從 VA03 反查到 SO:{so}")
+    log(f"Resolved SO from VA03: {so}")
     return so
 
 
 def download_module_bom(session, so, out_dir):
     """
-    Module BOM 下載——完整流程已經用 SAP GUI 的 Script Recording and
-    Playback 錄過、逐行對過:
-      1. 交易代碼輸入 /nZOOBOM_CE_FMT,按 Enter
-      2. Sales Document 欄位(S_VBELN-LOW)輸入 SO
-      3. Folder 欄位(P_FOLDER)按 F4,跳出資料夾選擇視窗,用跟 Tool BOM
-         匯出一樣的 DY_PATH 欄位指定輸出資料夾、按確認
-      4. 按 Execute(tbar[1]/btn[8],F8)——ZOOBOM_CE_FMT 會自動把多個
-         Excel 檔案直接寫進剛剛指定的資料夾,不會再跳出任何存檔視窗
-      5. 按 2 次 F3 返回
+    Module BOM download — the full flow has been recorded and verified
+    line-by-line using SAP GUI's Script Recording and Playback:
+      1. Type /nZOOBOM_CE_FMT as the transaction code, press Enter
+      2. Enter the SO into the Sales Document field (S_VBELN-LOW)
+      3. Press F4 on the Folder field (P_FOLDER), a folder-selection window
+         pops up; specify the output folder using the same DY_PATH field as
+         the Tool BOM export, then confirm
+      4. Press Execute (tbar[1]/btn[8], F8) — ZOOBOM_CE_FMT automatically
+         writes multiple Excel files directly into the folder just
+         specified, with no further save dialog appearing
+      5. Press F3 twice to go back
 
-    跟 Tool BOM 不同,這裡不知道 SAP 會產生幾個檔案、確切檔名是什麼(由
-    ZOOBOM_CE_FMT 自己決定),所以用「執行前後資料夾內容的差異」來抓出
-    新產生的檔案,而不是等單一固定檔名。
+    Unlike Tool BOM, we don't know in advance how many files SAP will
+    produce or their exact names (ZOOBOM_CE_FMT decides that itself), so
+    newly-created files are detected via the "difference in folder contents
+    before vs. after execution" rather than waiting for a single fixed
+    filename.
     """
     os.makedirs(out_dir, exist_ok=True)
     before = set(os.listdir(out_dir))
@@ -326,7 +351,7 @@ def download_module_bom(session, so, out_dir):
 
     session.findById("wnd[0]/usr/ctxtP_FOLDER").setFocus()
     session.findById("wnd[0]/usr/ctxtP_FOLDER").caretPosition = 0
-    session.findById("wnd[0]").sendVKey(4)  # F4 -> 資料夾選擇
+    session.findById("wnd[0]").sendVKey(4)  # F4 -> folder selection
     time.sleep(1)
 
     session.findById("wnd[1]/usr/ctxtDY_PATH").text = out_dir
@@ -341,33 +366,36 @@ def download_module_bom(session, so, out_dir):
     session.findById("wnd[0]").sendVKey(3)
     session.findById("wnd[0]").sendVKey(3)
 
-    log("等待 SAP 寫入檔案...")
+    log("Waiting for SAP to write the files...")
     new_files = []
     for _ in range(30):
         time.sleep(1)
         after = set(os.listdir(out_dir))
         new_files = sorted(after - before)
         if new_files:
-            time.sleep(2)  # 再多等一下,確保檔案是不是還在陸續寫入
+            time.sleep(2)  # wait a bit longer to make sure files aren't still being written
             after = set(os.listdir(out_dir))
             new_files = sorted(after - before)
             break
 
     if not new_files:
-        raise RuntimeError("等不到新的檔案,請檢查 SAP 畫面是否卡住,或確認輸出資料夾是否正確。")
+        raise RuntimeError("Timed out waiting for new files — check whether the SAP screen is stuck, or whether the output folder is correct.")
 
     return [os.path.join(out_dir, name) for name in new_files]
 
 
-# ---------- Module BOM 原始檔案清理:座標修復 + 合併成一份多分頁 xlsx ----------
+# ---------- Module BOM raw file cleanup: coordinate fix + merge into one multi-sheet xlsx ----------
 #
-# ZOOBOM_CE_FMT 直接產生的每個模組檔案,儲存格座標(<c r="...">)是壞的
-# (例如 r=" 11" 這種格式),標準的 xlsx 函式庫(這裡用的 openpyxl 也一樣)
-# 沒辦法直接讀,會丟例外。Excel/Numbers 桌面版能正常打開,是因為它們容錯,
-# 改用「文件順序」讀儲存格而不是相信 r= 屬性——下面這組函式就是照這個邏輯
-# 手動解析 xlsx 內部的 XML(跟 lib/bom-parse.ts 的 readXlsxRowsLenient 是
-# 同一套做法,只是搬到 Python),讀出乾淨的資料後,再用 openpyxl 重新寫一份
-# 座標正常、多個模組分頁合併在一起的 xlsx。
+# Every module file produced directly by ZOOBOM_CE_FMT has broken cell
+# coordinates (<c r="...">, e.g. a malformed r=" 11"-style value), which
+# standard xlsx libraries (including openpyxl, used here) can't read
+# directly — they raise an exception. Excel/Numbers desktop apps can open
+# them fine because they're lenient, reading cells in "document order"
+# instead of trusting the r= attribute — the functions below manually parse
+# the xlsx's internal XML following that same logic (this is the same
+# approach as lib/bom-parse.ts's readXlsxRowsLenient, just ported to
+# Python); after reading out the clean data, openpyxl rewrites a fresh xlsx
+# with correct coordinates, merging multiple module sheets together.
 
 
 def decode_xml_entities(text):
@@ -452,10 +480,12 @@ def collapse_spaces(value):
 
 
 def parse_sap_field_rows(rows):
-    """把原始 SAP 欄位名稱(MATERIAL/DESCRIPTION/UOM/BOMLEVEL/GENE00...)的
-    行資料轉成乾淨的 Part Number/Description/Level/Path/Qty/Unit 結構,跟
-    lib/bom-parse.ts 的 parseSapFieldRows 是同一套規則。不是這個格式的話
-    回傳 None,呼叫端會保留原始行資料,不會整個放棄這個模組的內容。"""
+    """Converts raw SAP field-name (MATERIAL/DESCRIPTION/UOM/BOMLEVEL/
+    GENE00...) row data into a clean Part Number/Description/Level/Path/
+    Qty/Unit structure, following the same rules as lib/bom-parse.ts's
+    parseSapFieldRows. Returns None if the format doesn't match, in which
+    case the caller keeps the raw row data instead of discarding this
+    module's content entirely."""
     if len(rows) < 2:
         return None
 
@@ -523,8 +553,10 @@ def parse_sap_field_rows(rows):
 
 
 def derive_sheet_name(path):
-    """從檔名(例如 "R0670_130 - GB1 --- LVL02 2026-...xlsx")抓出模組簡稱
-    (GB1)當分頁名稱。抓不出來就退回用不含副檔名的完整檔名。"""
+    """Extracts the module's short name (GB1) from the filename (e.g.
+    "R0670_130 - GB1 --- LVL02 2026-...xlsx") to use as the sheet name.
+    Falls back to the full filename (without extension) if it can't be
+    extracted."""
     name_no_ext = os.path.splitext(os.path.basename(path))[0]
     left = name_no_ext.split(" --- ")[0]
     parts = left.split(" - ")
@@ -532,9 +564,9 @@ def derive_sheet_name(path):
 
 
 def merge_module_files(file_paths, out_path):
-    """把好幾個模組原始檔案(座標可能是壞的)合併成一份乾淨的多分頁 xlsx,
-    每個模組一個分頁,欄位統一成 Part Number/Description/Level/Path/Qty/
-    Unit。"""
+    """Merges several raw module files (whose coordinates may be broken)
+    into one clean multi-sheet xlsx, one sheet per module, with columns
+    normalized to Part Number/Description/Level/Path/Qty/Unit."""
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
@@ -549,7 +581,7 @@ def merge_module_files(file_paths, out_path):
                     [item["part_no"], item["description"], item["level"], item["path"], item["qty"], item["unit"]]
                 )
         else:
-            # 不是預期的 SAP 欄位格式,保留原始行資料,不要整個放棄這個模組。
+            # Not the expected SAP field format — keep the raw row data rather than discarding this module entirely.
             for row in rows:
                 ws.append(row)
 
@@ -587,31 +619,32 @@ def write_bom_xlsx(rows, out_path):
     wb.save(out_path)
 
 
-# ---------- CLI 進入點 ----------
+# ---------- CLI entry point ----------
 
 def run(fid, out_dir, mode="tool", so=None):
     if mode == "modules":
         if not so and not fid:
-            raise RuntimeError("Module BOM 下載需要 SO 或 FID(沒有 SO 的話,會用 FID 自動反查)。")
+            raise RuntimeError("Module BOM download requires an SO or FID (if SO is omitted, it's auto-resolved from FID).")
 
         session = ensure_sap_connected()
 
         if not so:
-            log(f"沒有輸入 SO,改用 FID {fid} 反查對應的 SO...")
+            log(f"No SO given, resolving the corresponding SO from FID {fid}...")
             so = resolve_so_from_fid(session, fid)
 
-        # module_dir 只是暫存資料夾,給 SAP 傾印原始檔案用;合併整理完就會
-        # 整個刪掉,呼叫端拿到的是最終那份乾淨的單一 xlsx。
+        # module_dir is just a scratch folder for SAP to dump raw files into;
+        # once merged and cleaned up it's deleted entirely — the caller gets
+        # the final single clean xlsx.
         module_dir = os.path.join(out_dir, f"{so}_modules")
-        log(f"開啟 ZOOBOM_CE_FMT,用 SO {so} 執行...")
+        log(f"Opening ZOOBOM_CE_FMT, running with SO {so}...")
         raw_files = download_module_bom(session, so, module_dir)
 
-        log(f"下載完成,共 {len(raw_files)} 個原始檔案,整理成一份乾淨的 xlsx...")
+        log(f"Download complete, {len(raw_files)} raw file(s), merging into one clean xlsx...")
         merged_path = os.path.join(out_dir, f"{so}_modules.xlsx")
         merge_module_files(raw_files, merged_path)
         shutil.rmtree(module_dir, ignore_errors=True)
 
-        log(f"完成!已合併成 {merged_path}(原始檔案已清除)。")
+        log(f"Done! Merged into {merged_path} (raw files cleaned up).")
         return merged_path
 
     os.makedirs(out_dir, exist_ok=True)
@@ -621,50 +654,51 @@ def run(fid, out_dir, mode="tool", so=None):
 
     session = ensure_sap_connected()
 
-    log(f"開啟 IB53，用 FID {fid} 搜尋設備...")
+    log(f"Opening IB53, searching for the equipment with FID {fid}...")
     open_ib53_with_fid(session, fid)
 
-    log("展開結構並匯出...")
+    log("Expanding the structure and exporting...")
     export_installed_base(session, out_dir, txt_name)
 
-    log("等待 SAP 寫入檔案...")
+    log("Waiting for SAP to write the file...")
     for _ in range(60):
         if os.path.exists(txt_path):
             break
         time.sleep(1)
     else:
-        raise RuntimeError("等不到匯出的檔案，請檢查 SAP 畫面是否卡住。")
+        raise RuntimeError("Timed out waiting for the exported file — check whether the SAP screen is stuck.")
 
-    log("解析並轉存成 Excel...")
+    log("Parsing and converting to Excel...")
     rows = parse_tab_export(txt_path)
     if not rows:
-        raise RuntimeError("解析出 0 筆資料，請打開 txt 檔確認格式。")
+        raise RuntimeError("Parsed 0 rows of data — open the txt file and check its format.")
 
     xlsx_path = os.path.join(out_dir, xlsx_name)
     write_bom_xlsx(rows, xlsx_path)
 
-    # txt 只是轉換用的中繼檔,轉完就沒用了,清掉只留最終的 xlsx。
+    # The txt file is just an intermediate conversion artifact — once
+    # converted it's no longer needed, so remove it and keep only the final xlsx.
     os.remove(txt_path)
 
-    log(f"完成！共 {len(rows)} 筆料號。")
+    log(f"Done! {len(rows)} part number(s) total.")
     return xlsx_path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="用 FID/SO 從 SAP 下載 BOM，轉存成 xlsx")
-    parser.add_argument("fid", nargs="?", default=None, help="要查詢的 FID(tool 模式需要)")
-    parser.add_argument("--out-dir", default=os.getcwd(), help="輸出資料夾(預設目前工作目錄)")
+    parser = argparse.ArgumentParser(description="Download a BOM from SAP by FID/SO and convert it to xlsx")
+    parser.add_argument("fid", nargs="?", default=None, help="The FID to look up (required for tool mode)")
+    parser.add_argument("--out-dir", default=os.getcwd(), help="Output folder (defaults to the current working directory)")
     parser.add_argument(
         "--mode",
         choices=["tool", "modules"],
         default="tool",
-        help="tool = 完整 BOM(IB53,預設,需要 FID);modules = 依模組拆分(ZOOBOM_CE_FMT,需要 SO)",
+        help="tool = Full BOM (IB53, default, requires FID); modules = split by module (ZOOBOM_CE_FMT, requires SO)",
     )
-    parser.add_argument("--so", default=None, help="SO 號碼(modules 模式需要)")
+    parser.add_argument("--so", default=None, help="SO number (required for modules mode)")
     args = parser.parse_args()
 
     if args.mode == "tool" and not args.fid:
-        log("[錯誤] tool 模式需要 FID。")
+        log("[Error] tool mode requires a FID.")
         sys.exit(1)
 
     try:
@@ -672,7 +706,7 @@ def main():
         so = args.so.strip() if args.so else None
         xlsx_path = run(fid, args.out_dir, args.mode, so)
     except Exception as e:
-        log(f"[錯誤] {e}")
+        log(f"[Error] {e}")
         sys.exit(1)
 
     log(f"RESULT_PATH:{xlsx_path}")

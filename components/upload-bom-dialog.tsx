@@ -80,7 +80,7 @@ export function UploadBomDialog({
         } else if (lowerName.endsWith(".csv")) {
           result = parseCsvBom(await file.text());
         } else {
-          throw new Error("僅支援 .txt、.xlsx/.xls 或 .csv 檔案");
+          throw new Error("Only .txt, .xlsx/.xls, or .csv files are supported");
         }
         setFiles((prev) =>
           prev.map((e) => (e.file === file ? { ...e, status: "parsed", parsed: result } : e))
@@ -142,7 +142,7 @@ export function UploadBomDialog({
     onUploaded();
 
     if (failureCount > 0) {
-      setSubmitError(`${failureCount} 個檔案上傳失敗,請檢查後重試(成功的部分不會重傳)。`);
+      setSubmitError(`${failureCount} file(s) failed to upload — check and retry (successful ones won't be re-sent).`);
     }
   }
 
@@ -157,25 +157,27 @@ export function UploadBomDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button>上傳 BOM</Button>
+        <Button>Upload BOM</Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>上傳 BOM</DialogTitle>
+          <DialogTitle>Upload BOM</DialogTitle>
           <DialogDescription>
-            支援 .txt(樹狀縮排報表)、.xlsx/.xls 或 .csv(原始 SAP 匯出)檔案,可一次選取多個檔案。同機台 + 同檔名會覆蓋舊資料。
+            Supports .txt (tree-indented report), .xlsx/.xls, or .csv (raw SAP export) files —
+            you can select multiple files at once. Same machine + same filename overwrites the
+            existing data.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4">
           <div className="grid gap-1.5">
-            <Label htmlFor="machine-name">機台名稱</Label>
+            <Label htmlFor="machine-name">Machine Name</Label>
             <Input
               id="machine-name"
               list="existing-machines"
               value={machineName}
               onChange={(e) => setMachineName(e.target.value)}
-              placeholder="選擇現有機台或輸入新機台名稱"
+              placeholder="Select an existing machine or enter a new name"
               disabled={submitting}
             />
             <datalist id="existing-machines">
@@ -206,9 +208,9 @@ export function UploadBomDialog({
             )}
           >
             <UploadCloud className="text-muted-foreground h-8 w-8" />
-            <p className="text-sm font-medium">拖曳檔案到這裡</p>
+            <p className="text-sm font-medium">Drag files here</p>
             <p className="text-muted-foreground text-xs">
-              或點擊選擇檔案,可一次選取多個(.txt / .xlsx / .xls / .csv)
+              or click to select files — you can select multiple at once (.txt / .xlsx / .xls / .csv)
             </p>
             <input
               ref={fileInputRef}
@@ -233,16 +235,16 @@ export function UploadBomDialog({
                     <span className="truncate font-medium">{entry.file.name}</span>
                     <div className="flex shrink-0 items-center gap-2">
                       {entry.status === "parsing" && (
-                        <span className="text-muted-foreground text-xs">解析中…</span>
+                        <span className="text-muted-foreground text-xs">Parsing…</span>
                       )}
                       {entry.status === "parsed" && (
-                        <Badge variant="secondary">明細 {entry.parsed!.items.length} 項</Badge>
+                        <Badge variant="secondary">{entry.parsed!.items.length} detail items</Badge>
                       )}
                       {entry.status === "uploading" && (
-                        <span className="text-muted-foreground text-xs">上傳中…</span>
+                        <span className="text-muted-foreground text-xs">Uploading…</span>
                       )}
                       {entry.status === "uploaded" && (
-                        <span className="text-xs text-emerald-600">已上傳</span>
+                        <span className="text-xs text-emerald-600">Uploaded</span>
                       )}
                       <Button
                         size="icon-xs"
@@ -273,11 +275,12 @@ export function UploadBomDialog({
             <p className="text-sm">
               {matchResult.error ? (
                 <span className="text-destructive">
-                  自動比對重要零件時發生錯誤:{matchResult.error}
+                  Error auto-matching key parts: {matchResult.error}
                 </span>
               ) : (
                 <span className="text-emerald-600">
-                  已自動比對到 {matchResult.count} 筆重要零件,加入「重要零件比對」清單。
+                  Auto-matched {matchResult.count} key part(s), added to the &quot;Key Parts
+                  Comparison&quot; list.
                 </span>
               )}
             </p>
@@ -292,7 +295,7 @@ export function UploadBomDialog({
                 resetForm();
               }}
             >
-              完成
+              Done
             </Button>
           ) : (
             <Button
@@ -300,10 +303,10 @@ export function UploadBomDialog({
               disabled={!machineName.trim() || uploadableCount === 0 || submitting}
             >
               {submitting
-                ? "上傳中…"
+                ? "Uploading…"
                 : uploadableCount > 1
-                  ? `確認上傳(${uploadableCount} 個檔案)`
-                  : "確認上傳"}
+                  ? `Confirm Upload (${uploadableCount} files)`
+                  : "Confirm Upload"}
             </Button>
           )}
         </DialogFooter>

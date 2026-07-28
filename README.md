@@ -1,20 +1,20 @@
 # lambom
 
-BOM(物料清單)比對工具。從 Supabase 讀取多台機器的 BOM 資料,選擇兩份進行差異比對。
+A BOM (Bill of Materials) comparison tool. Reads BOM data for multiple machines from Supabase, and lets you pick two to compare their differences.
 
-Next.js (App Router) + Tailwind v4 + shadcn/ui,UI 風格延續 gallery205_admin_web。
+Next.js (App Router) + Tailwind v4 + shadcn/ui, UI style carried over from gallery205_admin_web.
 
-## 開發
+## Development
 
 ```bash
 npm install
-cp .env.example .env.local  # 填入 Supabase URL / anon key
+cp .env.example .env.local  # fill in the Supabase URL / anon key
 npm run dev
 ```
 
-## 環境變數
+## Environment variables
 
-見 `.env.example`:
+See `.env.example`:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`

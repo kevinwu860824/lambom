@@ -134,7 +134,7 @@ export default function Home() {
 
     return {
       bomId: -1,
-      source_file: valid.map((e) => e.source_file).join("、"),
+      source_file: valid.map((e) => e.source_file).join(", "),
       machine,
       items: valid.flatMap((e) => e.items),
       itemsLoaded: true,
@@ -240,7 +240,7 @@ export default function Home() {
 
   useEffect(() => {
     loadData().catch((err) => {
-      setInitError(`載入 Supabase 失敗:${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`Failed to load from Supabase: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
     loadKeyParts();
@@ -251,7 +251,7 @@ export default function Home() {
     setInitLoading(true);
     setInitError(null);
     loadData().catch((err) => {
-      setInitError(`載入 Supabase 失敗:${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`Failed to load from Supabase: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
   }
@@ -304,10 +304,13 @@ export default function Home() {
   const filteredOnlyA = result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
   const filteredOnlyB = result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
 
-  // 重要料號:各自機台設定的重要料號,在「僅存在於 A/B」中優先排序、標示出來
-  // (A 顯示出現子項 + 自訂名稱);若在對側找到相同描述但不同料號的項目,
-  // 視為疑似改料號,額外標紅置頂 —— B 這邊即使沒有自己標記重要料號,只要
-  // A 的重要料號在 B 找得到疑似改名的對象,一樣要標紅置頂(反向偵測)。
+  // Key parts: each machine's own key parts get sorted to the top and flagged
+  // in "Only in A/B" (A shows which subpart it appears in + its custom name);
+  // if the other side has an item with the same description but a different
+  // part number, treat it as a possible rename and pin/flag it in red — even
+  // when B has no key parts of its own, if one of A's key parts turns up a
+  // suspected rename in B, that item still gets pinned/flagged on the B side
+  // too (reverse detection).
   const keyPartsA = useMemo(
     () => keyParts.filter((k) => k.machine_name === machineA),
     [keyParts, machineA]
@@ -359,15 +362,16 @@ export default function Home() {
     renameCheckA.forEach((r) => {
       if (r.status === "renamed") {
         r.matches.forEach((m) => {
-          map.set(m.part_no, `疑似為 A 重要料號「${r.keyPart.custom_name}」(原料號 ${r.keyPart.part_no})`);
+          map.set(m.part_no, `Possibly A's key part "${r.keyPart.custom_name}" (original part no. ${r.keyPart.part_no})`);
         });
       }
     });
     return map;
   }, [renameCheckA, renameCheckB]);
 
-  // B 的順序:置頂之後,依照對應到的 A 重要料號在 A 排序中的名次排列
-  // (而不是自己的料號字母序),讓兩邊疑似對應的列盡量對齊。
+  // B's ordering: after pinning to the top, sort by the rank of the A key
+  // part each row maps to (not by B's own part number alphabetically), so
+  // the two sides' suspected-matching rows line up as closely as possible.
   const renameRankB = useMemo(() => {
     const rankedA = renameCheckA
       .filter((r) => r.status === "renamed")
@@ -399,17 +403,17 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px] px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">BOM 比對工具</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">BOM Comparison Tool</h1>
             <p className="mt-1 text-sm text-white/70">
-              從多份機台 BOM 中選擇兩份進行差異比對。
+              Select two machine BOMs to compare their differences.
             </p>
           </div>
           <div className="flex items-start gap-2">
             <Button variant="outline" asChild>
-              <Link href="/fingerprint">重要零件指紋表</Link>
+              <Link href="/fingerprint">Key Parts Fingerprint</Link>
             </Button>
             <Button variant="outline" size="icon" asChild>
-              <Link href="/machines" aria-label="編輯機台名稱">
+              <Link href="/machines" aria-label="Edit machine names">
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
@@ -430,7 +434,7 @@ export default function Home() {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>選擇比對對象</CardTitle>
+            <CardTitle>Select Comparison Targets</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-6 md:grid-cols-2">
@@ -469,20 +473,20 @@ export default function Home() {
                 subpartsB.size === 0
               }
             >
-              {compareLoading ? "比對中…" : "開始比對"}
+              {compareLoading ? "Comparing…" : "Start Comparison"}
             </Button>
           </CardContent>
         </Card>
 
         {compareError && (
           <Card className="mb-6 border-destructive/50">
-            <CardContent className="text-destructive text-sm">比對失敗:{compareError}</CardContent>
+            <CardContent className="text-destructive text-sm">Comparison failed: {compareError}</CardContent>
           </Card>
         )}
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>比對摘要</CardTitle>
+            <CardTitle>Comparison Summary</CardTitle>
           </CardHeader>
           <CardContent>
             {compareLoading ? (
@@ -494,23 +498,23 @@ export default function Home() {
               <div className="grid gap-2 text-sm">
                 <p>
                   <span className="font-medium">{summaryA.machine}</span> / {summaryA.source_file}
-                  :明細 {summaryA.itemCount} 項、唯一料號 {summaryA.uniqueCount} 項
+                  : {summaryA.itemCount} detail items, {summaryA.uniqueCount} unique parts
                 </p>
                 <p>
                   <span className="font-medium">{summaryB.machine}</span> / {summaryB.source_file}
-                  :明細 {summaryB.itemCount} 項、唯一料號 {summaryB.uniqueCount} 項
+                  : {summaryB.itemCount} detail items, {summaryB.uniqueCount} unique parts
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <Badge variant="secondary">共同料號 {result.common.length}</Badge>
-                  <Badge variant="outline">僅 A {result.onlyA.length}</Badge>
-                  <Badge variant="outline">僅 B {result.onlyB.length}</Badge>
+                  <Badge variant="secondary">Common Parts {result.common.length}</Badge>
+                  <Badge variant="outline">A Only {result.onlyA.length}</Badge>
+                  <Badge variant="outline">B Only {result.onlyB.length}</Badge>
                   <Badge variant={qtyMismatchCount > 0 ? "destructive" : "secondary"}>
-                    Qty 不一致 {qtyMismatchCount}
+                    Qty Mismatch {qtyMismatchCount}
                   </Badge>
                 </div>
               </div>
             ) : (
-              <p className="text-muted-foreground text-sm">尚無比對資料</p>
+              <p className="text-muted-foreground text-sm">No comparison data yet</p>
             )}
           </CardContent>
         </Card>
@@ -525,7 +529,7 @@ export default function Home() {
             }}
             className="flex cursor-pointer select-none flex-row items-center justify-between"
           >
-            <CardTitle>僅存在於 A / B</CardTitle>
+            <CardTitle>Only in A / B</CardTitle>
             <ChevronDown
               className={`h-4 w-4 transition-transform ${resultsExpanded ? "rotate-180" : ""}`}
             />
@@ -538,18 +542,18 @@ export default function Home() {
                   <Input
                     value={resultFilter}
                     onChange={(e) => setResultFilter(e.target.value)}
-                    placeholder="搜尋僅存在於 A/B 的料號或描述,可用空白分隔多個關鍵字(全部都要符合)"
+                    placeholder="Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)"
                   />
                   <Button variant="outline" onClick={handleExportClick} className="shrink-0">
                     <Download className="h-4 w-4" />
-                    下載 Excel
+                    Download Excel
                   </Button>
                 </div>
               )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <PartTable
-                  title="僅存在於 A"
+                  title="Only in A"
                   items={filteredOnlyA}
                   keyPartInfo={keyPartInfoA}
                   renameInfo={renameInfoA}
@@ -557,7 +561,7 @@ export default function Home() {
                   keyPartColumnVariant="detail"
                 />
                 <PartTable
-                  title="僅存在於 B"
+                  title="Only in B"
                   items={filteredOnlyB}
                   keyPartInfo={keyPartInfoB}
                   renameInfo={renameInfoB}
@@ -619,10 +623,10 @@ function MachineSelectGroup({
   return (
     <div className="grid gap-3">
       <div className="grid gap-1.5">
-        <label className="text-sm font-medium">機台 {label}</label>
+        <label className="text-sm font-medium">Machine {label}</label>
         <Select value={machine} onValueChange={onMachineChange} disabled={disabled}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="選擇機台" />
+            <SelectValue placeholder="Select machine" />
           </SelectTrigger>
           <SelectContent>
             {machineGroups.map((group) => (
@@ -634,7 +638,7 @@ function MachineSelectGroup({
         </Select>
       </div>
       <div className="grid gap-1.5">
-        <label className="text-sm font-medium">子項 {label}</label>
+        <label className="text-sm font-medium">Subpart {label}</label>
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -644,12 +648,12 @@ function MachineSelectGroup({
             >
               <span className="truncate">
                 {subparts.length === 0
-                  ? "尚無子項"
+                  ? "No subparts"
                   : selectedSubparts.size === 0
-                    ? "未選擇子項"
+                    ? "No subparts selected"
                     : selectedSubparts.size === subparts.length
-                      ? "全部子項"
-                      : `已選 ${selectedSubparts.size}/${subparts.length} 個子項`}
+                      ? "All subparts"
+                      : `${selectedSubparts.size}/${subparts.length} subparts selected`}
               </span>
               <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
             </Button>
@@ -657,7 +661,7 @@ function MachineSelectGroup({
           <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
             <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
               <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
-              全部子項
+              All subparts
             </label>
             <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
               {subparts.map((entry) => (
@@ -714,16 +718,16 @@ function PartTable({
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="text-muted-foreground text-sm italic">沒有資料</p>
+          <p className="text-muted-foreground text-sm italic">No data</p>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>料號</TableHead>
-                <TableHead>描述</TableHead>
+                <TableHead>Part No.</TableHead>
+                <TableHead>Description</TableHead>
                 <TableHead>Qty</TableHead>
                 <TableHead>Unit</TableHead>
-                {hasKeyPartColumn && <TableHead>重要料號</TableHead>}
+                {hasKeyPartColumn && <TableHead>Key Part</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -742,16 +746,16 @@ function PartTable({
                         <div className="grid gap-0.5 text-xs">
                           {info && (
                             <>
-                              <span className="font-medium">自訂名稱:{info.customName}</span>
+                              <span className="font-medium">Custom name: {info.customName}</span>
                               <span className="text-muted-foreground">
-                                子項:{info.subparts.length > 0 ? info.subparts.join("、") : "-"}
+                                Subparts: {info.subparts.length > 0 ? info.subparts.join(", ") : "-"}
                               </span>
                             </>
                           )}
                           {renameText && (
                             <>
                               <Badge variant="destructive" className="w-fit">
-                                疑似改料號(機台 {otherSideLabel})
+                                Possibly renamed (machine {otherSideLabel})
                               </Badge>
                               <span>{renameText}</span>
                             </>
@@ -761,13 +765,13 @@ function PartTable({
                       ) : renameText ? (
                         <div className="grid gap-0.5">
                           <Badge variant="destructive" className="w-fit">
-                            疑似改料號(機台 {otherSideLabel})
+                            Possibly renamed (machine {otherSideLabel})
                           </Badge>
                           <span className="text-xs">{renameText}</span>
                         </div>
                       ) : info ? (
                         <Badge variant="secondary" className="w-fit">
-                          重要料號
+                          Key Part
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground">-</span>

@@ -6,10 +6,12 @@ const { LAMBOM_URL } = require("./config");
 
 let mainWindow = null;
 
-// 目前正在跑的 SAP 下載子程序(同一時間只會有一個)。Node 的 spawn() 在
-// Windows 上不會因為父程序(這個 Electron app)結束就自動跟著砍掉子程序,
-// 會變成孤兒程序繼續在背景操作 SAP——所以視窗關閉/app 結束時、以及使用者
-// 主動按「取消」時,都要明確去 kill 它。
+// The currently running SAP download child process (only ever one at a
+// time). On Windows, Node's spawn() doesn't automatically kill the child
+// process when the parent (this Electron app) exits — it can become an
+// orphan process still operating SAP in the background. So it needs to be
+// explicitly killed both when the window closes/app quits and when the
+// user actively clicks "Cancel".
 let activeChild = null;
 
 function killActiveChild() {
@@ -17,13 +19,13 @@ function killActiveChild() {
   const pid = activeChild.pid;
   activeChild = null;
   if (process.platform === "win32") {
-    // taskkill /T 會連同這個程序自己開出來的子程序一起砍掉,/F 強制結束。
+    // taskkill /T also kills any child processes this one spawned; /F forces termination.
     spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
   } else {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
-      // 已經結束了就算了。
+      // Already exited, nothing to do.
     }
   }
 }
@@ -35,19 +37,21 @@ function createMainWindow() {
     title: "lambom",
     webPreferences: {
       contextIsolation: true,
-      // 讓 lambom 網頁版(不管是這個 exe 載入的還是一般瀏覽器打開的同一個網址)
-      // 都能透過 window.fidDownloader 呼叫這裡的功能。網頁版程式碼會先檢查
-      // 這個 API 存不存在,不存在(一般瀏覽器情境)就不顯示 SAP 下載那個區塊。
+      // Lets the lambom web app (whether loaded by this exe or opened at the
+      // same URL in a regular browser) call these functions via
+      // window.fidDownloader. The web app code checks whether this API
+      // exists first, and hides the SAP Download section if it doesn't
+      // (i.e. the regular-browser case).
       preload: path.join(__dirname, "preload.js"),
     },
   });
 
   const menu = Menu.buildFromTemplate([
     {
-      label: "工具",
+      label: "Tools",
       submenu: [
-        { label: "重新整理", role: "reload" },
-        { label: "結束", role: "quit" },
+        { label: "Reload", role: "reload" },
+        { label: "Quit", role: "quit" },
       ],
     },
   ]);
@@ -73,7 +77,7 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
   if (!fs.existsSync(exePath)) {
     event.sender.send(
       "fid-download:log",
-      `[錯誤] 找不到下載工具:${exePath}(請先依 desktop/sap-downloader/README 把 Python 版包成 exe)`
+      `[Error] Download tool not found: ${exePath} (first package the Python tool into an exe per desktop/sap-downloader/README)`
     );
     return { ok: false, resultPath: null };
   }
@@ -108,7 +112,7 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
 
     child.on("error", (err) => {
       if (activeChild === child) activeChild = null;
-      event.sender.send("fid-download:log", `[錯誤] 無法啟動下載工具:${err.message}`);
+      event.sender.send("fid-download:log", `[Error] Failed to start the download tool: ${err.message}`);
       resolve({ ok: false, resultPath: null });
     });
 

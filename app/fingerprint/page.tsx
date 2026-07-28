@@ -245,7 +245,7 @@ export default function FingerprintPage() {
         (s) => s.id !== slot.id && s.category === slot.category && s.custom_name === newCustomName
       )
     ) {
-      throw new Error("這個分類底下已經有同名的插槽了");
+      throw new Error("There's already a slot with this name under this category");
     }
 
     const supabase = getSupabase();
@@ -306,11 +306,11 @@ export default function FingerprintPage() {
     const category = newRowCategory.trim();
     const customName = newRowName.trim();
     if (!category || !customName) {
-      setAddRowError("分類跟插槽名稱都要填");
+      setAddRowError("Both category and slot name are required");
       return;
     }
     if (slots.some((s) => s.category === category && s.custom_name === customName)) {
-      setAddRowError("這個分類底下已經有同名的插槽了");
+      setAddRowError("There's already a slot with this name under this category");
       return;
     }
 
@@ -344,7 +344,7 @@ export default function FingerprintPage() {
 
   async function deleteSlot(slot: KeyPartSlot) {
     if (
-      !window.confirm(`確定要刪除「${slot.custom_name}」這一列嗎?(已填的料號資料不會被刪除)`)
+      !window.confirm(`Delete the row "${slot.custom_name}"? (Already-filled part numbers won't be deleted)`)
     )
       return;
 
@@ -361,7 +361,7 @@ export default function FingerprintPage() {
     const name = addMachineValue.trim();
     if (!name) return;
     if (machines.includes(name)) {
-      setAddMachineError("這台機台已經在這個機型裡了");
+      setAddMachineError("This machine is already in this tool type");
       return;
     }
 
@@ -384,7 +384,7 @@ export default function FingerprintPage() {
   async function removeMachine(name: string) {
     if (
       !window.confirm(
-        `確定要把「${name}」從這個機型的表格中移除嗎?(機台本身跟已上傳的 BOM 不會被刪除)`
+        `Remove "${name}" from this tool type's table? (The machine itself and its uploaded BOM won't be deleted)`
       )
     )
       return;
@@ -455,26 +455,26 @@ export default function FingerprintPage() {
       <div className="mx-auto max-w-[1800px] px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">重要零件指紋表</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Key Parts Fingerprint</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              依機型檢視/編輯每台機台的重要零件料號,資料直接讀寫 key_parts。
+              View/edit each machine&apos;s key part numbers by tool type — reads and writes directly to key_parts.
             </p>
           </div>
           <Link href="/" className="text-sm underline underline-offset-4">
-            回到比對工具
+            Back to Comparison Tool
           </Link>
         </div>
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>選擇機型</CardTitle>
+            <CardTitle>Select Tool Type</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-3">
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">機型</label>
+              <label className="text-sm font-medium">Tool Type</label>
               <Select value={selectedToolType} onValueChange={setSelectedToolType}>
                 <SelectTrigger className="w-56">
-                  <SelectValue placeholder="選擇機型" />
+                  <SelectValue placeholder="Select tool type" />
                 </SelectTrigger>
                 <SelectContent>
                   {toolTypes.map((t) => (
@@ -486,19 +486,19 @@ export default function FingerprintPage() {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">或新增機型</label>
+              <label className="text-sm font-medium">Or add a new tool type</label>
               <div className="flex gap-2">
                 <Input
                   value={newToolType}
                   onChange={(e) => setNewToolType(e.target.value)}
-                  placeholder="例如 Core-Buffing OX"
+                  placeholder="e.g. Core-Buffing OX"
                   className="w-56"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateToolType();
                   }}
                 />
                 <Button variant="outline" onClick={handleCreateToolType}>
-                  新增
+                  Add
                 </Button>
               </div>
             </div>
@@ -508,7 +508,7 @@ export default function FingerprintPage() {
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
         {!selectedToolType ? (
-          <p className="text-muted-foreground text-sm italic">請先選擇或新增一個機型。</p>
+          <p className="text-muted-foreground text-sm italic">Select or add a tool type first.</p>
         ) : (
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
@@ -518,7 +518,7 @@ export default function FingerprintPage() {
                   list="fingerprint-all-machines"
                   value={addMachineValue}
                   onChange={(e) => setAddMachineValue(e.target.value)}
-                  placeholder="新增機台欄位(例如 ACOXN1)"
+                  placeholder="Add a machine column (e.g. ACOXN1)"
                   className="w-52"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") addMachine();
@@ -533,7 +533,7 @@ export default function FingerprintPage() {
                 </datalist>
                 <Button size="sm" variant="outline" onClick={addMachine}>
                   <Plus className="h-4 w-4" />
-                  加入機台
+                  Add Machine
                 </Button>
               </div>
             </CardHeader>
@@ -542,12 +542,12 @@ export default function FingerprintPage() {
 
               <div className="mb-4 flex flex-wrap items-end gap-2 rounded-md border p-3">
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">分類</label>
+                  <label className="text-xs font-medium">Category</label>
                   <Input
                     list="fingerprint-categories"
                     value={newRowCategory}
                     onChange={(e) => setNewRowCategory(e.target.value)}
-                    placeholder="例如 Front End"
+                    placeholder="e.g. Front End"
                     className="w-40"
                   />
                   <datalist id="fingerprint-categories">
@@ -557,11 +557,11 @@ export default function FingerprintPage() {
                   </datalist>
                 </div>
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">插槽名稱</label>
+                  <label className="text-xs font-medium">Slot Name</label>
                   <Input
                     value={newRowName}
                     onChange={(e) => setNewRowName(e.target.value)}
-                    placeholder="例如 PodLoader#1"
+                    placeholder="e.g. PodLoader#1"
                     className="w-48"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") addSlot();
@@ -569,26 +569,28 @@ export default function FingerprintPage() {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">顏色</label>
+                  <label className="text-xs font-medium">Color</label>
                   <ColorPickerPopover value={newRowColor} onChange={(c) => setNewRowColor(c)}>
                     <ColorSwatchTrigger color={newRowColor} />
                   </ColorPickerPopover>
                 </div>
                 <Button size="sm" onClick={addSlot}>
                   <Plus className="h-4 w-4" />
-                  新增一列
+                  Add Row
                 </Button>
                 {addRowError && <p className="text-destructive text-xs">{addRowError}</p>}
                 <p className="text-muted-foreground w-full text-xs">
-                  顏色只用在新分類;分類已存在的話會沿用該分類原本的顏色(可在下方表格分類色塊上更改)。
+                  Color only applies to a brand-new category; if the category already exists, its
+                  existing color is kept (you can change it via the category color swatch in the
+                  table below).
                 </p>
               </div>
 
               {loading ? (
-                <p className="text-muted-foreground text-sm">載入中…</p>
+                <p className="text-muted-foreground text-sm">Loading…</p>
               ) : slots.length === 0 ? (
                 <p className="text-muted-foreground text-sm italic">
-                  這個機型還沒有任何列,先在上面新增一列。
+                  This tool type has no rows yet — add one above.
                 </p>
               ) : (
                 <Table containerClassName="max-h-[70vh] overflow-y-auto">
@@ -600,7 +602,7 @@ export default function FingerprintPage() {
                           <Button
                             size="icon-sm"
                             variant="ghost"
-                            aria-label={editMode ? "完成編輯" : "編輯整張表"}
+                            aria-label={editMode ? "Done editing" : "Edit whole table"}
                             onClick={() => setEditMode((v) => !v)}
                           >
                             {editMode ? (
@@ -609,7 +611,7 @@ export default function FingerprintPage() {
                               <Pencil className="h-4 w-4" />
                             )}
                           </Button>
-                          插槽
+                          Slot
                         </div>
                       </TableHead>
                       {machines.map((m) => (
@@ -620,7 +622,7 @@ export default function FingerprintPage() {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
-                                aria-label={`移除機台 ${m}`}
+                                aria-label={`Remove machine ${m}`}
                                 onClick={() => removeMachine(m)}
                               >
                                 <XIcon className="h-3 w-3" />
@@ -631,7 +633,7 @@ export default function FingerprintPage() {
                       ))}
                       {machines.length === 0 && (
                         <TableHead className="bg-card sticky top-0 z-10 text-muted-foreground font-normal">
-                          還沒有機台,先在上面加入
+                          No machines yet — add one above
                         </TableHead>
                       )}
                     </TableRow>
@@ -659,7 +661,7 @@ export default function FingerprintPage() {
                                   >
                                     <button
                                       type="button"
-                                      aria-label={`編輯分類「${group.category}」`}
+                                      aria-label={`Edit category "${group.category}"`}
                                       className="shrink-0 rounded p-0.5 hover:bg-black/10"
                                     >
                                       <Pencil className="h-3 w-3" />
@@ -688,7 +690,7 @@ export default function FingerprintPage() {
                                 <Button
                                   size="icon-sm"
                                   variant="ghost"
-                                  aria-label="刪除這一列"
+                                  aria-label="Delete this row"
                                   onClick={() => deleteSlot(slot)}
                                 >
                                   <Trash2 className="text-destructive h-3.5 w-3.5" />

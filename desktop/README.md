@@ -1,66 +1,42 @@
-# lambom 桌面版
+# lambom Desktop
 
-把 lambom 網頁版包成 Windows 桌面程式(視窗形式,不是叫瀏覽器開分頁),另外內建
-SAP FID 下載工具(從 `fid_downloader_gui.py` 搬過來的自動化邏輯)。
+Packages the lambom web app as a Windows desktop program (a real window, not a browser tab opened for you), and also bundles the SAP FID download tool (automation logic moved over from `fid_downloader_gui.py`).
 
-跟原本的 lambom 網頁專案完全獨立,不會影響 Vercel 上的部署——這整個 `desktop/`
-資料夾只在你想包桌面版的時候才需要用到。
+Completely independent from the main lambom web project — it doesn't affect the Vercel deployment at all. This whole `desktop/` folder is only needed when you actually want to build the desktop version.
 
-## 這裡面有什麼
+## What's in here
 
 ```
 desktop/
-  electron/          Electron 桌面殼(視窗、preload 橋接)
-  sap-downloader/     fid_downloader_gui.py 拿掉視窗介面後的命令列版本
+  electron/          Electron desktop shell (window, preload bridge)
+  sap-downloader/     fid_downloader_gui.py with the window UI stripped out, as a CLI
 ```
 
-**主視窗**直接載入 lambom 網頁版的正式網址(不是把 Next.js 打包進 exe),所以
-你以後 push 到 main、Vercel 自動部署,桌面版看到的也會自動是最新版本,不用重新
-發一次 exe。
+**The main window** loads the live production URL of the lambom web app directly (Next.js isn't bundled into the exe), so whenever you push to main and Vercel auto-deploys, the desktop app automatically shows the latest version too — no need to rebuild the exe.
 
-**「SAP 下載」不是獨立視窗,是內嵌在 `/machines`(編輯機台)頁面裡的一個區塊**
-(`components/fid-downloader-panel.tsx`),透過 `window.fidDownloader`(preload
-注入)判斷是不是在桌面版裡執行,一般瀏覽器打開同一個網址完全看不到這塊。
+**"SAP Download" isn't a separate window — it's a section embedded in the `/machines` (Edit Machines) page** (`components/fid-downloader-panel.tsx`), which detects whether it's running inside the desktop app via `window.fidDownloader` (injected by preload); opening the same URL in a regular browser shows nothing of this section at all.
 
-畫面是「機台編號」+「FID」兩個欄位,填完按「新增」加入下面的佇列(可以一次
-排好好幾台),排好之後按「下載(N 台)」才會依序處理,一筆一筆自動跑完不用一直
-盯著。FID 打完 blur 掉欄位時,如果「機台編號」還是空的,會自動用
-`fid_machine_map` 表查這個 FID 之前存過的機台編號並帶入(可以再手動改)。
+The UI has two fields, "Machine No." + "FID" — fill them in and click "Add" to push onto the queue below (you can queue up several machines at once), then click "Download (N)" to process them one by one automatically, without needing to babysit each one. When you tab out of the FID field (blur), if "Machine No." is still empty, it automatically looks up this FID's previously-stored machine number from the `fid_machine_map` table and fills it in (still editable manually).
 
-一筆一筆手動新增之外,也可以整批用 Excel 匯入:「下載 Excel 範本」會存一份只有
-「機台編號」「FID」兩欄標題的 xlsx,填好每一列(不用理會欄位順序,認欄名不認
-位置)後用「匯入 Excel」選檔,會把每一列都加進佇列尾端(缺任一欄的列會自動略
-過,不會整個檔案匯入失敗)。
+Besides adding items one at a time, you can also batch-import via Excel: "Excel Template" saves an xlsx with just "Machine No." and "FID" as column headers; fill in each row (column order doesn't matter, matching is done by header name not position) then use "Import Excel" to pick the file — every row gets appended to the end of the queue (rows missing either field are automatically skipped, without failing the whole import).
 
-**SO 已經不能手動指定了**——每一筆都是拿 FID 透過 VA03 自動反查 SO(細節見下面
-「已知限制」)。「機台編號」欄位就是上傳 Supabase 用的機台名稱(machine_name),
-不用再另外查表或跳出來問。
+**SO can no longer be entered manually** — every item resolves its SO automatically from the FID via VA03 (see "Known Limitations" below for details). The "Machine No." field is directly the machine name (machine_name) used for the Supabase upload — no more lookup table or prompt needed.
 
-佇列裡每一筆會依序做:
+Each item in the queue runs through, in order:
 
-1. **完整 BOM**(IB53)→ `<FID>.xlsx`,只存到「下載」資料夾當輔助參考,
-   **不會**自動上傳,一樣要去「上傳 BOM」手動匯入。這步失敗不會中斷這一筆,
-   會直接繼續下一步。
-2. **Modules**(ZOOBOM_CE_FMT)→ 自動反查的 SO 對應輸出 `<SO>_modules.xlsx`。
-   ZOOBOM_CE_FMT 原本會一次產生好幾個檔案(檔名由 SAP 決定、儲存格座標也是壞
-   的,只有容錯過的解析器讀得出來),程式會自動讀出來、合併成一份座標正常的
-   多分頁 xlsx,原始檔案跟中繼檔都會自動清掉。
-3. **自動上傳到 Supabase**:合併後 xlsx 裡每個分頁(模組)會各自變成這台機台
-   底下的一個子項,上傳完自動跑一次既有的「重要零件自動比對」,並把這個
-   FID→機台編號的對應存進 `fid_machine_map`(下次同一個 FID 就會自動帶出來)。
+1. **Full BOM** (IB53) → `<FID>.xlsx`, saved only to the "Downloads" folder as a reference — it is **not** auto-uploaded, you still need to import it manually via "Upload BOM". A failure here doesn't stop this item, it moves straight on to the next step.
+2. **Modules** (ZOOBOM_CE_FMT) → outputs `<SO>_modules.xlsx` for the auto-resolved SO. ZOOBOM_CE_FMT originally produces several files at once (filenames decided by SAP, with broken cell coordinates that only a lenient parser can read); the tool automatically reads them, merges them into a single xlsx with correct coordinates, and cleans up the raw files and intermediate files automatically.
+3. **Auto-upload to Supabase**: each sheet (module) in the merged xlsx becomes its own subpart under that machine; once uploaded it automatically runs the existing "key part auto-matching," and saves this FID→Machine No. mapping into `fid_machine_map` (so the same FID auto-fills next time).
 
-其中一筆處理失敗(不管是哪個步驟)不會中斷整批,會繼續處理佇列裡的下一筆,
-失敗的那筆會在清單上標示「失敗」,詳細錯誤看下面的 log。
+If one item fails (at any step), it doesn't stop the batch — processing continues to the next item in the queue; the failed one is marked "Failed" in the list, with details in the log below.
 
-處理中會出現「取消」按鈕,按下去會立刻砍掉目前正在跑的 SAP 下載子程序、停止
-處理剩下的佇列(已經完成的那幾筆不受影響)。lambom 視窗關閉或整個 app 結束時
-也會自動砍掉還在跑的下載子程序,不會留下孤兒程序繼續在背景操作 SAP。
+While processing, a "Cancel" button appears — clicking it immediately kills the currently running SAP download child process and stops processing the rest of the queue (already-completed items are unaffected). The running download child process is also automatically killed when the lambom window is closed or the app quits entirely, so it never lingers as an orphan process still operating SAP in the background.
 
-## 設定正式網址
+## Configuring the production URL
 
-編輯 `electron/config.js`,把 `LAMBOM_URL` 換成 lambom 實際的 Vercel 正式網址。
+Edit `electron/config.js` and replace `LAMBOM_URL` with lambom's actual Vercel production URL.
 
-## 開發 / 測試(macOS 也能跑主視窗部分)
+## Development / testing (the main window part also runs on macOS)
 
 ```bash
 cd desktop/electron
@@ -68,40 +44,34 @@ npm install
 npm start
 ```
 
-這樣可以在 Mac 上測試視窗殼本身(主視窗、選單、SAP 下載小視窗的畫面/log 顯示
-邏輯)。但「SAP 下載」按下去實際會不會動,只能在裝了 SAP GUI 的 Windows 機器
-上驗證,因為 `fid_downloader_cli.py` 用的 `win32com` 是 Windows 專屬的 COM
-自動化,Mac 上完全跑不起來。
+This lets you test the window shell itself on a Mac (the main window, menu, SAP Download panel's display/log logic). But whether "SAP Download" actually works when clicked can only be verified on a Windows machine with SAP GUI installed, since `fid_downloader_cli.py`'s use of `win32com` is Windows-only COM automation that simply doesn't run on a Mac.
 
-## 在 Windows 上包成正式 exe
+## Building a production exe on Windows
 
-**第一步:先包 SAP 下載工具**
+**Step 1: build the SAP download tool first**
 
 ```bat
 cd desktop\sap-downloader
 build.bat
 ```
 
-會產出 `desktop\sap-downloader\dist\fid_downloader_cli.exe`。這一步可以先單獨
-用命令列測試,確認 SAP 自動化真的能動,再繼續下一步：
+This produces `desktop\sap-downloader\dist\fid_downloader_cli.exe`. You can test this step alone from the command line first, to confirm the SAP automation actually works, before moving on:
 
 ```bat
 dist\fid_downloader_cli.exe 264059
 ```
 
-(把 264059 換成你要測試的真實 FID,跑完應該會在目前資料夾看到 `264059.xlsx`,
-最後一行印出 `RESULT_PATH:...`。)
+(Replace 264059 with a real FID you want to test — once it finishes you should see `264059.xlsx` in the current folder, with the last line printing `RESULT_PATH:...`.)
 
-測試 Modules(需要真實 SO):
+To test Modules (requires a real SO):
 
 ```bat
 dist\fid_downloader_cli.exe --mode modules --so R0542
 ```
 
-跑完應該會在目前資料夾看到一份 `R0542_modules.xlsx`,裡面每個模組一個分頁
-(SAP 原始產生的多個檔案已經自動合併、清除)。
+Once finished you should see an `R0542_modules.xlsx` in the current folder, one sheet per module (the multiple raw files SAP produces have already been merged and cleaned up automatically).
 
-**第二步:包 Electron 桌面版**
+**Step 2: build the Electron desktop app**
 
 ```bat
 cd desktop\electron
@@ -109,22 +79,10 @@ npm install
 npm run dist
 ```
 
-`electron-builder` 設定裡已經指定會把上一步產出的 `fid_downloader_cli.exe` 一併
-打包進去(`extraResources`),完成後在 `desktop\electron\dist\` 會看到安裝檔
-(`.exe` NSIS 安裝程式)。
+The `electron-builder` config already specifies that the `fid_downloader_cli.exe` produced in the previous step gets bundled in too (`extraResources`); once done, you'll find an installer (`.exe` NSIS installer) in `desktop\electron\dist\`.
 
-## 已知限制 / 之後可以做的事
+## Known limitations / possible future work
 
-- 目前沒有圖示(app icon),electron-builder 會用預設圖示。如果要換成自訂圖示,
-  在 `electron/build/icon.ico` 放一個 256x256 的 .ico,並在 `package.json` 的
-  `build.win` 底下加 `"icon": "build/icon.ico"`。
-- 目前沒有簽章(code signing),Windows SmartScreen 可能會跳出警告,這跟現在
-  BOM Manager 的 exe 是一樣的狀況,內部工具通常可以接受。
-- FID→SO 反查(`resolve_so_from_fid`)如果同一個 FID 的 BOM 改版過,VA03 可能
-  搜到不只一筆,固定選清單「最下面一筆」。清單「列」的間距(每多一筆結果
-  往下位移 129)是從真實案例反推出來的,已驗證到 5 筆結果(FID 245828)都
-  正確。清單「欄」的位置每次搜尋不一定相同(不同 FID 觀察到欄 3、4、7 都
-  出現過),所以程式會先掃過欄位範圍(從 2 開始,排除實測發現的裝飾性欄位
-  1)找出這次用的是哪一欄,不是猜固定值。選完之後如果 VA03 訂單欄位讀不到
-  值會直接報錯,不會用沒驗證過的 SO 值繼續跑。遇到選錯時要核對 log 印出的
-  筆數/欄位/選到的 SO 是否正確。
+- There's no app icon yet — electron-builder will use its default icon. To use a custom one, drop a 256x256 .ico at `electron/build/icon.ico`, and add `"icon": "build/icon.ico"` under `build.win` in `package.json`.
+- There's no code signing yet, so Windows SmartScreen may show a warning — the same situation as the current BOM Manager exe, which is generally acceptable for an internal tool.
+- FID→SO resolution (`resolve_so_from_fid`): if a FID's BOM has been revised, VA03 may return more than one result, in which case the "bottom-most" one in the list is always picked. The list's "row" spacing (each additional result shifts down by 129) was derived from real cases and has been verified correct up to 5 results (FID 245828). The list's "column" position isn't always the same across searches (columns 3, 4, and 7 have all been observed for different FIDs), so the tool first scans a column range (starting at 2, excluding a decorative column 1 found during testing) to determine which column this search is using, rather than guessing a fixed value. If VA03's order field comes back empty after selecting, it raises an error immediately rather than continuing with an unverified SO value. If a wrong selection happens, check whether the log's printed result count / column / resolved SO are correct.

@@ -66,7 +66,7 @@ export function CategoryEditPopover({
     >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-64">
-        <p className="mb-1 text-xs font-medium">分類名稱</p>
+        <p className="mb-1 text-xs font-medium">Category Name</p>
         <div className="mb-3 flex items-center gap-2">
           <Input
             value={draft}
@@ -78,11 +78,11 @@ export function CategoryEditPopover({
             }}
           />
           <Button size="sm" disabled={saving} onClick={commitName}>
-            確定
+            Confirm
           </Button>
         </div>
 
-        <p className="mb-2 text-xs font-medium">分類顏色</p>
+        <p className="mb-2 text-xs font-medium">Category Color</p>
         <div className="mb-3 grid grid-cols-4 gap-2">
           {PRESET_COLORS.map((c) => (
             <button
@@ -107,7 +107,7 @@ export function CategoryEditPopover({
             onChange={(e) => pickColor(e.target.value)}
             className="h-7 w-10 cursor-pointer rounded border"
           />
-          <span className="text-muted-foreground text-xs">自訂顏色</span>
+          <span className="text-muted-foreground text-xs">Custom Color</span>
         </div>
         <Button
           size="sm"
@@ -116,7 +116,7 @@ export function CategoryEditPopover({
           disabled={saving}
           onClick={() => pickColor(null)}
         >
-          恢復自動配色
+          Restore Automatic Color
         </Button>
 
         {error && <p className="text-destructive mt-2 text-xs">{error}</p>}

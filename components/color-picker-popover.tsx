@@ -7,14 +7,14 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export const PRESET_COLORS = [
-  { label: "藍", value: "#dbeafe" },
-  { label: "橙", value: "#fef3c7" },
-  { label: "綠", value: "#d1fae5" },
-  { label: "紫", value: "#ede9fe" },
-  { label: "粉", value: "#ffe4e6" },
-  { label: "青", value: "#cffafe" },
-  { label: "莓果綠", value: "#ecfccb" },
-  { label: "橘", value: "#ffedd5" },
+  { label: "Blue", value: "#dbeafe" },
+  { label: "Amber", value: "#fef3c7" },
+  { label: "Emerald", value: "#d1fae5" },
+  { label: "Violet", value: "#ede9fe" },
+  { label: "Rose", value: "#ffe4e6" },
+  { label: "Cyan", value: "#cffafe" },
+  { label: "Lime", value: "#ecfccb" },
+  { label: "Orange", value: "#ffedd5" },
 ];
 
 export function ColorSwatchTrigger({
@@ -77,7 +77,7 @@ export function ColorPickerPopover({
     >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-56">
-        <p className="mb-2 text-xs font-medium">選擇顏色</p>
+        <p className="mb-2 text-xs font-medium">Select Color</p>
         <div className="mb-3 grid grid-cols-4 gap-2">
           {PRESET_COLORS.map((c) => (
             <button
@@ -102,7 +102,7 @@ export function ColorPickerPopover({
             onChange={(e) => pick(e.target.value)}
             className="h-7 w-10 cursor-pointer rounded border"
           />
-          <span className="text-muted-foreground text-xs">自訂顏色</span>
+          <span className="text-muted-foreground text-xs">Custom Color</span>
         </div>
         <Button
           size="sm"
@@ -111,7 +111,7 @@ export function ColorPickerPopover({
           disabled={saving}
           onClick={() => pick(null)}
         >
-          恢復自動配色
+          Restore Automatic Color
         </Button>
         {error && <p className="text-destructive mt-2 text-xs">{error}</p>}
       </PopoverContent>

@@ -105,14 +105,14 @@ function buildPartSheet(
   const displayRows = buildKeyPartDisplayRows(items, keyPartInfo, renameInfo, renameRank);
 
   const rows: CellValue[][] = [
-    ["料號", "描述", "Qty", "Unit", "自訂名稱", "子項", "疑似改料號"],
+    ["Part No.", "Description", "Qty", "Unit", "Custom Name", "Subparts", "Possibly Renamed"],
     ...displayRows.map(({ item, keyPartInfo: info, renameText }) => [
       item.part_no,
       item.description ?? "",
       item.qty ?? "",
       item.uom ?? "",
       info?.customName ?? "",
-      info && info.subparts.length > 0 ? info.subparts.join("、") : "",
+      info && info.subparts.length > 0 ? info.subparts.join(", ") : "",
       renameText ?? "",
     ]),
   ];
@@ -141,34 +141,34 @@ export function exportCompareToExcel(
   const qtyMismatchCount = result.common.filter((item) => !item.qtyMatch).length;
 
   const summaryRows: CellValue[][] = [
-    ["項目", "內容"],
-    ["機台 A", summaryA.machine],
-    ["子項 A", summaryA.source_file],
-    ["明細 A", summaryA.itemCount],
-    ["唯一料號 A", summaryA.uniqueCount],
-    ["機台 B", summaryB.machine],
-    ["子項 B", summaryB.source_file],
-    ["明細 B", summaryB.itemCount],
-    ["唯一料號 B", summaryB.uniqueCount],
-    ["共同料號", result.common.length],
-    ["僅 A", result.onlyA.length],
-    ["僅 B", result.onlyB.length],
-    ["Qty 不一致", qtyMismatchCount],
+    ["Item", "Value"],
+    ["Machine A", summaryA.machine],
+    ["Subpart A", summaryA.source_file],
+    ["Detail Items A", summaryA.itemCount],
+    ["Unique Parts A", summaryA.uniqueCount],
+    ["Machine B", summaryB.machine],
+    ["Subpart B", summaryB.source_file],
+    ["Detail Items B", summaryB.itemCount],
+    ["Unique Parts B", summaryB.uniqueCount],
+    ["Common Parts", result.common.length],
+    ["A Only", result.onlyA.length],
+    ["B Only", result.onlyB.length],
+    ["Qty Mismatch", qtyMismatchCount],
   ];
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, buildSheet(summaryRows, 1), "比對摘要");
+  XLSX.utils.book_append_sheet(wb, buildSheet(summaryRows, 1), "Comparison Summary");
   XLSX.utils.book_append_sheet(
     wb,
     buildPartSheet(filteredOnlyA, keyPartInfoA, renameInfoA),
-    "僅存在於 A"
+    "Only in A"
   );
   XLSX.utils.book_append_sheet(
     wb,
     buildPartSheet(filteredOnlyB, keyPartInfoB, renameInfoB, renameRankB),
-    "僅存在於 B"
+    "Only in B"
   );
 
-  const filename = `BOM比對_${safeFilenamePart(summaryA.machine)}_vs_${safeFilenamePart(summaryB.machine)}.xlsx`;
+  const filename = `BOM_Comparison_${safeFilenamePart(summaryA.machine)}_vs_${safeFilenamePart(summaryB.machine)}.xlsx`;
   XLSX.writeFile(wb, filename);
 }

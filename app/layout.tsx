@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Playfair_Display, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Didot itself isn't a web font (Mac-only system font), so we use Playfair
+// Display — a Google Font explicitly designed as a Didot-style high-contrast
+// serif — which renders consistently on every platform.
+const displaySerif = Playfair_Display({
+  variable: "--font-display",
   subsets: ["latin"],
 });
 
@@ -13,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BOM 比對工具",
-  description: "從多份機台 BOM 中選擇兩份進行差異比對",
+  title: "BOM Comparison Tool",
+  description: "Select two machine BOMs to compare their differences",
 };
 
 export default function RootLayout({
@@ -23,10 +26,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-Hant">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
-      </body>
+    <html lang="en" className={`${displaySerif.variable} ${geistMono.variable}`}>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

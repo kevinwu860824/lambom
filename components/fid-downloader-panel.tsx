@@ -41,20 +41,24 @@ interface QueueItem {
 }
 
 /**
- * Only does anything inside the lambom 桌面版(Electron) shell, which exposes
- * window.fidDownloader via a preload script — on the public web deployment
- * (same code, opened in a regular browser) that API doesn't exist, so this
- * renders nothing.
+ * Only does anything inside the lambom desktop (Electron) shell, which
+ * exposes window.fidDownloader via a preload script — on the public web
+ * deployment (same code, opened in a regular browser) that API doesn't
+ * exist, so this renders nothing.
  *
- * 「機台編號」欄位直接就是上傳 Supabase 用的機台名稱(machine_name),不用再
- * 查表或跳出來問。SO 已經不能手動指定了,一律用 FID 透過 VA03 自動反查
- * (同一個 FID 如果 BOM 改版過,VA03 反查可能選錯版本——目前固定選第一筆,
- * 之後真的發現抓錯再調整)。
+ * The "Machine No." field is used directly as the Supabase upload machine
+ * name (machine_name) — no lookup or prompt needed. SO can no longer be
+ * entered manually; it's always resolved from FID via VA03 automatically
+ * (if a FID's BOM has been revised, VA03 may return multiple results — the
+ * bottom-most one is picked, using dynamic column detection since the
+ * column position isn't fixed across searches).
  *
- * 每次「新增」把 FID+機台編號 加入佇列,按「下載」才會依序處理:每一筆都會
- * 下載完整 BOM(IB53,只存到下載資料夾,當輔助參考)跟 Modules
- * (ZOOBOM_CE_FMT),Modules 下載完會自動整理、上傳到 Supabase 並跑一次
- * 重要零件自動比對。其中一筆失敗不會中斷整批,會繼續處理下一筆。
+ * Each "Add" pushes FID + Machine No. onto the queue; "Download" processes
+ * it sequentially — every item downloads the Full BOM (IB53, saved to the
+ * downloads folder as a reference only) and Modules (ZOOBOM_CE_FMT); once
+ * Modules is downloaded it's automatically cleaned up, uploaded to
+ * Supabase, and run through key-part auto-matching. One item failing
+ * doesn't stop the batch — it moves on to the next.
  */
 export function FidDownloaderPanel({
   existingMachines = [],
@@ -99,7 +103,7 @@ export function FidDownloaderPanel({
       const mapped = await lookupMachineForFid(getSupabase(), trimmedFid);
       if (mapped) setMachineNo(mapped);
     } catch {
-      // 只是方便帶入,查不到或查詢失敗都不影響手動輸入。
+      // Just a convenience auto-fill; a lookup miss or failure doesn't affect manual entry.
     }
   }
 
@@ -121,10 +125,10 @@ export function FidDownloaderPanel({
 
   function downloadTemplate() {
     const wb = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([["機台編號", "FID"]]);
+    const sheet = XLSX.utils.aoa_to_sheet([["Machine No.", "FID"]]);
     sheet["!cols"] = [{ wch: 16 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(wb, sheet, "SAP下載清單");
-    XLSX.writeFile(wb, "SAP下載清單模板.xlsx");
+    XLSX.utils.book_append_sheet(wb, sheet, "SAP Download List");
+    XLSX.writeFile(wb, "SAP_Download_List_Template.xlsx");
   }
 
   async function importFromExcel(file: File) {
@@ -133,10 +137,10 @@ export function FidDownloaderPanel({
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
-      if (rows.length < 2) throw new Error("這個檔案沒有資料(除了標題列)");
+      if (rows.length < 2) throw new Error("This file has no data rows besides the header");
 
       const header = rows[0].map((h) => (h ?? "").toString().trim());
-      const machineCol = header.findIndex((h) => h.includes("機台"));
+      const machineCol = header.findIndex((h) => h.toLowerCase().includes("machine"));
       const fidCol = header.findIndex((h) => h.toUpperCase().includes("FID"));
 
       const newItems: QueueItem[] = [];
@@ -157,25 +161,25 @@ export function FidDownloaderPanel({
         });
       }
 
-      if (newItems.length === 0) throw new Error("沒有找到有效的資料列(機台編號、FID 都要有值)");
+      if (newItems.length === 0) throw new Error("No valid data rows found (Machine No. and FID are both required)");
 
       setQueue((prev) => [...prev, ...newItems]);
       setLog(
         (prev) =>
-          `${prev}\n已從 Excel 匯入 ${newItems.length} 筆到佇列${skipped > 0 ? `(略過 ${skipped} 筆缺欄位的資料)` : ""}。\n`
+          `${prev}\nImported ${newItems.length} row(s) from Excel into the queue${skipped > 0 ? ` (skipped ${skipped} row(s) missing a field)` : ""}.\n`
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setLog((prev) => `${prev}\n[錯誤] Excel 匯入失敗:${message}\n`);
+      setLog((prev) => `${prev}\n[Error] Excel import failed: ${message}\n`);
     }
   }
 
   async function uploadModulesToMachine(resultPath: string, machineName: string) {
     const supabase = getSupabase();
-    setLog((prev) => `${prev}讀取檔案...\n`);
+    setLog((prev) => `${prev}Reading file...\n`);
     const buffer = await window.fidDownloader!.readFile(resultPath);
     const sheets = parseModulesWorkbook(buffer);
-    setLog((prev) => `${prev}共 ${sheets.length} 個模組,開始上傳到機台「${machineName}」...\n`);
+    setLog((prev) => `${prev}${sheets.length} module(s) found, uploading to machine "${machineName}"...\n`);
 
     let successCount = 0;
     let failCount = 0;
@@ -183,28 +187,28 @@ export function FidDownloaderPanel({
       try {
         await uploadBomEntry(supabase, sheetName, parsed, machineName);
         successCount++;
-        setLog((prev) => `${prev}  ${sheetName}:完成(${parsed.items.length} 項)\n`);
+        setLog((prev) => `${prev}  ${sheetName}: done (${parsed.items.length} items)\n`);
       } catch (err) {
         failCount++;
         const message = err instanceof Error ? err.message : String(err);
-        setLog((prev) => `${prev}  ${sheetName}:失敗 - ${message}\n`);
+        setLog((prev) => `${prev}  ${sheetName}: failed - ${message}\n`);
       }
     }
 
     if (successCount > 0) {
       try {
         const count = await autoMatchKeyParts(supabase, machineName);
-        setLog((prev) => `${prev}已自動比對到 ${count} 筆重要零件。\n`);
+        setLog((prev) => `${prev}Auto-matched ${count} key part(s).\n`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        setLog((prev) => `${prev}[錯誤] 自動比對重要零件失敗:${message}\n`);
+        setLog((prev) => `${prev}[Error] Key part auto-matching failed: ${message}\n`);
       }
       onUploaded?.();
     }
 
-    setLog((prev) => `${prev}上傳完成:成功 ${successCount} 個,失敗 ${failCount} 個。\n`);
+    setLog((prev) => `${prev}Upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
     if (failCount > 0 && successCount === 0) {
-      throw new Error("所有模組上傳都失敗");
+      throw new Error("All module uploads failed");
     }
   }
 
@@ -212,54 +216,54 @@ export function FidDownloaderPanel({
     if (!processing) return;
     cancelRequestedRef.current = true;
     window.fidDownloader?.cancel();
-    setLog((prev) => `${prev}\n已送出取消要求,正在中止目前這一筆(剩下的佇列不會繼續處理)...\n`);
+    setLog((prev) => `${prev}\nCancel requested, stopping the current item (remaining queue won't be processed)...\n`);
   }
 
   async function processQueue() {
     if (processing || queue.length === 0 || !window.fidDownloader) return;
     setProcessing(true);
     cancelRequestedRef.current = false;
-    setLog((prev) => `${prev}\n開始處理佇列,共 ${queue.length} 台...\n`);
+    setLog((prev) => `${prev}\nStarting queue, ${queue.length} total...\n`);
 
     for (let i = 0; i < queue.length; i++) {
       if (cancelRequestedRef.current) break;
 
       const item = queue[i];
       setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "running" } : q)));
-      setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo}(FID ${item.fid})===\n`);
+      setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo} (FID ${item.fid}) ===\n`);
 
       try {
-        setLog((prev) => `${prev}--- 完整 BOM ---\n`);
+        setLog((prev) => `${prev}--- Full BOM ---\n`);
         const toolResult = await window.fidDownloader.start({ fid: item.fid, mode: "tool" });
         if (cancelRequestedRef.current) {
-          setLog((prev) => `${prev}已取消。\n`);
+          setLog((prev) => `${prev}Cancelled.\n`);
           setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
           break;
         }
         setLog((prev) =>
           toolResult.ok && toolResult.resultPath
-            ? `${prev}完整 BOM 完成:${toolResult.resultPath}\n`
-            : `${prev}[錯誤] 完整 BOM 下載失敗,略過,繼續 Modules。\n`
+            ? `${prev}Full BOM done: ${toolResult.resultPath}\n`
+            : `${prev}[Error] Full BOM download failed, skipping ahead to Modules.\n`
         );
 
         setLog((prev) => `${prev}--- Modules ---\n`);
         const modulesResult = await window.fidDownloader.start({ fid: item.fid, mode: "modules" });
         if (cancelRequestedRef.current) {
-          setLog((prev) => `${prev}已取消。\n`);
+          setLog((prev) => `${prev}Cancelled.\n`);
           setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
           break;
         }
         if (!modulesResult.ok || !modulesResult.resultPath) {
-          throw new Error("Modules 下載失敗,請檢查上面的訊息");
+          throw new Error("Modules download failed, check the messages above");
         }
-        setLog((prev) => `${prev}Modules 完成:${modulesResult.resultPath}\n`);
+        setLog((prev) => `${prev}Modules done: ${modulesResult.resultPath}\n`);
 
         await uploadModulesToMachine(modulesResult.resultPath, item.machineNo);
 
         try {
           await saveMachineForFid(getSupabase(), item.fid, item.machineNo);
         } catch {
-          // 記錄對照表失敗不影響這筆已經上傳成功的資料。
+          // A mapping-save failure doesn't affect this item's already-successful upload.
         }
 
         setQueue((prev) =>
@@ -269,13 +273,13 @@ export function FidDownloaderPanel({
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        setLog((prev) => `${prev}[錯誤] ${item.machineNo}(FID ${item.fid})失敗:${message}\n`);
+        setLog((prev) => `${prev}[Error] ${item.machineNo} (FID ${item.fid}) failed: ${message}\n`);
         setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "error", error: message } : q)));
       }
     }
 
     const wasCancelled = cancelRequestedRef.current;
-    setLog((prev) => `${prev}\n${wasCancelled ? "已取消,處理停止。" : "全部處理完成。"}\n`);
+    setLog((prev) => `${prev}\n${wasCancelled ? "Cancelled, processing stopped." : "All items processed."}\n`);
     cancelRequestedRef.current = false;
     setProcessing(false);
   }
@@ -285,17 +289,17 @@ export function FidDownloaderPanel({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>SAP 下載</CardTitle>
+        <CardTitle>SAP Download</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="mb-3 flex items-end gap-2 overflow-x-auto">
           <div className="grid shrink-0 gap-1.5">
-            <Label className="text-xs">機台編號</Label>
+            <Label className="text-xs">Machine No.</Label>
             <Input
               list="fid-downloader-existing-machines"
               value={machineNo}
               onChange={(e) => setMachineNo(e.target.value)}
-              placeholder="例如 ACOXN1"
+              placeholder="e.g. ACOXN1"
               disabled={processing}
               className="w-32"
               onKeyDown={(e) => {
@@ -314,7 +318,7 @@ export function FidDownloaderPanel({
               value={fid}
               onChange={(e) => setFid(e.target.value)}
               onBlur={handleFidBlur}
-              placeholder="例如 264059"
+              placeholder="e.g. 264059"
               disabled={processing}
               className="w-32"
               onKeyDown={(e) => {
@@ -324,11 +328,11 @@ export function FidDownloaderPanel({
           </div>
           <Button className="shrink-0" onClick={addToQueue} disabled={processing || !machineNo.trim() || !fid.trim()}>
             <Plus className="h-4 w-4" />
-            新增
+            Add
           </Button>
           <Button className="shrink-0" variant="outline" onClick={downloadTemplate} disabled={processing}>
             <FileSpreadsheet className="h-4 w-4" />
-            Excel 範本
+            Excel Template
           </Button>
           <Button
             className="shrink-0"
@@ -337,7 +341,7 @@ export function FidDownloaderPanel({
             disabled={processing}
           >
             <Upload className="h-4 w-4" />
-            匯入 Excel
+            Import Excel
           </Button>
           <input
             ref={fileInputRef}
@@ -361,21 +365,21 @@ export function FidDownloaderPanel({
                   {item.machineNo}
                   <span className="text-muted-foreground"> — FID {item.fid}</span>
                 </span>
-                {item.status === "running" && <span className="text-xs text-blue-600">處理中…</span>}
-                {item.status === "done" && <span className="text-xs text-emerald-600">完成</span>}
+                {item.status === "running" && <span className="text-xs text-blue-600">Running…</span>}
+                {item.status === "done" && <span className="text-xs text-emerald-600">Done</span>}
                 {item.status === "error" && (
                   <span className="text-destructive text-xs" title={item.error}>
-                    失敗
+                    Failed
                   </span>
                 )}
-                {item.status === "cancelled" && <span className="text-muted-foreground text-xs">已取消</span>}
+                {item.status === "cancelled" && <span className="text-muted-foreground text-xs">Cancelled</span>}
                 {item.status === "done" && item.modulesResultPath && (
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => window.fidDownloader?.openFolder(item.modulesResultPath!)}
                   >
-                    開啟資料夾
+                    Open Folder
                   </Button>
                 )}
                 {item.status === "queued" && !processing && (
@@ -391,12 +395,12 @@ export function FidDownloaderPanel({
         <div className="mb-3 flex items-center gap-2">
           <Button onClick={processQueue} disabled={processing || queue.length === 0}>
             <Download className="h-4 w-4" />
-            {processing ? "下載中…" : `下載(${queue.length} 台)`}
+            {processing ? "Downloading…" : `Download (${queue.length})`}
           </Button>
           {processing && (
             <Button variant="destructive" onClick={cancelQueue}>
               <Square className="h-4 w-4" />
-              取消
+              Cancel
             </Button>
           )}
         </div>

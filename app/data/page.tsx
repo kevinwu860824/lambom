@@ -40,7 +40,7 @@ export default function DataPage() {
       if (cancelled) return;
 
       if (error) {
-        setInitError(`載入失敗:${error.message}`);
+        setInitError(`Failed to load: ${error.message}`);
         setInitLoading(false);
         return;
       }
@@ -53,7 +53,7 @@ export default function DataPage() {
 
     loadData().catch((err) => {
       if (cancelled) return;
-      setInitError(`載入失敗:${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`Failed to load: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
 
@@ -99,9 +99,10 @@ export default function DataPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-white">資料編輯</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Data Editor</h1>
           <p className="mt-1 text-sm text-white/70">
-            左邊顯示 Supabase「Data」表目前的內容,右邊輸入新內容並按下取代。
+            The left side shows the current content of Supabase&apos;s &quot;Data&quot; table;
+            enter new content on the right and click Replace.
           </p>
         </div>
 
@@ -113,18 +114,18 @@ export default function DataPage() {
 
         {saveError && (
           <Card className="mb-6 border-destructive/50">
-            <CardContent className="text-destructive text-sm">取代失敗:{saveError}</CardContent>
+            <CardContent className="text-destructive text-sm">Replace failed: {saveError}</CardContent>
           </Card>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>目前內容</CardTitle>
+              <CardTitle>Current Content</CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
-                value={initLoading ? "載入中…" : currentContent}
+                value={initLoading ? "Loading…" : currentContent}
                 readOnly
                 disabled
                 className="h-[420px] resize-none font-mono text-sm"
@@ -134,22 +135,22 @@ export default function DataPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>新內容</CardTitle>
+              <CardTitle>New Content</CardTitle>
             </CardHeader>
             <CardContent>
               <Textarea
                 value={draftContent}
                 onChange={(e) => setDraftContent(e.target.value)}
-                placeholder="輸入要取代的文字…"
+                placeholder="Enter the replacement text…"
                 disabled={initLoading}
                 className="h-[420px] resize-none font-mono text-sm"
               />
               <div className="mt-3 flex items-center gap-3">
                 <Button onClick={handleReplace} disabled={initLoading || saving}>
-                  {saving ? "取代中…" : "取代"}
+                  {saving ? "Replacing…" : "Replace"}
                 </Button>
                 {saveSuccess && (
-                  <span className="text-sm text-emerald-600">已更新</span>
+                  <span className="text-sm text-emerald-600">Updated</span>
                 )}
               </div>
             </CardContent>

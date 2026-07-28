@@ -34,14 +34,14 @@ import { cn } from "@/lib/utils";
 const ALL_MACHINES = "__all__";
 
 function StatusBadge({ status }: { status: KeyPartCheckResult["status"] }) {
-  if (status === "same") return <Badge variant="secondary">相同料號</Badge>;
+  if (status === "same") return <Badge variant="secondary">Same Part No.</Badge>;
   if (status === "renamed")
     return (
       <Badge variant="outline" className="border-amber-400 text-amber-700">
-        料號可能變更
+        Possibly Renamed
       </Badge>
     );
-  return <Badge variant="destructive">找不到</Badge>;
+  return <Badge variant="destructive">Not Found</Badge>;
 }
 
 export function KeyPartsPanel({
@@ -83,7 +83,7 @@ export function KeyPartsPanel({
   const [resultsB, setResultsB] = useState<KeyPartCheckResult[] | null>(null);
 
   async function handleDelete(id: number) {
-    if (!window.confirm("確定要刪除這個重要零件嗎?")) return;
+    if (!window.confirm("Delete this key part?")) return;
 
     setDeletingId(id);
     setDeleteError(null);
@@ -142,7 +142,7 @@ export function KeyPartsPanel({
       ]);
 
       if (!bomA || !bomB) {
-        setCheckError("請先在上方「選擇比對對象」選好機台 A / B 及子項");
+        setCheckError('Select machine A / B and their subparts in "Select Comparison Targets" above first');
         return;
       }
 
@@ -167,7 +167,7 @@ export function KeyPartsPanel({
         }}
         className="flex cursor-pointer select-none flex-row items-center justify-between"
       >
-        <CardTitle>重要零件比對</CardTitle>
+        <CardTitle>Key Parts Comparison</CardTitle>
         <ChevronDown
           className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
         />
@@ -181,13 +181,13 @@ export function KeyPartsPanel({
 
           {!keyPartsLoading && keyParts.length > 0 && (
             <div className="mb-4 grid max-w-xs gap-1.5">
-              <label className="text-sm font-medium">機台篩選</label>
+              <label className="text-sm font-medium">Machine Filter</label>
               <Select value={machineFilter} onValueChange={setMachineFilter}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="選擇機台" />
+                  <SelectValue placeholder="Select machine" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL_MACHINES}>全部機台</SelectItem>
+                  <SelectItem value={ALL_MACHINES}>All Machines</SelectItem>
                   {machineOptions.map((machine) => (
                     <SelectItem key={machine} value={machine}>
                       {machine}
@@ -199,13 +199,14 @@ export function KeyPartsPanel({
           )}
 
           {keyPartsLoading ? (
-            <p className="text-muted-foreground text-sm">載入中…</p>
+            <p className="text-muted-foreground text-sm">Loading…</p>
           ) : keyParts.length === 0 ? (
             <p className="text-muted-foreground text-sm italic">
-              還沒有重要零件,先到上方的「料號/描述搜尋」結果列加入。
+              No key parts yet — add one from a result row in the &quot;Part No. / Description
+              Search&quot; above.
             </p>
           ) : filteredKeyParts.length === 0 ? (
-            <p className="text-muted-foreground text-sm italic">這台機台沒有標記過的重要零件。</p>
+            <p className="text-muted-foreground text-sm italic">This machine has no key parts marked yet.</p>
           ) : (
             <Table>
               <TableHeader>
@@ -218,11 +219,11 @@ export function KeyPartsPanel({
                       onCheckedChange={toggleSelectAll}
                     />
                   </TableHead>
-                  <TableHead>自訂名稱</TableHead>
-                  <TableHead>來源機台</TableHead>
-                  <TableHead>子項</TableHead>
-                  <TableHead>料號</TableHead>
-                  <TableHead>描述</TableHead>
+                  <TableHead>Custom Name</TableHead>
+                  <TableHead>Source Machine</TableHead>
+                  <TableHead>Subpart</TableHead>
+                  <TableHead>Part No.</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
@@ -249,7 +250,7 @@ export function KeyPartsPanel({
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label="刪除重要零件"
+                        aria-label="Delete key part"
                         disabled={deletingId === part.id}
                         onClick={() => handleDelete(part.id)}
                       >
@@ -264,8 +265,8 @@ export function KeyPartsPanel({
 
           <div className="mt-4 flex items-center gap-3 border-t pt-4">
             <p className="text-muted-foreground text-sm">
-              將對照上方已選的機台 A(<span className="font-medium">{machineA || "未選擇"}</span>)與機台
-              B(<span className="font-medium">{machineB || "未選擇"}</span>)
+              Will check against machine A (<span className="font-medium">{machineA || "not selected"}</span>)
+              and machine B (<span className="font-medium">{machineB || "not selected"}</span>) selected above
             </p>
             <Button
               className="ml-auto shrink-0"
@@ -279,7 +280,7 @@ export function KeyPartsPanel({
                 subpartsB.size === 0
               }
             >
-              {checkLoading ? "檢查中…" : `開始檢查(${selectedIds.size})`}
+              {checkLoading ? "Checking…" : `Start Check (${selectedIds.size})`}
             </Button>
           </div>
 
@@ -290,13 +291,13 @@ export function KeyPartsPanel({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>自訂名稱</TableHead>
-                    <TableHead>原料號</TableHead>
-                    <TableHead>原描述</TableHead>
-                    <TableHead>A 狀態</TableHead>
-                    <TableHead>A 結果</TableHead>
-                    <TableHead>B 狀態</TableHead>
-                    <TableHead>B 結果</TableHead>
+                    <TableHead>Custom Name</TableHead>
+                    <TableHead>Original Part No.</TableHead>
+                    <TableHead>Original Description</TableHead>
+                    <TableHead>A Status</TableHead>
+                    <TableHead>A Result</TableHead>
+                    <TableHead>B Status</TableHead>
+                    <TableHead>B Result</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

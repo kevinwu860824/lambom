@@ -90,7 +90,7 @@ export default function MachinesPage() {
   async function deleteMachine(group: MachineGroup) {
     if (
       !window.confirm(
-        `確定要刪除機台「${group.machine}」嗎?這會一併刪除底下 ${group.subparts.length} 個子項與所有明細資料,無法復原。`
+        `Delete machine "${group.machine}"? This will also delete its ${group.subparts.length} subpart(s) and all detail data — this cannot be undone.`
       )
     ) {
       return;
@@ -124,7 +124,7 @@ export default function MachinesPage() {
   async function deleteSubpart(machineName: string, entry: BomEntry) {
     if (
       !window.confirm(
-        `確定要刪除子項「${entry.source_file}」嗎?這會刪除該子項所有明細資料,無法復原。`
+        `Delete subpart "${entry.source_file}"? This will delete all its detail data — this cannot be undone.`
       )
     ) {
       return;
@@ -167,22 +167,22 @@ export default function MachinesPage() {
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">編輯機台 / 子項名稱</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Edit Machine / Subpart Names</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              改完按 Enter 或點確認就會立即更新到 Supabase。
+              Press Enter or click confirm after editing to update Supabase immediately.
             </p>
           </div>
           <div className="flex items-center gap-3">
             <Button
               size="icon"
               variant="outline"
-              aria-label={editMode ? "完成編輯" : "編輯機台/子項"}
+              aria-label={editMode ? "Done editing" : "Edit machines/subparts"}
               onClick={() => setEditMode((v) => !v)}
             >
               {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
             </Button>
             <Link href="/" className="text-sm underline underline-offset-4">
-              回到比對工具
+              Back to Comparison Tool
             </Link>
           </div>
         </div>
@@ -193,12 +193,12 @@ export default function MachinesPage() {
 
         <Card>
           <CardContent className="grid gap-4">
-            {deleteError && <p className="text-destructive text-sm">刪除失敗:{deleteError}</p>}
+            {deleteError && <p className="text-destructive text-sm">Delete failed: {deleteError}</p>}
 
             {loading ? (
-              <p className="text-muted-foreground text-sm">載入中…</p>
+              <p className="text-muted-foreground text-sm">Loading…</p>
             ) : groups.length === 0 ? (
-              <p className="text-muted-foreground text-sm">尚無機台資料</p>
+              <p className="text-muted-foreground text-sm">No machine data yet</p>
             ) : (
               groups.map((group) => {
                 const expanded = expandedMachines.has(group.machine);
@@ -214,13 +214,13 @@ export default function MachinesPage() {
                     />
                     <span className="flex-1 text-sm font-medium">{group.machine}</span>
                     <span className="text-muted-foreground text-xs">
-                      {group.subparts.length} 個子項
+                      {group.subparts.length} subpart(s)
                     </span>
                   </button>
 
                   {expanded && (
                     <div className="border-t p-3">
-                      <Label className="mb-1.5">機台名稱</Label>
+                      <Label className="mb-1.5">Machine Name</Label>
                       <div className="flex items-center gap-2">
                         <div className="flex-1">
                           {editMode ? (
@@ -236,7 +236,7 @@ export default function MachinesPage() {
                           <Button
                             size="icon-sm"
                             variant="ghost"
-                            aria-label="刪除機台"
+                            aria-label="Delete machine"
                             disabled={deletingKey === `machine:${group.machine}`}
                             onClick={() => deleteMachine(group)}
                           >
@@ -245,7 +245,7 @@ export default function MachinesPage() {
                         )}
                       </div>
 
-                      <Label className="mt-4 mb-1.5 block">子項(檔名)</Label>
+                      <Label className="mt-4 mb-1.5 block">Subparts (filename)</Label>
                       <div className="grid gap-2 pl-2">
                         {group.subparts.map((entry) => (
                           <div key={entry.bomId} className="flex items-center gap-2">
@@ -265,7 +265,7 @@ export default function MachinesPage() {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
-                                aria-label="刪除子項"
+                                aria-label="Delete subpart"
                                 disabled={deletingKey === `subpart:${entry.bomId}`}
                                 onClick={() => deleteSubpart(group.machine, entry)}
                               >
