@@ -212,16 +212,20 @@ def resolve_so_from_fid(session, fid):
 
     這個清單的元件用 lbl[列,欄] 定址,列/欄的數字不是「第幾筆」的序號,是
     畫面內部座標。已經用 SAP GUI 的 Script Recording and Playback 驗證過
-    3 個真實案例:
-      - 只有 1 筆結果:唯一一筆在 lbl[1,3](欄 3)
-      - 有 2 筆結果:最上面那筆在 lbl[1,4],最下面那筆在 lbl[130,4](欄 4)
-    可以看出:
-      - 「只有 1 筆」用欄 3;「有多筆」用欄 4(欄位是跟著「是不是單筆」切
-        換,不是跟著第幾筆變動——2 筆結果的上下兩筆都是欄 4)
-      - 多筆時,列從 1 開始,每多一筆往下位移 129(1、130、259…)。這個
-        間距是從「剛好 2 筆」的兩個真實案例(第 1、2 筆都對得上)反推出來
-        的,3 筆以上是用同樣間距外推,還沒有實際驗證過——之後如果遇到 3 筆
-        以上選錯,要再確認間距是否還是 129。
+    4 個真實案例:
+      - FID 255678,只有 1 筆結果:唯一一筆在 lbl[1,3](欄 3)
+      - FID 246845,2 筆結果:最上面那筆在 lbl[1,4],最下面那筆在
+        lbl[130,4](欄 4)
+      - FID 245828,多筆結果:其中一筆在 lbl[1,7](欄 7)
+    一開始以為「欄」是跟著「單筆 vs 多筆」切換(單筆用 3、多筆用 4),但
+    245828 也是多筆卻用欄 7,推翻了這個假設——欄位其實是每次搜尋結果各自
+    不同,沒有固定值,不能用猜的。改成:
+      - 欄:先在第 1 列掃過一段欄位範圍(0~19),找出這次搜尋結果實際用的
+        是哪一欄(掃到第一個有文字的就是)
+      - 列:找到欄之後,從 1 開始用同一欄位、每多一筆結果往下位移 129
+        (1、130、259…)去找最下面一列——這個間距是從 246845 的 2 筆真實
+        案例(第 1、2 筆都對得上)反推出來的,3 筆以上是用同樣間距外推,
+        還沒有實際驗證過。
     """
     session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
     session.findById("wnd[0]/tbar[0]/btn[0]").press()
@@ -234,9 +238,8 @@ def resolve_so_from_fid(session, fid):
     ).text = f"{fid}*"
     session.findById("wnd[1]").sendVKey(0)
 
-    MULTI_HIT_COL = 4
-    SINGLE_HIT_COL = 3
     ROW_STEP = 129
+    COL_RANGE = range(0, 20)
 
     def label_text(row, col):
         try:
@@ -246,41 +249,37 @@ def resolve_so_from_fid(session, fid):
         text = (label.text or "").strip()
         return text if text else None
 
-    # 搜尋結果清單需要時間查詢/渲染,手動錄製時不會感覺到,但緊接在完整 BOM
+    # 搜尋結果清單需要時間查詢/渲染,手動操作時不會感覺到,但緊接在完整 BOM
     # 匯出後自動連續執行時,偶爾會比固定睡 1 秒還慢,導致明明有結果卻被誤判
-    # 成空清單。改成最多輪詢 5 秒,而不是固定睡 1 秒就檢查一次。
-    hit_col = None
+    # 成空清單。改成最多輪詢 5 秒(每 0.5 秒掃一次欄位),而不是固定睡 1 秒
+    # 就檢查一次。
+    col = None
     for _ in range(10):
-        if label_text(1, MULTI_HIT_COL) is not None:
-            hit_col = MULTI_HIT_COL
-            break
-        if label_text(1, SINGLE_HIT_COL) is not None:
-            hit_col = SINGLE_HIT_COL
+        for c in COL_RANGE:
+            if label_text(1, c) is not None:
+                col = c
+                break
+        if col is not None:
             break
         time.sleep(0.5)
 
-    if hit_col is None:
+    if col is None:
         raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
 
-    if hit_col == MULTI_HIT_COL:
-        last_row = 1
-        count = 1
-        while True:
-            next_row = 1 + count * ROW_STEP
-            if label_text(next_row, MULTI_HIT_COL) is None:
-                break
-            last_row = next_row
-            count += 1
+    last_row = 1
+    count = 1
+    while True:
+        next_row = 1 + count * ROW_STEP
+        if label_text(next_row, col) is None:
+            break
+        last_row = next_row
+        count += 1
 
-        log(f"搜尋結果共 {count} 筆,選最下面一筆。")
-        target = session.findById(f"wnd[1]/usr/lbl[{last_row},{MULTI_HIT_COL}]")
-        target.setFocus()
-        target.caretPosition = 0
-        session.findById("wnd[1]").sendVKey(2)
-    else:
-        log("搜尋結果只有 1 筆。")
-        session.findById(f"wnd[1]/usr/lbl[1,{SINGLE_HIT_COL}]").caretPosition = 10
-        session.findById("wnd[1]").sendVKey(2)
+    log(f"搜尋結果共 {count} 筆(欄 {col}),選最下面一筆。")
+    target = session.findById(f"wnd[1]/usr/lbl[{last_row},{col}]")
+    target.setFocus()
+    target.caretPosition = 0
+    session.findById("wnd[1]").sendVKey(2)
 
     time.sleep(1)
 
