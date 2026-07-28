@@ -233,7 +233,6 @@ def resolve_so_from_fid(session, fid):
         "/ssubSUBSCR_PRESEL:SAPLSDH4:0220/sub:SAPLSDH4:0220/txtG_SELFLD_TAB-LOW[2,24]"
     ).text = f"{fid}*"
     session.findById("wnd[1]").sendVKey(0)
-    time.sleep(1)
 
     MULTI_HIT_COL = 4
     SINGLE_HIT_COL = 3
@@ -247,7 +246,23 @@ def resolve_so_from_fid(session, fid):
         text = (label.text or "").strip()
         return text if text else None
 
-    if label_text(1, MULTI_HIT_COL) is not None:
+    # 搜尋結果清單需要時間查詢/渲染,手動錄製時不會感覺到,但緊接在完整 BOM
+    # 匯出後自動連續執行時,偶爾會比固定睡 1 秒還慢,導致明明有結果卻被誤判
+    # 成空清單。改成最多輪詢 5 秒,而不是固定睡 1 秒就檢查一次。
+    hit_col = None
+    for _ in range(10):
+        if label_text(1, MULTI_HIT_COL) is not None:
+            hit_col = MULTI_HIT_COL
+            break
+        if label_text(1, SINGLE_HIT_COL) is not None:
+            hit_col = SINGLE_HIT_COL
+            break
+        time.sleep(0.5)
+
+    if hit_col is None:
+        raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
+
+    if hit_col == MULTI_HIT_COL:
         last_row = 1
         count = 1
         while True:
@@ -262,12 +277,10 @@ def resolve_so_from_fid(session, fid):
         target.setFocus()
         target.caretPosition = 0
         session.findById("wnd[1]").sendVKey(2)
-    elif label_text(1, SINGLE_HIT_COL) is not None:
+    else:
         log("搜尋結果只有 1 筆。")
         session.findById(f"wnd[1]/usr/lbl[1,{SINGLE_HIT_COL}]").caretPosition = 10
         session.findById("wnd[1]").sendVKey(2)
-    else:
-        raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
 
     time.sleep(1)
 
