@@ -210,15 +210,18 @@ def resolve_so_from_fid(session, fid):
     欄位(VBAK-VBELN)確認選到的 SO(同一個 FID 如果 BOM 改版過,可能會搜到
     不只一筆結果,使用者確認要固定選最下面那筆)。
 
-    這個清單是「每一列真的有資料,對應的 lbl 元件才會存在」(不是固定筆數的
-    表格控制項),原本錄製腳本驗證過的座標是 lbl[1,3](當時剛好只有一筆結
-    果)——所以這裡改成從 row=1 開始往下逐列探測,直到抓不到元件或文字是空
-    的為止,取最後一個有資料的 row 當「最下面一筆」。單筆結果時行為跟原本
-    錄製過的一樣(還是選 row=1),多筆結果時才會動態往下抓到真正最後一筆。
-
-    這段動態抓取邏輯尚未在真的有多筆結果的 FID 上驗證過(只有單筆結果的情
-    境錄製驗證過),之後遇到真的有多筆結果時,要核對 log 印出的筆數/選到的
-    SO 是否正確。
+    這個清單的元件用 lbl[列,欄] 定址,列/欄的數字不是「第幾筆」的序號,是
+    畫面內部座標。已經用 SAP GUI 的 Script Recording and Playback 驗證過
+    3 個真實案例:
+      - 只有 1 筆結果:唯一一筆在 lbl[1,3](欄 3)
+      - 有 2 筆結果:最上面那筆在 lbl[1,4],最下面那筆在 lbl[130,4](欄 4)
+    可以看出:
+      - 「只有 1 筆」用欄 3;「有多筆」用欄 4(欄位是跟著「是不是單筆」切
+        換,不是跟著第幾筆變動——2 筆結果的上下兩筆都是欄 4)
+      - 多筆時,列從 1 開始,每多一筆往下位移 129(1、130、259…)。這個
+        間距是從「剛好 2 筆」的兩個真實案例(第 1、2 筆都對得上)反推出來
+        的,3 筆以上是用同樣間距外推,還沒有實際驗證過——之後如果遇到 3 筆
+        以上選錯,要再確認間距是否還是 129。
     """
     session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
     session.findById("wnd[0]/tbar[0]/btn[0]").press()
@@ -232,24 +235,40 @@ def resolve_so_from_fid(session, fid):
     session.findById("wnd[1]").sendVKey(0)
     time.sleep(1)
 
-    last_row = -1
-    row = 1
-    while True:
-        try:
-            label = session.findById(f"wnd[1]/usr/lbl[{row},3]")
-        except Exception:
-            break
-        if not (label.text or "").strip():
-            break
-        last_row = row
-        row += 1
+    MULTI_HIT_COL = 4
+    SINGLE_HIT_COL = 3
+    ROW_STEP = 129
 
-    if last_row == -1:
+    def label_text(row, col):
+        try:
+            label = session.findById(f"wnd[1]/usr/lbl[{row},{col}]")
+        except Exception:
+            return None
+        text = (label.text or "").strip()
+        return text if text else None
+
+    if label_text(1, MULTI_HIT_COL) is not None:
+        last_row = 1
+        count = 1
+        while True:
+            next_row = 1 + count * ROW_STEP
+            if label_text(next_row, MULTI_HIT_COL) is None:
+                break
+            last_row = next_row
+            count += 1
+
+        log(f"搜尋結果共 {count} 筆,選最下面一筆。")
+        target = session.findById(f"wnd[1]/usr/lbl[{last_row},{MULTI_HIT_COL}]")
+        target.setFocus()
+        target.caretPosition = 0
+        session.findById("wnd[1]").sendVKey(2)
+    elif label_text(1, SINGLE_HIT_COL) is not None:
+        log("搜尋結果只有 1 筆。")
+        session.findById(f"wnd[1]/usr/lbl[1,{SINGLE_HIT_COL}]").caretPosition = 10
+        session.findById("wnd[1]").sendVKey(2)
+    else:
         raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
 
-    log(f"搜尋結果共 {last_row} 筆,選最下面一筆(第 {last_row} 筆)。")
-    session.findById(f"wnd[1]/usr/lbl[{last_row},3]").caretPosition = 10
-    session.findById("wnd[1]").sendVKey(2)
     time.sleep(1)
 
     so = (session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text or "").strip()
