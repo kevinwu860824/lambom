@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Download, Plus, X as XIcon } from "lucide-react";
+import * as XLSX from "xlsx-js-style";
+import { Download, FileSpreadsheet, Plus, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseModulesWorkbook } from "@/lib/bom-parse";
 import { autoMatchKeyParts, lookupMachineForFid, saveMachineForFid, uploadBomEntry } from "@/lib/bom";
@@ -69,6 +70,7 @@ export function FidDownloaderPanel({
   const [log, setLog] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
@@ -113,6 +115,57 @@ export function FidDownloaderPanel({
 
   function removeFromQueue(id: string) {
     setQueue((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  function downloadTemplate() {
+    const wb = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([["機台編號", "FID"]]);
+    sheet["!cols"] = [{ wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, sheet, "SAP下載清單");
+    XLSX.writeFile(wb, "SAP下載清單模板.xlsx");
+  }
+
+  async function importFromExcel(file: File) {
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+      if (rows.length < 2) throw new Error("這個檔案沒有資料(除了標題列)");
+
+      const header = rows[0].map((h) => (h ?? "").toString().trim());
+      const machineCol = header.findIndex((h) => h.includes("機台"));
+      const fidCol = header.findIndex((h) => h.toUpperCase().includes("FID"));
+
+      const newItems: QueueItem[] = [];
+      let skipped = 0;
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        const machineNoValue = (row[machineCol === -1 ? 0 : machineCol] ?? "").toString().trim();
+        const fidValue = (row[fidCol === -1 ? 1 : fidCol] ?? "").toString().trim();
+        if (!machineNoValue || !fidValue) {
+          if (machineNoValue || fidValue) skipped++;
+          continue;
+        }
+        newItems.push({
+          id: `${Date.now()}-${Math.random()}`,
+          fid: fidValue,
+          machineNo: machineNoValue,
+          status: "queued",
+        });
+      }
+
+      if (newItems.length === 0) throw new Error("沒有找到有效的資料列(機台編號、FID 都要有值)");
+
+      setQueue((prev) => [...prev, ...newItems]);
+      setLog(
+        (prev) =>
+          `${prev}\n已從 Excel 匯入 ${newItems.length} 筆到佇列${skipped > 0 ? `(略過 ${skipped} 筆缺欄位的資料)` : ""}。\n`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}\n[錯誤] Excel 匯入失敗:${message}\n`);
+    }
   }
 
   async function uploadModulesToMachine(resultPath: string, machineName: string) {
@@ -249,6 +302,25 @@ export function FidDownloaderPanel({
             <Plus className="h-4 w-4" />
             新增
           </Button>
+          <Button variant="outline" onClick={downloadTemplate} disabled={processing}>
+            <FileSpreadsheet className="h-4 w-4" />
+            下載 Excel 範本
+          </Button>
+          <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={processing}>
+            <Upload className="h-4 w-4" />
+            匯入 Excel
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importFromExcel(file);
+              e.target.value = "";
+            }}
+          />
         </div>
 
         {queue.length > 0 && (
