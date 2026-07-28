@@ -264,8 +264,8 @@ export function FidDownloaderPanel({
         <CardTitle>SAP 下載</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-3 flex flex-wrap items-end gap-3">
-          <div className="grid gap-1.5">
+        <div className="mb-3 flex items-end gap-2 overflow-x-auto">
+          <div className="grid shrink-0 gap-1.5">
             <Label className="text-xs">機台編號</Label>
             <Input
               list="fid-downloader-existing-machines"
@@ -273,7 +273,7 @@ export function FidDownloaderPanel({
               onChange={(e) => setMachineNo(e.target.value)}
               placeholder="例如 ACOXN1"
               disabled={processing}
-              className="w-40"
+              className="w-32"
               onKeyDown={(e) => {
                 if (e.key === "Enter") addToQueue();
               }}
@@ -284,7 +284,7 @@ export function FidDownloaderPanel({
               ))}
             </datalist>
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid shrink-0 gap-1.5">
             <Label className="text-xs">FID</Label>
             <Input
               value={fid}
@@ -292,21 +292,26 @@ export function FidDownloaderPanel({
               onBlur={handleFidBlur}
               placeholder="例如 264059"
               disabled={processing}
-              className="w-40"
+              className="w-32"
               onKeyDown={(e) => {
                 if (e.key === "Enter") addToQueue();
               }}
             />
           </div>
-          <Button onClick={addToQueue} disabled={processing || !machineNo.trim() || !fid.trim()}>
+          <Button className="shrink-0" onClick={addToQueue} disabled={processing || !machineNo.trim() || !fid.trim()}>
             <Plus className="h-4 w-4" />
             新增
           </Button>
-          <Button variant="outline" onClick={downloadTemplate} disabled={processing}>
+          <Button className="shrink-0" variant="outline" onClick={downloadTemplate} disabled={processing}>
             <FileSpreadsheet className="h-4 w-4" />
-            下載 Excel 範本
+            Excel 範本
           </Button>
-          <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={processing}>
+          <Button
+            className="shrink-0"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={processing}
+          >
             <Upload className="h-4 w-4" />
             匯入 Excel
           </Button>
