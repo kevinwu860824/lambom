@@ -206,14 +206,19 @@ def resolve_so_from_fid(session, fid):
     """
     用 FID 反查對應的 SO——開 VA03、對 Sales Document 欄位按 F4,切到分頁
     「A: Sales document according to customer PO number」,用 FID 當
-    wildcard(<FID>*)搜尋,選搜尋結果清單第一筆,再讀回 VA03 訂單欄位
-    (VBAK-VBELN)確認選到的 SO。這段已經用 SAP GUI 的 Script Recording and
-    Playback 錄過、逐行對過。
+    wildcard(<FID>*)搜尋,選搜尋結果清單「最下面一筆」,再讀回 VA03 訂單
+    欄位(VBAK-VBELN)確認選到的 SO(同一個 FID 如果 BOM 改版過,可能會搜到
+    不只一筆結果,使用者確認要固定選最下面那筆)。
 
-    已知風險(使用者確認過,不是我猜的):同一個 FID 如果 BOM 改版過,可能
-    會搜到不只一筆結果。這裡目前固定選清單第一筆,不保證一定是你要的那個
-    版本——如果之後發現抓到的 SO 不對,要再調整規則(例如改成選最後一筆,
-    或是先列出所有結果讓你自己選)。
+    這個清單是「每一列真的有資料,對應的 lbl 元件才會存在」(不是固定筆數的
+    表格控制項),原本錄製腳本驗證過的座標是 lbl[1,3](當時剛好只有一筆結
+    果)——所以這裡改成從 row=1 開始往下逐列探測,直到抓不到元件或文字是空
+    的為止,取最後一個有資料的 row 當「最下面一筆」。單筆結果時行為跟原本
+    錄製過的一樣(還是選 row=1),多筆結果時才會動態往下抓到真正最後一筆。
+
+    這段動態抓取邏輯尚未在真的有多筆結果的 FID 上驗證過(只有單筆結果的情
+    境錄製驗證過),之後遇到真的有多筆結果時,要核對 log 印出的筆數/選到的
+    SO 是否正確。
     """
     session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
     session.findById("wnd[0]/tbar[0]/btn[0]").press()
@@ -227,7 +232,23 @@ def resolve_so_from_fid(session, fid):
     session.findById("wnd[1]").sendVKey(0)
     time.sleep(1)
 
-    session.findById("wnd[1]/usr/lbl[1,3]").caretPosition = 10
+    last_row = -1
+    row = 1
+    while True:
+        try:
+            label = session.findById(f"wnd[1]/usr/lbl[{row},3]")
+        except Exception:
+            break
+        if not (label.text or "").strip():
+            break
+        last_row = row
+        row += 1
+
+    if last_row == -1:
+        raise RuntimeError("用 FID 反查 SO 失敗,搜尋結果清單是空的,請檢查 SAP 畫面。")
+
+    log(f"搜尋結果共 {last_row} 筆,選最下面一筆(第 {last_row} 筆)。")
+    session.findById(f"wnd[1]/usr/lbl[{last_row},3]").caretPosition = 10
     session.findById("wnd[1]").sendVKey(2)
     time.sleep(1)
 
@@ -235,8 +256,7 @@ def resolve_so_from_fid(session, fid):
     if not so:
         raise RuntimeError(
             "用 FID 反查 SO 失敗,VA03 的訂單欄位讀不到值——可能卡在某個清單"
-            "畫面需要人工確認(例如出現不只一筆搜尋結果),請檢查 SAP 畫面,"
-            "或改成直接輸入 SO。"
+            "畫面需要人工確認,請檢查 SAP 畫面。"
         )
 
     log(f"從 VA03 反查到 SO:{so}")
