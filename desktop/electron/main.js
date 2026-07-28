@@ -1,10 +1,32 @@
 const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { LAMBOM_URL } = require("./config");
 
 let mainWindow = null;
+
+// 目前正在跑的 SAP 下載子程序(同一時間只會有一個)。Node 的 spawn() 在
+// Windows 上不會因為父程序(這個 Electron app)結束就自動跟著砍掉子程序,
+// 會變成孤兒程序繼續在背景操作 SAP——所以視窗關閉/app 結束時、以及使用者
+// 主動按「取消」時,都要明確去 kill 它。
+let activeChild = null;
+
+function killActiveChild() {
+  if (!activeChild || activeChild.killed || activeChild.exitCode !== null) return;
+  const pid = activeChild.pid;
+  activeChild = null;
+  if (process.platform === "win32") {
+    // taskkill /T 會連同這個程序自己開出來的子程序一起砍掉,/F 強制結束。
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+  } else {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // 已經結束了就算了。
+    }
+  }
+}
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -64,6 +86,7 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
 
   return new Promise((resolve) => {
     const child = spawn(exePath, args);
+    activeChild = child;
     let resultPath = null;
 
     child.stdout.on("data", (chunk) => {
@@ -84,14 +107,21 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
     });
 
     child.on("error", (err) => {
+      if (activeChild === child) activeChild = null;
       event.sender.send("fid-download:log", `[錯誤] 無法啟動下載工具:${err.message}`);
       resolve({ ok: false, resultPath: null });
     });
 
     child.on("close", (code) => {
+      if (activeChild === child) activeChild = null;
       resolve({ ok: code === 0 && Boolean(resultPath), resultPath });
     });
   });
+});
+
+ipcMain.handle("fid-download:cancel", async () => {
+  killActiveChild();
+  return true;
 });
 
 ipcMain.handle("fid-download:open-folder", async (_event, targetPath) => {
@@ -104,6 +134,10 @@ ipcMain.handle("fid-download:read-file", async (_event, targetPath) => {
 });
 
 app.whenReady().then(createMainWindow);
+
+app.on("before-quit", () => {
+  killActiveChild();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

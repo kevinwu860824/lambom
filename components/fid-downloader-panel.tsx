@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx-js-style";
-import { Download, FileSpreadsheet, Plus, Upload, X as XIcon } from "lucide-react";
+import { Download, FileSpreadsheet, Plus, Square, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseModulesWorkbook } from "@/lib/bom-parse";
 import { autoMatchKeyParts, lookupMachineForFid, saveMachineForFid, uploadBomEntry } from "@/lib/bom";
@@ -20,6 +20,7 @@ interface FidDownloaderApi {
   onLog: (callback: (line: string) => void) => () => void;
   openFolder: (filePath: string) => Promise<void>;
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  cancel: () => Promise<boolean>;
 }
 
 declare global {
@@ -28,7 +29,7 @@ declare global {
   }
 }
 
-type QueueStatus = "queued" | "running" | "done" | "error";
+type QueueStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 interface QueueItem {
   id: string;
@@ -71,6 +72,7 @@ export function FidDownloaderPanel({
   const logRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cancelRequestedRef = useRef(false);
 
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
@@ -206,12 +208,22 @@ export function FidDownloaderPanel({
     }
   }
 
+  function cancelQueue() {
+    if (!processing) return;
+    cancelRequestedRef.current = true;
+    window.fidDownloader?.cancel();
+    setLog((prev) => `${prev}\n已送出取消要求,正在中止目前這一筆(剩下的佇列不會繼續處理)...\n`);
+  }
+
   async function processQueue() {
     if (processing || queue.length === 0 || !window.fidDownloader) return;
     setProcessing(true);
+    cancelRequestedRef.current = false;
     setLog((prev) => `${prev}\n開始處理佇列,共 ${queue.length} 台...\n`);
 
     for (let i = 0; i < queue.length; i++) {
+      if (cancelRequestedRef.current) break;
+
       const item = queue[i];
       setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "running" } : q)));
       setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo}(FID ${item.fid})===\n`);
@@ -219,6 +231,11 @@ export function FidDownloaderPanel({
       try {
         setLog((prev) => `${prev}--- 完整 BOM ---\n`);
         const toolResult = await window.fidDownloader.start({ fid: item.fid, mode: "tool" });
+        if (cancelRequestedRef.current) {
+          setLog((prev) => `${prev}已取消。\n`);
+          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
+          break;
+        }
         setLog((prev) =>
           toolResult.ok && toolResult.resultPath
             ? `${prev}完整 BOM 完成:${toolResult.resultPath}\n`
@@ -227,6 +244,11 @@ export function FidDownloaderPanel({
 
         setLog((prev) => `${prev}--- Modules ---\n`);
         const modulesResult = await window.fidDownloader.start({ fid: item.fid, mode: "modules" });
+        if (cancelRequestedRef.current) {
+          setLog((prev) => `${prev}已取消。\n`);
+          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
+          break;
+        }
         if (!modulesResult.ok || !modulesResult.resultPath) {
           throw new Error("Modules 下載失敗,請檢查上面的訊息");
         }
@@ -252,7 +274,9 @@ export function FidDownloaderPanel({
       }
     }
 
-    setLog((prev) => `${prev}\n全部處理完成。\n`);
+    const wasCancelled = cancelRequestedRef.current;
+    setLog((prev) => `${prev}\n${wasCancelled ? "已取消,處理停止。" : "全部處理完成。"}\n`);
+    cancelRequestedRef.current = false;
     setProcessing(false);
   }
 
@@ -344,6 +368,7 @@ export function FidDownloaderPanel({
                     失敗
                   </span>
                 )}
+                {item.status === "cancelled" && <span className="text-muted-foreground text-xs">已取消</span>}
                 {item.status === "done" && item.modulesResultPath && (
                   <Button
                     size="sm"
@@ -363,10 +388,18 @@ export function FidDownloaderPanel({
           </div>
         )}
 
-        <Button onClick={processQueue} disabled={processing || queue.length === 0} className="mb-3">
-          <Download className="h-4 w-4" />
-          {processing ? "下載中…" : `下載(${queue.length} 台)`}
-        </Button>
+        <div className="mb-3 flex items-center gap-2">
+          <Button onClick={processQueue} disabled={processing || queue.length === 0}>
+            <Download className="h-4 w-4" />
+            {processing ? "下載中…" : `下載(${queue.length} 台)`}
+          </Button>
+          {processing && (
+            <Button variant="destructive" onClick={cancelQueue}>
+              <Square className="h-4 w-4" />
+              取消
+            </Button>
+          )}
+        </div>
 
         <div
           ref={logRef}
