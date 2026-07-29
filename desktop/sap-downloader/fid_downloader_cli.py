@@ -722,10 +722,15 @@ def read_zbom_table(session):
     in turn, since different characteristic types render as different
     control types. Rows where the name starts with "_____" are section
     separators, not real options."""
+    log("ZBOM:   fetching table object...")
     table = session.findById(ZBOM_TABLE_ID)
+    log("ZBOM:   reading VisibleRowCount...")
     visible_rows = table.VisibleRowCount
+    log("ZBOM:   reading RowCount...")
     row_count = table.RowCount
+    log("ZBOM:   reading Columns...")
     cols = [table.Columns(c).Name for c in range(table.Columns.Count)]
+    log(f"ZBOM:   table ready: {row_count} row(s), columns: {cols}")
 
     seen_keys = set()
     ordered_rows = []
@@ -856,12 +861,13 @@ def extract_zbom_sections(session):
             node_text = node_key
         # Deliberately does NOT set tree.selectedNode first — a real,
         # working recording of this same screen (on this same SO, N5750)
-        # only ever calls doubleClickNode directly. Setting selectedNode
-        # beforehand reproduced the exact generic COM "server threw an
-        # exception" seen in real testing on both FID 255720 and 255709
-        # (the recording's own machine), so selectedNode is likely a
-        # read-only property on this particular tree control.
+        # only ever calls doubleClickNode directly, never selectedNode. That
+        # removal alone didn't clear the error in real testing though, so
+        # the actual failing call is still unconfirmed — see the added
+        # logging below and inside read_zbom_table, which narrows it down
+        # to one specific line on the next test run.
         tree.doubleClickNode(node_key)
+        log(f"ZBOM: double-clicked node {node_key!r}, reading its table...")
         time.sleep(0.3)
 
         rows = read_zbom_table(session)
