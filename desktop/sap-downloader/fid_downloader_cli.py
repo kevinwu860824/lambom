@@ -180,8 +180,11 @@ def open_ib53_with_fid(session, fid):
     session.findById("wnd[0]").sendVKey(4)  # F4 -> search help
     time.sleep(1)
 
-    # Tab 5 = "F: Equipment by technical ID number"
-    session.findById("wnd[1]/usr/tabsG_SELONETABSTRIP/tabpTAB005").select()
+    # Tab 5 = "F: Equipment by technical ID number" — a real, working
+    # recording of this exact flow types straight into this field without
+    # ever calling .select() on the tab first, so this doesn't either
+    # (the field is reachable via its full path regardless of which tab is
+    # visually active).
     session.findById(
         "wnd[1]/usr/tabsG_SELONETABSTRIP/tabpTAB005"
         "/ssubSUBSCR_PRESEL:SAPLSDH4:0220/sub:SAPLSDH4:0220/txtG_SELFLD_TAB-LOW[0,24]"
@@ -196,7 +199,20 @@ def open_ib53_with_fid(session, fid):
 
 def export_installed_base(session, save_path, filename):
     log("IB53: expanding the installed-base tree...")
-    tree = session.findById("wnd[0]/shellcont/shell/shellcont[1]/shell[0]")
+    # The rest of this function is otherwise identical to a real, working
+    # recording of this exact flow (control IDs, order, everything) — a
+    # failure here on a large installed-base tree (many modules/parts) but
+    # not on smaller ones points at the tree control simply not being ready
+    # yet, rather than a wrong ID, so retry instead of grabbing it once.
+    tree = None
+    for attempt in range(15):
+        try:
+            tree = session.findById("wnd[0]/shellcont/shell/shellcont[1]/shell[0]")
+            break
+        except Exception:
+            time.sleep(1)
+    if tree is None:
+        raise RuntimeError("Installed-base tree control not found — the equipment screen may not have finished loading.")
     tree.pressButton("IBOCX_AUFR")
     tree.pressContextButton("&PRINT_BACK")
     tree.selectContextMenuItem("&PRINT_PREV_ALL")
