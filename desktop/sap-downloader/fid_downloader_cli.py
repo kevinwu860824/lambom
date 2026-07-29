@@ -787,6 +787,33 @@ def get_zbom_section_name(session, fallback):
     return fallback
 
 
+def _enumerate_zbom_node_keys(tree):
+    """GetAllNodeKeys() is the documented way to list every node, but it
+    hasn't been confirmed to work on this particular tree control in real
+    testing — a real SAP GUI Scripting recording of this same screen only
+    ever addresses a node by a literal zero-padded key ("00000001"), never
+    via GetAllNodeKeys(). If the real method isn't available/throws, fall
+    back to probing sequential zero-padded keys (the same format the
+    recording uses) until one fails to resolve."""
+    try:
+        keys = list(tree.GetAllNodeKeys())
+        if keys:
+            return keys
+        log("ZBOM: GetAllNodeKeys() returned no nodes, falling back to sequential node keys...")
+    except Exception as e:
+        log(f"ZBOM: GetAllNodeKeys() failed ({e}), falling back to sequential node keys...")
+
+    keys = []
+    for i in range(1, 100):
+        key = f"{i:08d}"
+        try:
+            tree.GetNodeTextByKey(key)
+        except Exception:
+            break
+        keys.append(key)
+    return keys
+
+
 def extract_zbom_sections(session):
     """Walks every node in the configuration tree, reading that node's
     characteristic-values table into one "section" each. Duplicate
@@ -796,12 +823,21 @@ def extract_zbom_sections(session):
     except Exception:
         raise RuntimeError("Tree control not found — the Configuration page doesn't appear to be open.")
 
-    all_node_keys = list(tree.GetAllNodeKeys())
+    log("ZBOM: enumerating configuration tree nodes...")
+    all_node_keys = _enumerate_zbom_node_keys(tree)
+    log(f"ZBOM: found {len(all_node_keys)} node(s): {all_node_keys}")
+    if not all_node_keys:
+        raise RuntimeError("No tree nodes found — check whether the Configuration page's tree actually has entries.")
+
     sections = []
     seen_signatures = set()
 
     for node_key in all_node_keys:
-        node_text = tree.GetNodeTextByKey(node_key)
+        log(f"ZBOM: reading node {node_key!r}...")
+        try:
+            node_text = tree.GetNodeTextByKey(node_key)
+        except Exception:
+            node_text = node_key
         tree.selectedNode = node_key
         tree.doubleClickNode(node_key)
         time.sleep(0.3)
