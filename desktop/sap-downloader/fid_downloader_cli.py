@@ -854,7 +854,13 @@ def extract_zbom_sections(session):
             node_text = tree.GetNodeTextByKey(node_key)
         except Exception:
             node_text = node_key
-        tree.selectedNode = node_key
+        # Deliberately does NOT set tree.selectedNode first — a real,
+        # working recording of this same screen (on this same SO, N5750)
+        # only ever calls doubleClickNode directly. Setting selectedNode
+        # beforehand reproduced the exact generic COM "server threw an
+        # exception" seen in real testing on both FID 255720 and 255709
+        # (the recording's own machine), so selectedNode is likely a
+        # read-only property on this particular tree control.
         tree.doubleClickNode(node_key)
         time.sleep(0.3)
 
