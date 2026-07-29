@@ -245,7 +245,7 @@ export default function MachinesPage() {
                         )}
                       </div>
 
-                      <Label className="mt-4 mb-1.5 block">Subparts (filename)</Label>
+                      <Label className="mt-4 mb-1.5 block">Subparts</Label>
                       <div className="grid gap-2 pl-2">
                         {group.subparts.map((entry) => (
                           <div key={entry.bomId} className="flex items-center gap-2">

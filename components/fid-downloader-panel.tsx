@@ -5,7 +5,14 @@ import * as XLSX from "xlsx-js-style";
 import { Download, FileSpreadsheet, Plus, Square, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { parseModulesWorkbook, parseXlsxBom, parseZbomWorkbook } from "@/lib/bom-parse";
-import { autoMatchKeyParts, lookupFidEntry, saveFidEntry, uploadBomEntry, uploadZbomEntry } from "@/lib/bom";
+import {
+  autoMatchKeyParts,
+  lookupFidEntry,
+  saveFidEntry,
+  uploadBomEntry,
+  uploadFullBomEntry,
+  uploadZbomEntry,
+} from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -55,7 +62,8 @@ class CancelledError extends Error {}
  *      FID's SAP search only ever has to run once); on a cache miss it runs
  *      the CLI's "resolve" mode and saves the result back to the cache
  *      immediately. A failure here fails the whole item.
- *   2. Full BOM (IB53) — stored for reference, not used in comparisons.
+ *   2. Full BOM (IB53) — stored in its own table (full_bom_items), separate
+ *      from Modules and not shown in the Subparts list at all.
  *      A failure here only logs a warning; the item continues.
  *   3. Modules (ZOOBOM_CE_FMT, using the SO from step 1) — each module sheet
  *      becomes its own subpart, then key-part auto-matching runs. A failure
@@ -232,7 +240,7 @@ export function FidDownloaderPanel({
     try {
       const buffer = await window.fidDownloader!.readFile(result.resultPath);
       const parsed = parseXlsxBom(buffer);
-      await uploadBomEntry(getSupabase(), "Full BOM", parsed, machineName, "tool_bom");
+      await uploadFullBomEntry(getSupabase(), machineName, parsed);
       await deleteLocalFile(result.resultPath);
       setLog((prev) => `${prev}Full BOM uploaded (${parsed.items.length} items).\n`);
     } catch (err) {

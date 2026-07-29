@@ -10,15 +10,12 @@ export interface BomItem {
   uom: string | null;
 }
 
-export type SubpartKind = "module" | "tool_bom";
-
 export interface BomEntry {
   bomId: number;
   source_file: string;
   machine: string;
   items: BomItem[];
   itemsLoaded: boolean;
-  subpartKind: SubpartKind;
 }
 
 export interface MachineGroup {
@@ -170,7 +167,7 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
 }> {
   const { data: machines, error } = await supabase
     .from("bom_machines")
-    .select("id,machine_name,source_file,subpart_kind");
+    .select("id,machine_name,source_file");
 
   if (error) {
     throw new Error(`Failed to load data: ${error.message}`);
@@ -186,7 +183,6 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
     machine: machine.machine_name,
     items: [],
     itemsLoaded: false,
-    subpartKind: (machine.subpart_kind as SubpartKind | null) ?? "module",
   }));
 
   const grouped = new Map<string, BomEntry[]>();
@@ -394,17 +390,14 @@ export async function autoMatchKeyParts(
 /**
  * Insert-or-overwrite one (machine_name, source_file) BOM into bom_machines
  * + bom_items. Shared by the manual upload dialog and the SAP Download
- * panel's auto-upload, so both paths always agree on overwrite/insert
- * semantics. `subpartKind` defaults to "module" (the manual dialog and every
- * existing caller before Full BOM auto-upload was added); the SAP Download
- * panel passes "tool_bom" explicitly when uploading a Full BOM.
+ * panel's Modules auto-upload, so both paths always agree on
+ * overwrite/insert semantics.
  */
 export async function uploadBomEntry(
   supabase: SupabaseClient,
   sourceFile: string,
   parsed: ParsedBom,
-  machineName: string,
-  subpartKind: SubpartKind = "module"
+  machineName: string
 ): Promise<void> {
   const { data: existing, error: findError } = await supabase
     .from("bom_machines")
@@ -423,7 +416,6 @@ export async function uploadBomEntry(
       .update({
         root_part_no: parsed.rootPartNo,
         root_description: parsed.rootDescription,
-        subpart_kind: subpartKind,
       })
       .eq("id", bomId);
     if (updateError) throw new Error(updateError.message);
@@ -440,7 +432,6 @@ export async function uploadBomEntry(
         source_file: sourceFile,
         root_part_no: parsed.rootPartNo,
         root_description: parsed.rootDescription,
-        subpart_kind: subpartKind,
       })
       .select("id")
       .single();
@@ -454,6 +445,30 @@ export async function uploadBomEntry(
       supabase.from("bom_items").insert(batch)
     );
     if (insertItemsError) throw new Error(insertItemsError.message);
+  }
+}
+
+/**
+ * Insert-or-overwrite one machine's Full BOM into full_bom_items — a
+ * separate table from bom_machines/bom_items, since Full BOM is always a
+ * single whole-machine explosion (no source_file/multiple-subparts concept
+ * the way Modules has), and isn't meant to show up alongside Modules in the
+ * Subparts list at all.
+ */
+export async function uploadFullBomEntry(
+  supabase: SupabaseClient,
+  machineName: string,
+  parsed: ParsedBom
+): Promise<void> {
+  const { error: deleteError } = await withRetry(() =>
+    supabase.from("full_bom_items").delete().eq("machine_name", machineName)
+  );
+  if (deleteError) throw new Error(deleteError.message);
+
+  const rows = parsed.items.map((item) => ({ ...item, machine_name: machineName }));
+  for (const batch of chunk(rows, 500)) {
+    const { error: insertError } = await withRetry(() => supabase.from("full_bom_items").insert(batch));
+    if (insertError) throw new Error(insertError.message);
   }
 }
 
