@@ -753,20 +753,28 @@ def read_zbom_table(session):
             if scroll_pos + row_idx >= row_count:
                 break
 
-            row_data = {}
-            all_empty = True
-            for c, col_name in enumerate(cols):
-                cell_text = ""
-                for prefix in ("ctxt", "txt", "lbl"):
-                    try:
-                        cell = session.findById(f"{ZBOM_TABLE_ID}/{prefix}{col_name}[{c},{row_idx}]")
-                    except Exception:
-                        continue
-                    cell_text = cell.text
-                    break
-                row_data[col_name] = cell_text
-                if cell_text.strip():
-                    all_empty = False
+            try:
+                row_data = {}
+                all_empty = True
+                for c, col_name in enumerate(cols):
+                    cell_text = ""
+                    for prefix in ("ctxt", "txt", "lbl"):
+                        try:
+                            cell = session.findById(f"{ZBOM_TABLE_ID}/{prefix}{col_name}[{c},{row_idx}]")
+                            # .text has to be read inside the same try as
+                            # findById: findById can resolve to a control
+                            # that isn't a text-bearing type (e.g. a button
+                            # column like PB_VWHY), and .text on that throws
+                            # uncaught if it's not guarded here too.
+                            cell_text = cell.text
+                        except Exception:
+                            continue
+                        break
+                    row_data[col_name] = cell_text
+                    if cell_text.strip():
+                        all_empty = False
+            except Exception as e:
+                raise RuntimeError(f"Failed reading table row {row_idx} (scroll_pos={scroll_pos}): {e}") from e
 
             if all_empty:
                 continue
