@@ -753,19 +753,33 @@ def read_zbom_table(session):
         actual_scroll_pos = min(scroll_pos, scroll_max)
         log(f"ZBOM:   scanning from scrollbar position {actual_scroll_pos}...")
         if actual_scroll_pos > 0:
-            try:
-                pythoncom.PumpWaitingMessages()
-                for attempt in range(3):
-                    if attempt > 0:
-                        time.sleep(1.0)
-                        pythoncom.PumpWaitingMessages()
-                        table = session.findById(ZBOM_TABLE_ID)
+            # This retry loop previously always exited after one attempt
+            # regardless of success — if the Position assignment threw, the
+            # exception skipped straight past the trailing `break` to the
+            # caller, so no retry ever actually happened. Real testing on a
+            # 29-row table showed even the scrollbar's own reported Maximum
+            # can transiently fail to be set (worked at position 12, failed
+            # at 17/24), so this now genuinely retries with a fresh table
+            # reference instead of only pretending to.
+            pythoncom.PumpWaitingMessages()
+            last_error = None
+            for attempt in range(3):
+                if attempt > 0:
+                    time.sleep(1.0)
+                    pythoncom.PumpWaitingMessages()
+                    table = session.findById(ZBOM_TABLE_ID)
+                try:
                     table.VerticalScrollbar.Position = actual_scroll_pos
                     time.sleep(0.3)
                     pythoncom.PumpWaitingMessages()
+                    last_error = None
                     break
-            except Exception as e:
-                raise RuntimeError(f"Failed to scroll to position {actual_scroll_pos}: {e}") from e
+                except Exception as e:
+                    last_error = e
+            if last_error is not None:
+                raise RuntimeError(
+                    f"Failed to scroll to position {actual_scroll_pos} after 3 attempts: {last_error}"
+                ) from last_error
 
         try:
             row_range = range(visible_rows)
