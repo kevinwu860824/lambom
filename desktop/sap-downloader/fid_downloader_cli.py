@@ -164,6 +164,7 @@ def ensure_sap_connected(max_wait_seconds=120):
 
 
 def open_ib53_with_fid(session, fid):
+    log("IB53: opening transaction...")
     session.findById("wnd[0]/tbar[0]/okcd").text = "/nIB53"
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
@@ -173,6 +174,7 @@ def open_ib53_with_fid(session, fid):
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
 
+    log(f"IB53: searching for FID {fid}...")
     session.findById("wnd[0]/usr/subENTRANCE:SAPLIBOF_R3:0100/ctxtRIBOFO-EQUNO").setFocus()
     session.findById("wnd[0]/usr/subENTRANCE:SAPLIBOF_R3:0100/ctxtRIBOFO-EQUNO").caretPosition = 0
     session.findById("wnd[0]").sendVKey(4)  # F4 -> search help
@@ -189,14 +191,17 @@ def open_ib53_with_fid(session, fid):
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(3)
+    log("IB53: equipment loaded.")
 
 
 def export_installed_base(session, save_path, filename):
+    log("IB53: expanding the installed-base tree...")
     tree = session.findById("wnd[0]/shellcont/shell/shellcont[1]/shell[0]")
     tree.pressButton("IBOCX_AUFR")
     tree.pressContextButton("&PRINT_BACK")
     tree.selectContextMenuItem("&PRINT_PREV_ALL")
 
+    log("IB53: opening the export menu...")
     session.findById("wnd[0]/mbar/menu[3]/menu[5]/menu[2]/menu[1]").select()
 
     session.findById(
@@ -204,6 +209,7 @@ def export_installed_base(session, save_path, filename):
     ).select()
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
 
+    log(f"IB53: saving to {save_path}\\{filename}...")
     session.findById("wnd[1]/usr/ctxtDY_PATH").text = save_path
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = filename
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
@@ -313,6 +319,17 @@ def resolve_so_po_from_fid(session, fid):
         target_row, target_so = fallback_row, fallback_so
 
     log(f"Resolved SO={target_so!r} PO={target_po!r} from FID {fid} (row {target_row}).")
+
+    # The F4 search-help popup (wnd[1]) is still open at this point. Whatever
+    # runs next in this same SAP session (a separate CLI process attaching to
+    # the same live session) starts by typing straight into wnd[0], which
+    # fails with a generic "control could not be found by id" error if a
+    # modal popup is still sitting on top of it — so always close it here
+    # rather than leaving that to the next caller.
+    try:
+        session.findById("wnd[1]").close()
+    except Exception:
+        pass
 
     return target_so, target_po
 
@@ -642,7 +659,14 @@ ZBOM_CONFIG_BUTTON_ID = (
 def open_zbom_config(session, so):
     """Navigate to VA03 for the given SO, open Item Overview, then the
     Configuration screen for that item — leaves the session with the
-    characteristic-values table (ZBOM_TABLE_ID) visible and focused."""
+    characteristic-values table (ZBOM_TABLE_ID) visible and focused.
+
+    Each step is logged individually (rather than only logging on success at
+    the end) so that if a findById call fails, the log shows exactly which
+    step it happened on instead of just a generic COM error with no context —
+    this whole flow is newly ported and hasn't been exercised against real
+    SAP yet, so precise failure location matters more than usual here."""
+    log(f"ZBOM: opening VA03 for SO {so}...")
     session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
@@ -650,12 +674,16 @@ def open_zbom_config(session, so):
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
 
+    log("ZBOM: opening Item Overview...")
     session.findById("wnd[0]").maximize()
     session.findById("wnd[0]/tbar[1]/btn[6]").press()  # Item Overview
     time.sleep(1)
+
+    log("ZBOM: opening Configuration...")
     session.findById(ZBOM_CONFIG_BUTTON_ID).press()  # Configuration
     time.sleep(1)
 
+    log("ZBOM: focusing the characteristics table...")
     session.findById(f"{ZBOM_TABLE_ID}/ctxtRCTMS-MWERT[1,2]").setFocus()
     session.findById(f"{ZBOM_TABLE_ID}/ctxtRCTMS-MWERT[1,2]").caretPosition = 6
 
