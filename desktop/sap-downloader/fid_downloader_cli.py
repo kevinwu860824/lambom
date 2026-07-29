@@ -730,26 +730,35 @@ def read_zbom_table(session):
     row_count = table.RowCount
     log("ZBOM:   reading Columns...")
     cols = [table.Columns(c).Name for c in range(table.Columns.Count)]
-    log(f"ZBOM:   table ready: {row_count} row(s), columns: {cols}")
+    log(f"ZBOM:   table ready: visible_rows={visible_rows!r}, row_count={row_count!r}, columns={cols}")
 
     seen_keys = set()
     ordered_rows = []
     scroll_pos = 0
 
     while scroll_pos < row_count:
+        log(f"ZBOM:   scanning from scroll_pos={scroll_pos}...")
         if scroll_pos > 0:
-            pythoncom.PumpWaitingMessages()
-            for attempt in range(3):
-                if attempt > 0:
-                    time.sleep(1.0)
-                    pythoncom.PumpWaitingMessages()
-                    table = session.findById(ZBOM_TABLE_ID)
-                table.VerticalScrollbar.Position = scroll_pos
-                time.sleep(0.3)
+            try:
                 pythoncom.PumpWaitingMessages()
-                break
+                for attempt in range(3):
+                    if attempt > 0:
+                        time.sleep(1.0)
+                        pythoncom.PumpWaitingMessages()
+                        table = session.findById(ZBOM_TABLE_ID)
+                    table.VerticalScrollbar.Position = scroll_pos
+                    time.sleep(0.3)
+                    pythoncom.PumpWaitingMessages()
+                    break
+            except Exception as e:
+                raise RuntimeError(f"Failed to scroll to position {scroll_pos}: {e}") from e
 
-        for row_idx in range(visible_rows):
+        try:
+            row_range = range(visible_rows)
+        except Exception as e:
+            raise RuntimeError(f"range(visible_rows) failed, visible_rows={visible_rows!r}: {e}") from e
+
+        for row_idx in row_range:
             if scroll_pos + row_idx >= row_count:
                 break
 
@@ -790,7 +799,10 @@ def read_zbom_table(session):
             seen_keys.add(row_key)
             ordered_rows.append({"option_type": name, "option_selection": value})
 
-        scroll_pos += visible_rows
+        try:
+            scroll_pos += visible_rows
+        except Exception as e:
+            raise RuntimeError(f"scroll_pos += visible_rows failed, visible_rows={visible_rows!r}: {e}") from e
 
     try:
         table.VerticalScrollbar.Position = 0
