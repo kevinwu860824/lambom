@@ -97,8 +97,14 @@ export default function Home() {
     return terms.every((term) => haystack.includes(term));
   }
 
+  // Full BOM subparts are stored for reference but excluded here — they're
+  // known to include a lot of logistics/admin noise, so they shouldn't be
+  // selectable in machine-vs-machine comparisons (still visible/manageable
+  // on the /machines page, which reads bom_machines directly, unfiltered).
   function subpartsFor(machine: string): BomEntry[] {
-    return machineGroups.find((g) => g.machine === machine)?.subparts ?? [];
+    return (
+      machineGroups.find((g) => g.machine === machine)?.subparts.filter((s) => s.subpartKind !== "tool_bom") ?? []
+    );
   }
 
   async function ensureBomItemsLoaded(bom: BomEntry | null) {
@@ -138,6 +144,7 @@ export default function Home() {
       machine,
       items: valid.flatMap((e) => e.items),
       itemsLoaded: true,
+      subpartKind: "module",
     };
   }
 
@@ -240,7 +247,7 @@ export default function Home() {
 
   useEffect(() => {
     loadData().catch((err) => {
-      setInitError(`Failed to load from Supabase: ${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
     loadKeyParts();
@@ -251,7 +258,7 @@ export default function Home() {
     setInitLoading(true);
     setInitError(null);
     loadData().catch((err) => {
-      setInitError(`Failed to load from Supabase: ${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
   }

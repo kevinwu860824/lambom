@@ -71,6 +71,16 @@ function getDownloaderExePath() {
   return path.join(__dirname, "..", "sap-downloader", "dist", "fid_downloader_cli.exe");
 }
 
+function getScratchDir() {
+  // Deliberately NOT the user's visible Downloads folder — SAP export still
+  // has to write a real file somewhere before we can read it, but once it's
+  // parsed and uploaded there's nothing left for the user to see or manage
+  // locally, so this stays in a hidden temp location instead.
+  const dir = path.join(app.getPath("temp"), "lambom-sap-downloads");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
   const exePath = getDownloaderExePath();
 
@@ -82,7 +92,7 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
     return { ok: false, resultPath: null };
   }
 
-  const outDir = app.getPath("downloads");
+  const outDir = getScratchDir();
 
   const args = ["--out-dir", outDir, "--mode", mode];
   if (fid) args.unshift(fid);
@@ -92,14 +102,26 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
     const child = spawn(exePath, args);
     activeChild = child;
     let resultPath = null;
+    let resolvedSo = null;
+    let resolvedPo = null;
 
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf-8");
       for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
-        const match = line.match(/^RESULT_PATH:(.+)$/);
-        if (match) {
-          resultPath = match[1].trim();
+        const resultMatch = line.match(/^RESULT_PATH:(.+)$/);
+        if (resultMatch) {
+          resultPath = resultMatch[1].trim();
+          continue;
+        }
+        const soMatch = line.match(/^RESOLVED_SO:(.*)$/);
+        if (soMatch) {
+          resolvedSo = soMatch[1].trim();
+          continue;
+        }
+        const poMatch = line.match(/^RESOLVED_PO:(.*)$/);
+        if (poMatch) {
+          resolvedPo = poMatch[1].trim();
           continue;
         }
         event.sender.send("fid-download:log", line);
@@ -118,7 +140,7 @@ ipcMain.handle("fid-download:start", async (event, { fid, mode, so }) => {
 
     child.on("close", (code) => {
       if (activeChild === child) activeChild = null;
-      resolve({ ok: code === 0 && Boolean(resultPath), resultPath });
+      resolve({ ok: code === 0, resultPath, so: resolvedSo, po: resolvedPo });
     });
   });
 });
@@ -135,6 +157,14 @@ ipcMain.handle("fid-download:open-folder", async (_event, targetPath) => {
 ipcMain.handle("fid-download:read-file", async (_event, targetPath) => {
   const buffer = fs.readFileSync(targetPath);
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+});
+
+ipcMain.handle("fid-download:delete-file", async (_event, targetPath) => {
+  try {
+    fs.unlinkSync(targetPath);
+  } catch {
+    // Best-effort cleanup only — a failure here shouldn't surface as an app error.
+  }
 });
 
 app.whenReady().then(createMainWindow);

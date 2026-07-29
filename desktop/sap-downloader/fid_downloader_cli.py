@@ -11,16 +11,22 @@ Usage:
     fid_downloader_cli.exe <FID> [--out-dir OUTPUT_DIR]                      (default tool mode, Full BOM)
     fid_downloader_cli.exe --mode modules --so <SO> [--out-dir OUTPUT_DIR]   (Module BOM, ZOOBOM_CE_FMT)
     fid_downloader_cli.exe <FID> --mode modules [--out-dir OUTPUT_DIR]      (Module BOM, leave SO blank to resolve it from FID)
+    fid_downloader_cli.exe <FID> --mode resolve                            (SO/PO lookup only, no download)
+    fid_downloader_cli.exe --mode zbom --so <SO> [--out-dir OUTPUT_DIR]     (ZBOM configuration options, via VA03)
 
 Behavior:
 - Progress messages are printed to stdout one line at a time (for the caller to display live).
-- Both modes always produce exactly ONE clean xlsx in the end (intermediate
-  files and raw multi-file output are cleaned up automatically): tool mode
-  produces `<FID>.xlsx`; modules mode produces `<SO>_modules.xlsx`, split
-  into sheets by module, with the coordinate issue already fixed. The last
-  line on success is always `RESULT_PATH:<full path to the output xlsx>`,
-  so the caller can extract the result file's location from this marker
-  instead of guessing from other output.
+- tool/modules/zbom modes each produce exactly ONE clean xlsx in the end
+  (intermediate files and raw multi-file output are cleaned up
+  automatically): tool mode produces `<FID>.xlsx`; modules mode produces
+  `<SO>_modules.xlsx`, split into sheets by module; zbom mode produces
+  `<SO>_zbom.xlsx`, one flat sheet of Section/Node Key/Option Type/Option
+  Selection rows. The last line on success is always
+  `RESULT_PATH:<full path to the output xlsx>`, so the caller can extract
+  the result file's location from this marker instead of guessing from
+  other output.
+- resolve mode does no download at all — it just prints `RESOLVED_SO:<so>`
+  and `RESOLVED_PO:<po>` lines for the caller to parse and cache.
 - Any failure prints `[Error] ...` and exits with a non-zero exit code.
 
 Prerequisites (same as fid_downloader_gui.py):
@@ -45,6 +51,7 @@ import time
 import zipfile
 
 import win32com.client
+import pythoncom
 import openpyxl
 
 # When run as a child process by Electron, stdout/stderr aren't attached to a
@@ -210,114 +217,104 @@ def export_installed_base(session, save_path, filename):
     session.findById("wnd[0]").sendVKey(3)
 
 
-def resolve_so_from_fid(session, fid):
+def resolve_so_po_from_fid(session, fid):
     """
-    Resolve the corresponding SO from a FID — open VA03, press F4 on the
-    Sales Document field, switch to the "A: Sales document according to
+    Resolve the corresponding SO and PO from a FID — open VA03, press F4 on
+    the Sales Document field, switch to the "A: Sales document according to
     customer PO number" tab, search using the FID as a wildcard (<FID>*),
-    select the "bottom-most" row in the results list, then read back VA03's
-    order field (VBAK-VBELN) to confirm the selected SO (if a FID's BOM has
-    been revised, the search may return more than one result — confirmed
-    with the user that the bottom-most one should always be picked).
+    then scan the results list for the first fully-populated hit.
 
-    This list's elements are addressed via lbl[row,col], where the row/col
-    numbers are NOT a "which result number" sequence — they're internal
-    screen coordinates. Verified against 4 real cases using SAP GUI's Script
-    Recording and Playback:
-      - FID 255678, 1 result only: the sole result is at lbl[1,3] (col 3)
-      - FID 246845, 2 results: the top one is at lbl[1,4], the bottom one at
-        lbl[130,4] (col 4)
-      - FID 245828, 5 results: one of them is at lbl[1,7] (col 7)
-    Initially assumed the "column" switched based on "single vs multiple
-    results" (single uses 3, multiple uses 4), but 245828 is also multiple
-    results yet uses column 7, disproving that assumption — the column is
-    actually different for each search, with no fixed value, so it can't be
-    guessed. Changed to:
-      - Column: scan a range of columns at row 1 first to find which column
-        this search's results actually use (whichever has text first). The
-        scan range starts at 2, not 0 — testing showed that when FID 245828
-        scanned to column 1, that column turned out to be unrelated to the
-        data (possibly a leftover cursor-box artifact from the currently
-        selected cell); selecting it left VA03 unable to read an SO. The 3
-        real verified columns (3, 4, 7) are never below 3, so the floor was
-        raised to 2 to exclude this kind of false positive.
-      - Row: once the column is found, starting from row 1 and using that
-        same column, step down by 129 per additional result (1, 130,
-        259, ...) to find the bottom-most row — this spacing was derived
-        from 246845's 2 real results (both the 1st and 2nd line up); 3+
-        results hasn't actually been verified yet.
-      - Safety net: if VA03's order field can't be read after selecting, it
-        raises an error right away (never proceeds with an unverified SO
-        value), so even if the column scan picks the wrong one, a wrong SO
-        never ends up mixed into the Supabase data.
+    This implementation is ported directly from a real, working reference
+    tool ("BOM Manager", an existing internal SAP-automation app) — its
+    compiled Python bytecode was disassembled to recover the exact
+    algorithm, rather than guessed:
+      - Pagination uses the popup's real scrollbar control
+        (`wnd[1]/usr` -> `.verticalScrollbar`, `.maximum`/`.position`),
+        not a guessed row-spacing constant.
+      - Each candidate index (`row_idx` from 3 to 59, up to 10 pages) is
+        checked at TWO fixed coordinates: `lbl[130, row_idx]` (SO-bearing
+        column) and `lbl[1, row_idx]` (PO-bearing column). The FIRST
+        row_idx where both are non-empty is the match (not the bottom-most
+        — an earlier version of this function picked the bottom-most row,
+        but the reference tool picks the first hit, and testing showed the
+        reference tool's approach succeeds on FIDs (e.g. 255720) where the
+        bottom-most-picking version failed with an empty-list error).
+      - If no row has both fields populated, the first row with just an
+        SO value is used as a fallback (PO left blank).
+
+    Every mode that calls this re-navigates to the SO fresh afterward
+    (ZOOBOM_CE_FMT / VA03 configuration both type the SO directly into
+    their own field), so this never needs to leave the matched row selected
+    in the popup.
     """
-    session.findById("wnd[0]/tbar[0]/okcd").text = "VA03"
-    session.findById("wnd[0]/tbar[0]/btn[0]").press()
+    session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(1)
     session.findById("wnd[0]").sendVKey(4)
     time.sleep(1)
 
-    session.findById(
+    session.findById("wnd[1]/usr/tabsG_SELONETABSTRIP/tabpTAB001").select()
+
+    search_field_id = (
         "wnd[1]/usr/tabsG_SELONETABSTRIP/tabpTAB001"
         "/ssubSUBSCR_PRESEL:SAPLSDH4:0220/sub:SAPLSDH4:0220/txtG_SELFLD_TAB-LOW[2,24]"
-    ).text = f"{fid}*"
-    session.findById("wnd[1]").sendVKey(0)
+    )
+    fid_search = f"{fid}*"
+    session.findById(search_field_id).text = fid_search
+    session.findById(search_field_id).setFocus()
+    session.findById(search_field_id).caretPosition = len(fid_search)
+    session.findById("wnd[1]/tbar[0]/btn[0]").press()
+    time.sleep(1)
 
-    ROW_STEP = 129
-    COL_RANGE = range(2, 20)
-
-    def label_text(row, col):
+    def cell_text(row, col):
         try:
             label = session.findById(f"wnd[1]/usr/lbl[{row},{col}]")
         except Exception:
-            return None
-        text = (label.text or "").strip()
-        return text if text else None
+            return ""
+        return (label.text or "").strip()
 
-    # The results list takes time to query/render — not noticeable when
-    # operating manually, but running automatically right after a Full BOM
-    # export can occasionally be slower than a fixed 1-second sleep, causing
-    # real results to be misjudged as an empty list. Changed to polling for
-    # up to 5 seconds (scanning columns every 0.5s), instead of a fixed
-    # 1-second sleep followed by a single check.
-    col = None
-    for _ in range(10):
-        for c in COL_RANGE:
-            if label_text(1, c) is not None:
-                col = c
-                break
-        if col is not None:
+    target_row = None
+    target_so = ""
+    target_po = ""
+    fallback_row = None
+    fallback_so = ""
+
+    try:
+        scrollbar = session.findById("wnd[1]/usr").verticalScrollbar
+    except Exception:
+        scrollbar = None
+    scroll_max = scrollbar.maximum if scrollbar is not None else 0
+    scroll_pos = 0
+
+    for _page in range(10):
+        for row_idx in range(3, 60):
+            so_val = cell_text(130, row_idx)
+            if not so_val:
+                continue
+            if fallback_row is None:
+                fallback_row = row_idx
+                fallback_so = so_val
+            po_val = cell_text(1, row_idx)
+            if not po_val:
+                continue
+            target_row, target_so, target_po = row_idx, so_val, po_val
             break
+        if target_row is not None:
+            break
+        if scrollbar is None or scroll_pos >= scroll_max:
+            break
+        scroll_pos = min(scroll_pos + 10, scroll_max)
+        scrollbar.position = scroll_pos
         time.sleep(0.5)
 
-    if col is None:
-        raise RuntimeError("Failed to resolve SO from FID — the search results list is empty, check the SAP screen.")
+    if target_row is None:
+        if fallback_row is None:
+            raise RuntimeError("Failed to resolve SO from FID — the search results list is empty, check the SAP screen.")
+        target_row, target_so = fallback_row, fallback_so
 
-    last_row = 1
-    count = 1
-    while True:
-        next_row = 1 + count * ROW_STEP
-        if label_text(next_row, col) is None:
-            break
-        last_row = next_row
-        count += 1
+    log(f"Resolved SO={target_so!r} PO={target_po!r} from FID {fid} (row {target_row}).")
 
-    log(f"Search found {count} result(s) (column {col}), selecting the bottom-most one.")
-    target = session.findById(f"wnd[1]/usr/lbl[{last_row},{col}]")
-    target.setFocus()
-    target.caretPosition = 0
-    session.findById("wnd[1]").sendVKey(2)
-
-    time.sleep(1)
-
-    so = (session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text or "").strip()
-    if not so:
-        raise RuntimeError(
-            "Failed to resolve SO from FID — VA03's order field came back empty; the screen "
-            "may be stuck needing manual confirmation on some list, check the SAP screen."
-        )
-
-    log(f"Resolved SO from VA03: {so}")
-    return so
+    return target_so, target_po
 
 
 def download_module_bom(session, so, out_dir):
@@ -619,9 +616,223 @@ def write_bom_xlsx(rows, out_path):
     wb.save(out_path)
 
 
+# ---------- ZBOM (SAP Variant Configuration options) ----------
+#
+# ZBOM is not a parts list — it's the machine's SAP LO-VC "Variant
+# Configuration" characteristic/value data (Sold-To Customer, Customer
+# Region, Platform Type, Position 1/2/3, etc.), reached via VA03 -> Item
+# Overview -> the Configuration button, one section per configurable node
+# in that order's structure. This whole section is ported from the same
+# reference tool as resolve_so_po_from_fid above, using its real, verified
+# control IDs and object-model calls (GuiTree/GuiTableControl), not guessed
+# coordinates.
+
+ZBOM_TABLE_ID = (
+    "wnd[0]/usr/subCE_INSTANCE:SAPLCEI0:0105"
+    "/subCHARACTERISTICS:SAPLCEI0:1400/tblSAPLCEI0CHARACTER_VALUES"
+)
+ZBOM_HEADER_ID = "wnd[0]/usr/subCE_INSTANCE:SAPLCEI0:0105/subHEADER:SAPMV45A:0460"
+ZBOM_SECTION_LABEL_ID = "wnd[0]/usr/subCE_INSTANCE:SAPLCEI0:0105/subHEADER:SAPLCUKO:7035/txtRCUKO-IMAKTX"
+ZBOM_CONFIG_BUTTON_ID = (
+    "wnd[0]/usr/tabsTAXI_TABSTRIP_OVERVIEW/tabpT\\02/ssubSUBSCREEN_BODY:SAPMV45A:4401"
+    "/subSUBSCREEN_TC:SAPMV45A:4900/subSUBSCREEN_BUTTONS:SAPMV45A:4050/btnBT_POCO"
+)
+
+
+def open_zbom_config(session, so):
+    """Navigate to VA03 for the given SO, open Item Overview, then the
+    Configuration screen for that item — leaves the session with the
+    characteristic-values table (ZBOM_TABLE_ID) visible and focused."""
+    session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(1)
+    session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text = so
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(1)
+
+    session.findById("wnd[0]").maximize()
+    session.findById("wnd[0]/tbar[1]/btn[6]").press()  # Item Overview
+    time.sleep(1)
+    session.findById(ZBOM_CONFIG_BUTTON_ID).press()  # Configuration
+    time.sleep(1)
+
+    session.findById(f"{ZBOM_TABLE_ID}/ctxtRCTMS-MWERT[1,2]").setFocus()
+    session.findById(f"{ZBOM_TABLE_ID}/ctxtRCTMS-MWERT[1,2]").caretPosition = 6
+
+
+def read_zbom_table(session):
+    """Reads every row of the characteristic-values table for whichever
+    configuration node is currently open, scrolling via the table's real
+    VerticalScrollbar (pumping COM messages so SAP actually redraws between
+    scroll steps). Each cell is looked up trying the ctxt/txt/lbl prefixes
+    in turn, since different characteristic types render as different
+    control types. Rows where the name starts with "_____" are section
+    separators, not real options."""
+    table = session.findById(ZBOM_TABLE_ID)
+    visible_rows = table.VisibleRowCount
+    row_count = table.RowCount
+    cols = [table.Columns(c).Name for c in range(table.Columns.Count)]
+
+    seen_keys = set()
+    ordered_rows = []
+    scroll_pos = 0
+
+    while scroll_pos < row_count:
+        if scroll_pos > 0:
+            pythoncom.PumpWaitingMessages()
+            for attempt in range(3):
+                if attempt > 0:
+                    time.sleep(1.0)
+                    pythoncom.PumpWaitingMessages()
+                    table = session.findById(ZBOM_TABLE_ID)
+                table.VerticalScrollbar.Position = scroll_pos
+                time.sleep(0.3)
+                pythoncom.PumpWaitingMessages()
+                break
+
+        for row_idx in range(visible_rows):
+            if scroll_pos + row_idx >= row_count:
+                break
+
+            row_data = {}
+            all_empty = True
+            for c, col_name in enumerate(cols):
+                cell_text = ""
+                for prefix in ("ctxt", "txt", "lbl"):
+                    try:
+                        cell = session.findById(f"{ZBOM_TABLE_ID}/{prefix}{col_name}[{c},{row_idx}]")
+                    except Exception:
+                        continue
+                    cell_text = cell.text
+                    break
+                row_data[col_name] = cell_text
+                if cell_text.strip():
+                    all_empty = False
+
+            if all_empty:
+                continue
+
+            name = row_data.get("RCTMS-MNAME", "").strip()
+            value = row_data.get("RCTMS-MWERT", "").strip()
+            if not name or not value or name.startswith("_____"):
+                continue
+
+            row_key = (name, value)
+            if row_key in seen_keys:
+                continue
+            seen_keys.add(row_key)
+            ordered_rows.append({"option_type": name, "option_selection": value})
+
+        scroll_pos += visible_rows
+
+    try:
+        table.VerticalScrollbar.Position = 0
+    except Exception:
+        pass
+
+    return ordered_rows
+
+
+def get_zbom_section_name(session, fallback):
+    try:
+        label = (session.findById(ZBOM_SECTION_LABEL_ID).text or "").strip()
+        if label:
+            return label
+    except Exception:
+        pass
+    try:
+        arktx = (session.findById(f"{ZBOM_HEADER_ID}/txtVBAP-ARKTX").text or "").strip()
+        if arktx:
+            return arktx
+    except Exception:
+        pass
+    return fallback
+
+
+def extract_zbom_sections(session):
+    """Walks every node in the configuration tree, reading that node's
+    characteristic-values table into one "section" each. Duplicate
+    configurations (same first 3 options) are skipped."""
+    try:
+        tree = session.findById("wnd[0]/shellcont/shell")
+    except Exception:
+        raise RuntimeError("Tree control not found — the Configuration page doesn't appear to be open.")
+
+    all_node_keys = list(tree.GetAllNodeKeys())
+    sections = []
+    seen_signatures = set()
+
+    for node_key in all_node_keys:
+        node_text = tree.GetNodeTextByKey(node_key)
+        tree.selectedNode = node_key
+        tree.doubleClickNode(node_key)
+        time.sleep(0.3)
+
+        rows = read_zbom_table(session)
+        if not rows:
+            continue
+
+        signature = tuple((r["option_type"], r["option_selection"]) for r in rows[:3])
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        section_name = get_zbom_section_name(session, node_text)
+        sections.append({"section": section_name, "node_key": node_key, "options": rows})
+
+    return sections
+
+
+def write_zbom_xlsx(sections, out_path):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ZBOM"
+    ws.append(["Section", "Node Key", "Option Type", "Option Selection"])
+    for entry in sections:
+        for opt in entry["options"]:
+            ws.append([entry["section"], entry["node_key"], opt["option_type"], opt["option_selection"]])
+    wb.save(out_path)
+
+
 # ---------- CLI entry point ----------
 
 def run(fid, out_dir, mode="tool", so=None):
+    if mode == "resolve":
+        if not fid:
+            raise RuntimeError("resolve mode requires a FID.")
+        session = ensure_sap_connected()
+        resolved_so, resolved_po = resolve_so_po_from_fid(session, fid)
+        log(f"RESOLVED_SO:{resolved_so}")
+        log(f"RESOLVED_PO:{resolved_po}")
+        return None
+
+    if mode == "zbom":
+        if not so and not fid:
+            raise RuntimeError("ZBOM download requires an SO or FID (if SO is omitted, it's auto-resolved from FID).")
+
+        session = ensure_sap_connected()
+
+        if not so:
+            log(f"No SO given, resolving the corresponding SO from FID {fid}...")
+            so, _po = resolve_so_po_from_fid(session, fid)
+
+        log(f"Opening the Configuration screen for SO {so}...")
+        open_zbom_config(session, so)
+
+        log("Reading configuration options across all sections...")
+        sections = extract_zbom_sections(session)
+        if not sections:
+            raise RuntimeError("No configuration sections found — check whether the Configuration page opened correctly.")
+
+        total_options = sum(len(s["options"]) for s in sections)
+        log(f"Found {len(sections)} section(s), {total_options} option(s) total. Writing xlsx...")
+        zbom_path = os.path.join(out_dir, f"{so}_zbom.xlsx")
+        os.makedirs(out_dir, exist_ok=True)
+        write_zbom_xlsx(sections, zbom_path)
+
+        log(f"Done! Wrote {zbom_path}.")
+        return zbom_path
+
     if mode == "modules":
         if not so and not fid:
             raise RuntimeError("Module BOM download requires an SO or FID (if SO is omitted, it's auto-resolved from FID).")
@@ -630,7 +841,7 @@ def run(fid, out_dir, mode="tool", so=None):
 
         if not so:
             log(f"No SO given, resolving the corresponding SO from FID {fid}...")
-            so = resolve_so_from_fid(session, fid)
+            so, _po = resolve_so_po_from_fid(session, fid)
 
         # module_dir is just a scratch folder for SAP to dump raw files into;
         # once merged and cleaned up it's deleted entirely — the caller gets
@@ -686,19 +897,24 @@ def run(fid, out_dir, mode="tool", so=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Download a BOM from SAP by FID/SO and convert it to xlsx")
-    parser.add_argument("fid", nargs="?", default=None, help="The FID to look up (required for tool mode)")
+    parser.add_argument("fid", nargs="?", default=None, help="The FID to look up (required for tool and resolve modes)")
     parser.add_argument("--out-dir", default=os.getcwd(), help="Output folder (defaults to the current working directory)")
     parser.add_argument(
         "--mode",
-        choices=["tool", "modules"],
+        choices=["tool", "modules", "zbom", "resolve"],
         default="tool",
-        help="tool = Full BOM (IB53, default, requires FID); modules = split by module (ZOOBOM_CE_FMT, requires SO)",
+        help=(
+            "tool = Full BOM (IB53, default, requires FID); "
+            "modules = split by module (ZOOBOM_CE_FMT, requires SO or FID); "
+            "zbom = configuration options (VA03, requires SO or FID); "
+            "resolve = look up SO/PO only, no download (requires FID)"
+        ),
     )
-    parser.add_argument("--so", default=None, help="SO number (required for modules mode)")
+    parser.add_argument("--so", default=None, help="SO number (required for modules/zbom modes unless FID is given)")
     args = parser.parse_args()
 
-    if args.mode == "tool" and not args.fid:
-        log("[Error] tool mode requires a FID.")
+    if args.mode in ("tool", "resolve") and not args.fid:
+        log(f"[Error] {args.mode} mode requires a FID.")
         sys.exit(1)
 
     try:
@@ -709,7 +925,8 @@ def main():
         log(f"[Error] {e}")
         sys.exit(1)
 
-    log(f"RESULT_PATH:{xlsx_path}")
+    if xlsx_path:
+        log(f"RESULT_PATH:{xlsx_path}")
     sys.exit(0)
 
 

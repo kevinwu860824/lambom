@@ -4,22 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx-js-style";
 import { Download, FileSpreadsheet, Plus, Square, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { parseModulesWorkbook } from "@/lib/bom-parse";
-import { autoMatchKeyParts, lookupMachineForFid, saveMachineForFid, uploadBomEntry } from "@/lib/bom";
+import { parseModulesWorkbook, parseXlsxBom, parseZbomWorkbook } from "@/lib/bom-parse";
+import { autoMatchKeyParts, lookupFidEntry, saveFidEntry, uploadBomEntry, uploadZbomEntry } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+type FidDownloadMode = "tool" | "modules" | "zbom" | "resolve";
+
 interface FidDownloaderApi {
   start: (params: {
     fid?: string;
-    mode: "tool" | "modules";
+    mode: FidDownloadMode;
     so?: string;
-  }) => Promise<{ ok: boolean; resultPath: string | null }>;
+  }) => Promise<{ ok: boolean; resultPath: string | null; so?: string | null; po?: string | null }>;
   onLog: (callback: (line: string) => void) => () => void;
   openFolder: (filePath: string) => Promise<void>;
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  deleteFile: (filePath: string) => Promise<void>;
   cancel: () => Promise<boolean>;
 }
 
@@ -37,8 +40,9 @@ interface QueueItem {
   machineNo: string;
   status: QueueStatus;
   error?: string;
-  modulesResultPath?: string | null;
 }
+
+class CancelledError extends Error {}
 
 /**
  * Only does anything inside the lambom desktop (Electron) shell, which
@@ -46,19 +50,21 @@ interface QueueItem {
  * deployment (same code, opened in a regular browser) that API doesn't
  * exist, so this renders nothing.
  *
- * The "Machine No." field is used directly as the Supabase upload machine
- * name (machine_name) — no lookup or prompt needed. SO can no longer be
- * entered manually; it's always resolved from FID via VA03 automatically
- * (if a FID's BOM has been revised, VA03 may return multiple results — the
- * bottom-most one is picked, using dynamic column detection since the
- * column position isn't fixed across searches).
- *
- * Each "Add" pushes FID + Machine No. onto the queue; "Download" processes
- * it sequentially — every item downloads the Full BOM (IB53, saved to the
- * downloads folder as a reference only) and Modules (ZOOBOM_CE_FMT); once
- * Modules is downloaded it's automatically cleaned up, uploaded to
- * Supabase, and run through key-part auto-matching. One item failing
- * doesn't stop the batch — it moves on to the next.
+ * Each queue item runs through four steps, in order:
+ *   1. Resolve SO/PO for the FID — checked against a cache first (so a given
+ *      FID's SAP search only ever has to run once); on a cache miss it runs
+ *      the CLI's "resolve" mode and saves the result back to the cache
+ *      immediately. A failure here fails the whole item.
+ *   2. Full BOM (IB53) — stored for reference, not used in comparisons.
+ *      A failure here only logs a warning; the item continues.
+ *   3. Modules (ZOOBOM_CE_FMT, using the SO from step 1) — each module sheet
+ *      becomes its own subpart, then key-part auto-matching runs. A failure
+ *      here fails the whole item (this is the core dataset).
+ *   4. ZBOM (VA03 configuration options, using the SO from step 1) — stored
+ *      for reference. A failure here only logs a warning.
+ * Every step deletes its local file after a successful upload; if the
+ * upload fails the file is left in place as a fallback and its path is
+ * logged.
  */
 export function FidDownloaderPanel({
   existingMachines = [],
@@ -100,8 +106,8 @@ export function FidDownloaderPanel({
     const trimmedFid = fid.trim();
     if (!trimmedFid || machineNo.trim()) return;
     try {
-      const mapped = await lookupMachineForFid(getSupabase(), trimmedFid);
-      if (mapped) setMachineNo(mapped);
+      const entry = await lookupFidEntry(getSupabase(), trimmedFid);
+      if (entry?.machineName) setMachineNo(entry.machineName);
     } catch {
       // Just a convenience auto-fill; a lookup miss or failure doesn't affect manual entry.
     }
@@ -174,10 +180,78 @@ export function FidDownloaderPanel({
     }
   }
 
-  async function uploadModulesToMachine(resultPath: string, machineName: string) {
+  function checkCancelled() {
+    if (cancelRequestedRef.current) throw new CancelledError();
+  }
+
+  async function deleteLocalFile(path: string) {
+    try {
+      await window.fidDownloader!.deleteFile(path);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  async function resolveSoPo(fidValue: string, machineName: string): Promise<{ so: string; po: string }> {
     const supabase = getSupabase();
-    setLog((prev) => `${prev}Reading file...\n`);
-    const buffer = await window.fidDownloader!.readFile(resultPath);
+    const cached = await lookupFidEntry(supabase, fidValue);
+    if (cached?.so) {
+      setLog((prev) => `${prev}Using cached SO ${cached.so}.\n`);
+      return { so: cached.so, po: cached.po ?? "" };
+    }
+
+    setLog((prev) => `${prev}Resolving SO/PO...\n`);
+    const result = await window.fidDownloader!.start({ fid: fidValue, mode: "resolve" });
+    checkCancelled();
+    if (!result.ok || !result.so) {
+      throw new Error("Failed to resolve SO/PO, check the messages above");
+    }
+    const so = result.so;
+    const po = result.po ?? "";
+    setLog((prev) => `${prev}Resolved SO=${so} PO=${po || "(none)"}.\n`);
+
+    try {
+      await saveFidEntry(supabase, fidValue, { machineName, so, po });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Error] Failed to cache the resolved SO/PO: ${message}\n`);
+    }
+
+    return { so, po };
+  }
+
+  async function downloadFullBom(fidValue: string, machineName: string) {
+    setLog((prev) => `${prev}--- Full BOM ---\n`);
+    const result = await window.fidDownloader!.start({ fid: fidValue, mode: "tool" });
+    checkCancelled();
+    if (!result.ok || !result.resultPath) {
+      setLog((prev) => `${prev}[Error] Full BOM download failed, skipping ahead.\n`);
+      return;
+    }
+    setLog((prev) => `${prev}Full BOM done: ${result.resultPath}\n`);
+    try {
+      const buffer = await window.fidDownloader!.readFile(result.resultPath);
+      const parsed = parseXlsxBom(buffer);
+      await uploadBomEntry(getSupabase(), "Full BOM", parsed, machineName, "tool_bom");
+      await deleteLocalFile(result.resultPath);
+      setLog((prev) => `${prev}Full BOM uploaded (${parsed.items.length} items).\n`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Error] Full BOM upload failed: ${message} (kept local file: ${result.resultPath})\n`);
+    }
+  }
+
+  async function downloadModules(fidValue: string, so: string, machineName: string) {
+    setLog((prev) => `${prev}--- Modules ---\n`);
+    const result = await window.fidDownloader!.start({ fid: fidValue, so, mode: "modules" });
+    checkCancelled();
+    if (!result.ok || !result.resultPath) {
+      throw new Error("Modules download failed, check the messages above");
+    }
+    setLog((prev) => `${prev}Modules done: ${result.resultPath}\n`);
+
+    const supabase = getSupabase();
+    const buffer = await window.fidDownloader!.readFile(result.resultPath);
     const sheets = parseModulesWorkbook(buffer);
     setLog((prev) => `${prev}${sheets.length} module(s) found, uploading to machine "${machineName}"...\n`);
 
@@ -195,20 +269,42 @@ export function FidDownloaderPanel({
       }
     }
 
-    if (successCount > 0) {
-      try {
-        const count = await autoMatchKeyParts(supabase, machineName);
-        setLog((prev) => `${prev}Auto-matched ${count} key part(s).\n`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setLog((prev) => `${prev}[Error] Key part auto-matching failed: ${message}\n`);
-      }
-      onUploaded?.();
+    if (successCount === 0) {
+      setLog((prev) => `${prev}[Error] All module uploads failed (kept local file: ${result.resultPath})\n`);
+      throw new Error("All module uploads failed");
     }
 
-    setLog((prev) => `${prev}Upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
-    if (failCount > 0 && successCount === 0) {
-      throw new Error("All module uploads failed");
+    try {
+      const count = await autoMatchKeyParts(supabase, machineName);
+      setLog((prev) => `${prev}Auto-matched ${count} key part(s).\n`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Error] Key part auto-matching failed: ${message}\n`);
+    }
+    onUploaded?.();
+
+    await deleteLocalFile(result.resultPath);
+    setLog((prev) => `${prev}Modules upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
+  }
+
+  async function downloadZbom(so: string, machineName: string) {
+    setLog((prev) => `${prev}--- ZBOM ---\n`);
+    const result = await window.fidDownloader!.start({ so, mode: "zbom" });
+    checkCancelled();
+    if (!result.ok || !result.resultPath) {
+      setLog((prev) => `${prev}[Error] ZBOM download failed, skipping.\n`);
+      return;
+    }
+    setLog((prev) => `${prev}ZBOM done: ${result.resultPath}\n`);
+    try {
+      const buffer = await window.fidDownloader!.readFile(result.resultPath);
+      const options = parseZbomWorkbook(buffer);
+      await uploadZbomEntry(getSupabase(), machineName, options);
+      await deleteLocalFile(result.resultPath);
+      setLog((prev) => `${prev}ZBOM uploaded (${options.length} option(s)).\n`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Error] ZBOM upload failed: ${message} (kept local file: ${result.resultPath})\n`);
     }
   }
 
@@ -233,45 +329,18 @@ export function FidDownloaderPanel({
       setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo} (FID ${item.fid}) ===\n`);
 
       try {
-        setLog((prev) => `${prev}--- Full BOM ---\n`);
-        const toolResult = await window.fidDownloader.start({ fid: item.fid, mode: "tool" });
-        if (cancelRequestedRef.current) {
-          setLog((prev) => `${prev}Cancelled.\n`);
-          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
-          break;
-        }
-        setLog((prev) =>
-          toolResult.ok && toolResult.resultPath
-            ? `${prev}Full BOM done: ${toolResult.resultPath}\n`
-            : `${prev}[Error] Full BOM download failed, skipping ahead to Modules.\n`
-        );
+        const { so } = await resolveSoPo(item.fid, item.machineNo);
+        await downloadFullBom(item.fid, item.machineNo);
+        await downloadModules(item.fid, so, item.machineNo);
+        await downloadZbom(so, item.machineNo);
 
-        setLog((prev) => `${prev}--- Modules ---\n`);
-        const modulesResult = await window.fidDownloader.start({ fid: item.fid, mode: "modules" });
-        if (cancelRequestedRef.current) {
-          setLog((prev) => `${prev}Cancelled.\n`);
-          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
-          break;
-        }
-        if (!modulesResult.ok || !modulesResult.resultPath) {
-          throw new Error("Modules download failed, check the messages above");
-        }
-        setLog((prev) => `${prev}Modules done: ${modulesResult.resultPath}\n`);
-
-        await uploadModulesToMachine(modulesResult.resultPath, item.machineNo);
-
-        try {
-          await saveMachineForFid(getSupabase(), item.fid, item.machineNo);
-        } catch {
-          // A mapping-save failure doesn't affect this item's already-successful upload.
-        }
-
-        setQueue((prev) =>
-          prev.map((q, idx) =>
-            idx === i ? { ...q, status: "done", modulesResultPath: modulesResult.resultPath } : q
-          )
-        );
+        setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done" } : q)));
       } catch (err) {
+        if (err instanceof CancelledError) {
+          setLog((prev) => `${prev}Cancelled.\n`);
+          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "cancelled" } : q)));
+          break;
+        }
         const message = err instanceof Error ? err.message : String(err);
         setLog((prev) => `${prev}[Error] ${item.machineNo} (FID ${item.fid}) failed: ${message}\n`);
         setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "error", error: message } : q)));
@@ -373,15 +442,6 @@ export function FidDownloaderPanel({
                   </span>
                 )}
                 {item.status === "cancelled" && <span className="text-muted-foreground text-xs">Cancelled</span>}
-                {item.status === "done" && item.modulesResultPath && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => window.fidDownloader?.openFolder(item.modulesResultPath!)}
-                  >
-                    Open Folder
-                  </Button>
-                )}
                 {item.status === "queued" && !processing && (
                   <Button size="icon-xs" variant="ghost" onClick={() => removeFromQueue(item.id)}>
                     <XIcon className="h-3.5 w-3.5" />

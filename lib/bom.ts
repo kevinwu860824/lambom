@@ -10,12 +10,15 @@ export interface BomItem {
   uom: string | null;
 }
 
+export type SubpartKind = "module" | "tool_bom";
+
 export interface BomEntry {
   bomId: number;
   source_file: string;
   machine: string;
   items: BomItem[];
   itemsLoaded: boolean;
+  subpartKind: SubpartKind;
 }
 
 export interface MachineGroup {
@@ -167,14 +170,14 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
 }> {
   const { data: machines, error } = await supabase
     .from("bom_machines")
-    .select("id,machine_name,source_file");
+    .select("id,machine_name,source_file,subpart_kind");
 
   if (error) {
-    throw new Error(`Failed to load from Supabase: ${error.message}`);
+    throw new Error(`Failed to load data: ${error.message}`);
   }
 
   if (!machines || machines.length === 0) {
-    throw new Error("Supabase returned no BOM records.");
+    throw new Error("No BOM records found.");
   }
 
   const bomData: BomEntry[] = machines.map((machine) => ({
@@ -183,6 +186,7 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
     machine: machine.machine_name,
     items: [],
     itemsLoaded: false,
+    subpartKind: (machine.subpart_kind as SubpartKind | null) ?? "module",
   }));
 
   const grouped = new Map<string, BomEntry[]>();
@@ -390,13 +394,17 @@ export async function autoMatchKeyParts(
 /**
  * Insert-or-overwrite one (machine_name, source_file) BOM into bom_machines
  * + bom_items. Shared by the manual upload dialog and the SAP Download
- * panel's auto-upload, so both paths always agree on overwrite/insert semantics.
+ * panel's auto-upload, so both paths always agree on overwrite/insert
+ * semantics. `subpartKind` defaults to "module" (the manual dialog and every
+ * existing caller before Full BOM auto-upload was added); the SAP Download
+ * panel passes "tool_bom" explicitly when uploading a Full BOM.
  */
 export async function uploadBomEntry(
   supabase: SupabaseClient,
   sourceFile: string,
   parsed: ParsedBom,
-  machineName: string
+  machineName: string,
+  subpartKind: SubpartKind = "module"
 ): Promise<void> {
   const { data: existing, error: findError } = await supabase
     .from("bom_machines")
@@ -415,6 +423,7 @@ export async function uploadBomEntry(
       .update({
         root_part_no: parsed.rootPartNo,
         root_description: parsed.rootDescription,
+        subpart_kind: subpartKind,
       })
       .eq("id", bomId);
     if (updateError) throw new Error(updateError.message);
@@ -431,6 +440,7 @@ export async function uploadBomEntry(
         source_file: sourceFile,
         root_part_no: parsed.rootPartNo,
         root_description: parsed.rootDescription,
+        subpart_kind: subpartKind,
       })
       .select("id")
       .single();
@@ -447,30 +457,96 @@ export async function uploadBomEntry(
   }
 }
 
-/** FID -> machine name mapping (fid_machine_map), so the SAP Download
- * auto-upload knows which machine to write to without manual entry every time. */
-export async function lookupMachineForFid(
-  supabase: SupabaseClient,
-  fid: string
-): Promise<string | null> {
+export interface FidEntry {
+  machineName: string | null;
+  so: string | null;
+  po: string | null;
+}
+
+/** FID -> {machine name, SO, PO} cache (fid_machine_map), so the SAP
+ * Download queue only ever needs to resolve a given FID's SO/PO once —
+ * every later run for the same FID reads this instead of re-running the
+ * VA03 search. */
+export async function lookupFidEntry(supabase: SupabaseClient, fid: string): Promise<FidEntry | null> {
   const { data, error } = await supabase
     .from("fid_machine_map")
-    .select("machine_name")
+    .select("machine_name,so,po")
     .eq("fid", fid)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data?.machine_name ?? null;
+  if (!data) return null;
+  return { machineName: data.machine_name, so: data.so, po: data.po };
 }
 
-export async function saveMachineForFid(
+/**
+ * Writes only the fields provided, leaving any existing cached fields for
+ * this FID untouched (e.g. saving a resolved SO/PO doesn't need to know or
+ * overwrite the machine name, and vice versa).
+ *
+ * This can't be a plain .upsert(): Postgres validates NOT NULL columns
+ * (machine_name) against the candidate row before it even checks for a
+ * conflict, so an upsert that omits machine_name fails with a "null value
+ * violates not-null constraint" error even when a matching row already
+ * exists. Selecting first and branching into a real .update() (which only
+ * touches the columns given) avoids that entirely.
+ */
+export async function saveFidEntry(
   supabase: SupabaseClient,
   fid: string,
-  machineName: string
+  entry: Partial<{ machineName: string; so: string; po: string }>
 ): Promise<void> {
-  const { error } = await supabase
+  const patch: Record<string, string> = {};
+  if (entry.machineName !== undefined) patch.machine_name = entry.machineName;
+  if (entry.so !== undefined) patch.so = entry.so;
+  if (entry.po !== undefined) patch.po = entry.po;
+
+  const { data: existing, error: findError } = await supabase
     .from("fid_machine_map")
-    .upsert({ fid, machine_name: machineName }, { onConflict: "fid" });
-  if (error) throw new Error(error.message);
+    .select("fid")
+    .eq("fid", fid)
+    .maybeSingle();
+  if (findError) throw new Error(findError.message);
+
+  if (existing) {
+    const { error } = await supabase.from("fid_machine_map").update(patch).eq("fid", fid);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("fid_machine_map").insert({ fid, ...patch });
+    if (error) throw new Error(error.message);
+  }
+}
+
+export interface ZbomOption {
+  section: string;
+  nodeKey: string | null;
+  optionType: string;
+  optionSelection: string | null;
+}
+
+/** Insert-or-overwrite one machine's ZBOM configuration options —
+ * overwrite semantics mirror uploadBomEntry: delete whatever this machine
+ * had before, then insert the freshly-downloaded set. */
+export async function uploadZbomEntry(
+  supabase: SupabaseClient,
+  machineName: string,
+  options: ZbomOption[]
+): Promise<void> {
+  const { error: deleteError } = await withRetry(() =>
+    supabase.from("zbom_options").delete().eq("machine_name", machineName)
+  );
+  if (deleteError) throw new Error(deleteError.message);
+
+  const rows = options.map((opt) => ({
+    machine_name: machineName,
+    section: opt.section,
+    node_key: opt.nodeKey,
+    option_type: opt.optionType,
+    option_selection: opt.optionSelection,
+  }));
+  for (const batch of chunk(rows, 500)) {
+    const { error: insertError } = await withRetry(() => supabase.from("zbom_options").insert(batch));
+    if (insertError) throw new Error(insertError.message);
+  }
 }
 
 export function toNumericQty(value: BomItem["qty"]): number {

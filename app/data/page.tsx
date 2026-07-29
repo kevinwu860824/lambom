@@ -101,7 +101,7 @@ export default function DataPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight text-white">Data Editor</h1>
           <p className="mt-1 text-sm text-white/70">
-            The left side shows the current content of Supabase&apos;s &quot;Data&quot; table;
+            The left side shows the current content of the &quot;Data&quot; table;
             enter new content on the right and click Replace.
           </p>
         </div>

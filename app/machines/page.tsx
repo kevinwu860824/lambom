@@ -169,7 +169,7 @@ export default function MachinesPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Edit Machine / Subpart Names</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              Press Enter or click confirm after editing to update Supabase immediately.
+              Press Enter or click confirm after editing to save immediately.
             </p>
           </div>
           <div className="flex items-center gap-3">

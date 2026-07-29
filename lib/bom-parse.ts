@@ -715,3 +715,44 @@ export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; 
     }
   });
 }
+
+export interface ParsedZbomOption {
+  section: string;
+  nodeKey: string | null;
+  optionType: string;
+  optionSelection: string | null;
+}
+
+/**
+ * Reads the flat "<SO>_zbom.xlsx" produced by the desktop SAP downloader's
+ * write_zbom_xlsx (see desktop/sap-downloader/fid_downloader_cli.py) —
+ * a single sheet of Section/Node Key/Option Type/Option Selection rows,
+ * one row per configuration option.
+ */
+export function parseZbomWorkbook(buffer: ArrayBuffer): ParsedZbomOption[] {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+  });
+
+  if (rows.length < 2) {
+    throw new Error("This file has no data rows besides the header");
+  }
+
+  const options: ParsedZbomOption[] = [];
+  for (let r = 1; r < rows.length; r++) {
+    const [section, nodeKey, optionType, optionSelection] = rows[r] ?? [];
+    if (!section || !optionType) continue;
+    options.push({
+      section,
+      nodeKey: nodeKey || null,
+      optionType,
+      optionSelection: optionSelection || null,
+    });
+  }
+
+  return options;
+}
