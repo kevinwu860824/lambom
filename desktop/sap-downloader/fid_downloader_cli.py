@@ -730,15 +730,29 @@ def read_zbom_table(session):
     row_count = table.RowCount
     log("ZBOM:   reading Columns...")
     cols = [table.Columns(c).Name for c in range(table.Columns.Count)]
-    log(f"ZBOM:   table ready: visible_rows={visible_rows!r}, row_count={row_count!r}, columns={cols}")
+    # The scrollbar rejects (COM exception) any position beyond "last row
+    # flush with the bottom of the visible window" — e.g. a 29-row table
+    # with 12 visible rows can only scroll up to position 17 (29-12), not
+    # 24, even though 24 is a valid *row* index. Reading the scrollbar's own
+    # Maximum (same approach already used for the SO/PO search popup) avoids
+    # having to trust that row_count - visible_rows is exactly right.
+    try:
+        scroll_max = table.VerticalScrollbar.Maximum
+    except Exception:
+        scroll_max = max(0, row_count - visible_rows)
+    log(
+        f"ZBOM:   table ready: visible_rows={visible_rows!r}, row_count={row_count!r}, "
+        f"scroll_max={scroll_max!r}, columns={cols}"
+    )
 
     seen_keys = set()
     ordered_rows = []
     scroll_pos = 0
 
-    while scroll_pos < row_count:
-        log(f"ZBOM:   scanning from scroll_pos={scroll_pos}...")
-        if scroll_pos > 0:
+    while True:
+        actual_scroll_pos = min(scroll_pos, scroll_max)
+        log(f"ZBOM:   scanning from scrollbar position {actual_scroll_pos}...")
+        if actual_scroll_pos > 0:
             try:
                 pythoncom.PumpWaitingMessages()
                 for attempt in range(3):
@@ -746,12 +760,12 @@ def read_zbom_table(session):
                         time.sleep(1.0)
                         pythoncom.PumpWaitingMessages()
                         table = session.findById(ZBOM_TABLE_ID)
-                    table.VerticalScrollbar.Position = scroll_pos
+                    table.VerticalScrollbar.Position = actual_scroll_pos
                     time.sleep(0.3)
                     pythoncom.PumpWaitingMessages()
                     break
             except Exception as e:
-                raise RuntimeError(f"Failed to scroll to position {scroll_pos}: {e}") from e
+                raise RuntimeError(f"Failed to scroll to position {actual_scroll_pos}: {e}") from e
 
         try:
             row_range = range(visible_rows)
@@ -759,7 +773,8 @@ def read_zbom_table(session):
             raise RuntimeError(f"range(visible_rows) failed, visible_rows={visible_rows!r}: {e}") from e
 
         for row_idx in row_range:
-            if scroll_pos + row_idx >= row_count:
+            absolute_row = actual_scroll_pos + row_idx
+            if absolute_row >= row_count:
                 break
 
             try:
@@ -783,7 +798,7 @@ def read_zbom_table(session):
                     if cell_text.strip():
                         all_empty = False
             except Exception as e:
-                raise RuntimeError(f"Failed reading table row {row_idx} (scroll_pos={scroll_pos}): {e}") from e
+                raise RuntimeError(f"Failed reading table row {row_idx} (scrollbar position {actual_scroll_pos}): {e}") from e
 
             if all_empty:
                 continue
@@ -799,10 +814,9 @@ def read_zbom_table(session):
             seen_keys.add(row_key)
             ordered_rows.append({"option_type": name, "option_selection": value})
 
-        try:
-            scroll_pos += visible_rows
-        except Exception as e:
-            raise RuntimeError(f"scroll_pos += visible_rows failed, visible_rows={visible_rows!r}: {e}") from e
+        if actual_scroll_pos + visible_rows >= row_count:
+            break
+        scroll_pos = actual_scroll_pos + visible_rows
 
     try:
         table.VerticalScrollbar.Position = 0
