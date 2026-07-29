@@ -665,17 +665,27 @@ def open_zbom_config(session, so):
     the end) so that if a findById call fails, the log shows exactly which
     step it happened on instead of just a generic COM error with no context —
     this whole flow is newly ported and hasn't been exercised against real
-    SAP yet, so precise failure location matters more than usual here."""
+    SAP yet, so precise failure location matters more than usual here.
+
+    Deliberately does NOT press Enter after typing the SO into
+    ctxtVBAK-VBELN — a real, working SAP GUI Scripting recording of this
+    exact flow (VA03 -> Item Overview -> Configuration) goes straight from
+    typing the SO to pressing the Item Overview button with no Enter in
+    between. An earlier version of this function did press Enter there,
+    which advances SAP into the order display screen before Item Overview is
+    clicked, landing on a different screen state than what
+    ZBOM_CONFIG_BUTTON_ID's hardcoded tab path expects — that mismatch is
+    what caused "control could not be found by id" on the Configuration
+    button in real testing (FID 255720 / SO N8364)."""
     log(f"ZBOM: opening VA03 for SO {so}...")
     session.findById("wnd[0]/tbar[0]/okcd").text = "/nVA03"
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(1)
+
+    session.findById("wnd[0]").maximize()
     session.findById("wnd[0]/usr/ctxtVBAK-VBELN").text = so
-    session.findById("wnd[0]").sendVKey(0)
-    time.sleep(1)
 
     log("ZBOM: opening Item Overview...")
-    session.findById("wnd[0]").maximize()
     session.findById("wnd[0]/tbar[1]/btn[6]").press()  # Item Overview
     time.sleep(1)
 
