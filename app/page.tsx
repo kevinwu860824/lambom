@@ -419,6 +419,9 @@ export default function Home() {
             <Button variant="outline" asChild>
               <Link href="/fingerprint">Key Parts Fingerprint</Link>
             </Button>
+            <Button variant="outline" asChild>
+              <Link href="/zbom">ZBOM Viewer</Link>
+            </Button>
             <Button variant="outline" size="icon" asChild>
               <Link href="/machines" aria-label="Edit machine names">
                 <Settings className="h-4 w-4" />

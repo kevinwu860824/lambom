@@ -549,6 +549,45 @@ export async function uploadZbomEntry(
   }
 }
 
+export interface ZbomSection {
+  section: string;
+  options: ZbomOption[];
+}
+
+/** Names of every machine that has at least one stored ZBOM option, for
+ * populating a machine picker without fetching all the option rows first. */
+export async function fetchZbomMachineNames(supabase: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabase.from("zbom_options").select("machine_name");
+  if (error) throw new Error(error.message);
+  const names = Array.from(new Set((data ?? []).map((row) => row.machine_name as string)));
+  names.sort((a, b) => a.localeCompare(b));
+  return names;
+}
+
+/** One machine's ZBOM options, grouped by section in the order they were
+ * stored (insertion order via `id`). */
+export async function fetchZbomOptions(supabase: SupabaseClient, machineName: string): Promise<ZbomSection[]> {
+  const { data, error } = await supabase
+    .from("zbom_options")
+    .select("section,node_key,option_type,option_selection")
+    .eq("machine_name", machineName)
+    .order("id", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const sections = new Map<string, ZbomOption[]>();
+  for (const row of data ?? []) {
+    const section = row.section as string;
+    if (!sections.has(section)) sections.set(section, []);
+    sections.get(section)!.push({
+      section,
+      nodeKey: row.node_key as string | null,
+      optionType: row.option_type as string,
+      optionSelection: row.option_selection as string | null,
+    });
+  }
+  return Array.from(sections.entries()).map(([section, options]) => ({ section, options }));
+}
+
 export function toNumericQty(value: BomItem["qty"]): number {
   if (value === null || value === undefined || value === "") {
     return 0;
