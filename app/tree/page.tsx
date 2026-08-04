@@ -7,7 +7,9 @@ import { createClient } from "@/lib/supabase";
 import { buildBomTree, fetchBomTreeItems, fetchMachineGroups, type BomTreeNode, type MachineGroup } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BomTreeNodeRow, nodeMatchesQuery, normalizeSearchText } from "@/components/bom-tree-node";
 
@@ -48,7 +50,8 @@ function collectMatches(subpartTrees: SubpartTree[], normalizedQuery: string): T
 /** Ids of every ancestor of a match (not including the match itself) that
  * needs to be "expanded" for the match to actually be visible on screen —
  * derived by walking the "/"-joined path prefixes encoded in the match id
- * itself (`${idPrefix}:${path}`). */
+ * itself (`${idPrefix}:${path}`). Only ancestors, never the match's own
+ * descendants — finding a part shouldn't blow open everything beneath it. */
 function ancestorIdsOf(matchId: string): string[] {
   const sep = matchId.indexOf(":");
   const idPrefix = matchId.slice(0, sep);
@@ -71,41 +74,61 @@ export default function TreePage() {
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machine, setMachine] = useState("");
   const [subpartTrees, setSubpartTrees] = useState<SubpartTree[]>([]);
+  const [selectedSourceFiles, setSelectedSourceFiles] = useState<Set<string>>(new Set());
   const [listLoading, setListLoading] = useState(true);
   const [treeLoading, setTreeLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Expansion the user asked for explicitly (clicks, Expand/Collapse All,
+  // the initial auto-expanded root). Kept separate from search-driven
+  // expansion (below) so a new/cleared search never leaves stale branches
+  // pinned open, and never touches state the user set themselves.
+  const [manualExpandedIds, setManualExpandedIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
 
-  const normalizedQuery = normalizeSearchText(query);
-  const matches = useMemo(
-    () => collectMatches(subpartTrees, normalizedQuery),
-    [subpartTrees, normalizedQuery]
+  const visibleSubpartTrees = useMemo(
+    () => subpartTrees.filter((t) => selectedSourceFiles.has(t.sourceFile)),
+    [subpartTrees, selectedSourceFiles]
   );
 
-  // Resetting activeMatchIndex and expanding every match's ancestors when
-  // the match set changes are both state derived from a render-time value,
-  // not a side effect — done during render itself (React's recommended
-  // pattern for this: https://react.dev/learn/you-might-not-need-an-effect
-  // "Adjusting state when a prop changes"), not in a useEffect. Expanding
-  // ancestors up front means stepping through with Prev/Next never needs to
-  // re-expand anything.
+  const normalizedQuery = normalizeSearchText(query);
+  const matches = useMemo(
+    () => collectMatches(visibleSubpartTrees, normalizedQuery),
+    [visibleSubpartTrees, normalizedQuery]
+  );
+
+  // Recomputed fresh from the current match set every time (not merged
+  // into manualExpandedIds) — so a branch that matched a previous search
+  // but not the current one goes back to whatever it was before, instead
+  // of staying pinned open forever.
+  const searchExpandedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of matches) {
+      for (const id of ancestorIdsOf(m.id)) ids.add(id);
+    }
+    return ids;
+  }, [matches]);
+
+  const expandedIds = useMemo(() => {
+    if (searchExpandedIds.size === 0) return manualExpandedIds;
+    const merged = new Set(manualExpandedIds);
+    for (const id of searchExpandedIds) merged.add(id);
+    return merged;
+  }, [manualExpandedIds, searchExpandedIds]);
+
+  // Resetting activeMatchIndex when the match set changes is state derived
+  // from a render-time value, not a side effect — done during render itself
+  // (React's recommended "adjusting state when a value changes" pattern),
+  // not in a useEffect. Using activeMatchIndexResolved (rather than the
+  // possibly-stale activeMatchIndex state) everywhere below means the
+  // counter/scroll are correct even in this same render pass.
   const [matchesForIndex, setMatchesForIndex] = useState(matches);
   if (matches !== matchesForIndex) {
     setMatchesForIndex(matches);
     setActiveMatchIndex(0);
-    if (matches.length > 0) {
-      setExpandedIds((prev) => {
-        const next = new Set(prev);
-        for (const m of matches) {
-          for (const id of ancestorIdsOf(m.id)) next.add(id);
-        }
-        return next;
-      });
-    }
   }
-  const activeMatch = matches[matches === matchesForIndex ? activeMatchIndex : 0] ?? null;
+  const activeMatchIndexResolved = matches === matchesForIndex ? activeMatchIndex : 0;
+  const activeMatch = matches[activeMatchIndexResolved] ?? null;
 
   useEffect(() => {
     fetchMachineGroups(getSupabase())
@@ -116,7 +139,7 @@ export default function TreePage() {
 
   // Scroll the active match into view. Depends on expandedIds too, since a
   // freshly-expanded match's row doesn't exist in the DOM until that state
-  // update above has actually re-rendered.
+  // has actually re-rendered.
   useEffect(() => {
     if (!activeMatch) return;
     const raf = requestAnimationFrame(() => {
@@ -126,7 +149,7 @@ export default function TreePage() {
   }, [activeMatch, expandedIds]);
 
   function toggleExpanded(id: string) {
-    setExpandedIds((prev) => {
+    setManualExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -136,12 +159,27 @@ export default function TreePage() {
 
   function expandAll() {
     const all = new Set<string>();
-    for (const tree of subpartTrees) collectExpandablePaths(tree.roots, String(tree.bomId), all);
-    setExpandedIds(all);
+    for (const tree of visibleSubpartTrees) collectExpandablePaths(tree.roots, String(tree.bomId), all);
+    setManualExpandedIds(all);
   }
 
   function collapseAll() {
-    setExpandedIds(new Set());
+    setManualExpandedIds(new Set());
+  }
+
+  function toggleSubpartSelected(sourceFile: string) {
+    setSelectedSourceFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceFile)) next.delete(sourceFile);
+      else next.add(sourceFile);
+      return next;
+    });
+  }
+
+  function toggleAllSubparts() {
+    setSelectedSourceFiles((prev) =>
+      prev.size === subpartTrees.length ? new Set() : new Set(subpartTrees.map((t) => t.sourceFile))
+    );
   }
 
   function goToNext() {
@@ -157,8 +195,9 @@ export default function TreePage() {
   async function handleMachineChange(value: string) {
     setMachine(value);
     setSubpartTrees([]);
+    setSelectedSourceFiles(new Set());
     setError(null);
-    setExpandedIds(new Set());
+    setManualExpandedIds(new Set());
     setTreeLoading(true);
     try {
       const group = machineGroups.find((g) => g.machine === value);
@@ -171,6 +210,7 @@ export default function TreePage() {
         })
       );
       setSubpartTrees(trees);
+      setSelectedSourceFiles(new Set(trees.map((t) => t.sourceFile)));
 
       // Auto-expand just each subpart's root(s) so there's something
       // useful to see immediately without a huge initial render.
@@ -180,7 +220,7 @@ export default function TreePage() {
           if (root.children.length > 0) initial.add(`${tree.bomId}:${root.path}`);
         }
       }
-      setExpandedIds(initial);
+      setManualExpandedIds(initial);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -222,6 +262,55 @@ export default function TreePage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {subpartTrees.length > 0 && (
+              <div className="mt-4 grid gap-1.5">
+                <label className="text-sm font-medium">Subparts</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="h-9 w-full justify-between font-normal">
+                      <span className="truncate">
+                        {selectedSourceFiles.size === 0
+                          ? "No subparts selected"
+                          : selectedSourceFiles.size === subpartTrees.length
+                            ? "All subparts"
+                            : `${selectedSourceFiles.size}/${subpartTrees.length} subparts selected`}
+                      </span>
+                      <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
+                    <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
+                      <Checkbox
+                        checked={
+                          selectedSourceFiles.size === 0
+                            ? false
+                            : selectedSourceFiles.size === subpartTrees.length
+                              ? true
+                              : "indeterminate"
+                        }
+                        onCheckedChange={toggleAllSubparts}
+                      />
+                      All subparts
+                    </label>
+                    <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
+                      {subpartTrees.map((tree) => (
+                        <label
+                          key={tree.sourceFile}
+                          className="hover:bg-accent flex items-center gap-2 rounded px-1 py-1 text-sm"
+                        >
+                          <Checkbox
+                            checked={selectedSourceFiles.has(tree.sourceFile)}
+                            onCheckedChange={() => toggleSubpartSelected(tree.sourceFile)}
+                          />
+                          {tree.sourceFile}
+                        </label>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -243,7 +332,7 @@ export default function TreePage() {
                 className="flex-1"
               />
               <span className="text-muted-foreground w-16 shrink-0 text-center text-sm whitespace-nowrap">
-                {query.trim() ? `${matches.length > 0 ? activeMatchIndex + 1 : 0} / ${matches.length}` : ""}
+                {query.trim() ? `${matches.length > 0 ? activeMatchIndexResolved + 1 : 0} / ${matches.length}` : ""}
               </span>
               <Button
                 size="icon"
@@ -279,7 +368,7 @@ export default function TreePage() {
         )}
 
         <div className="grid gap-4">
-          {subpartTrees.map((tree) => (
+          {visibleSubpartTrees.map((tree) => (
             <Card key={tree.bomId}>
               <CardContent>
                 <h2 className="mb-2 text-sm font-medium">{tree.sourceFile}</h2>
