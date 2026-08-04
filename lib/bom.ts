@@ -226,40 +226,42 @@ export async function withRetry<T extends { error: { message: string } | null }>
   return last;
 }
 
-async function fetchBomItemsPage(
+async function fetchBomItemsPage<T>(
   supabase: SupabaseClient,
   bomId: number,
   from: number,
-  pageSize: number
-): Promise<BomItem[]> {
+  pageSize: number,
+  columns: string
+): Promise<T[]> {
   const { data, error } = await withRetry(() =>
     supabase
       .from("bom_items")
-      .select("part_no,description,qty,uom")
+      .select(columns)
       .eq("bom_id", bomId)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1)
   );
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return (data ?? []) as T[];
 }
 
-export async function fetchAllBomItems(
+async function fetchAllBomItemsRaw<T>(
   supabase: SupabaseClient,
   bomId: number,
-  sourceFile: string
-): Promise<BomItem[]> {
+  sourceFile: string,
+  columns: string
+): Promise<T[]> {
   const pageSize = 1000;
-  const items: BomItem[] = [];
+  const items: T[] = [];
   let from = 0;
 
   // The Supabase project caps rows-per-request server-side (db-max-rows),
   // so a single request with a high .limit() is silently truncated.
   // Page through with .range() until a page comes back short.
   for (;;) {
-    let data: BomItem[];
+    let data: T[];
     try {
-      data = await fetchBomItemsPage(supabase, bomId, from, pageSize);
+      data = await fetchBomItemsPage<T>(supabase, bomId, from, pageSize, columns);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to load subpart (${sourceFile}): ${message}`);
@@ -272,6 +274,77 @@ export async function fetchAllBomItems(
   }
 
   return items;
+}
+
+export async function fetchAllBomItems(
+  supabase: SupabaseClient,
+  bomId: number,
+  sourceFile: string
+): Promise<BomItem[]> {
+  return fetchAllBomItemsRaw<BomItem>(supabase, bomId, sourceFile, "part_no,description,qty,uom");
+}
+
+export interface BomTreeItem {
+  part_no: string;
+  description: string | null;
+  qty: BomItem["qty"];
+  uom: string | null;
+  level: number;
+  parent_path: string;
+  line_no: number;
+}
+
+/** Same rows as fetchAllBomItems, but including the hierarchy columns
+ * (level/parent_path/line_no) needed to reconstruct the BOM's tree
+ * structure — kept as a separate query since the flat comparison views
+ * that use fetchAllBomItems don't need these extra columns. */
+export async function fetchBomTreeItems(
+  supabase: SupabaseClient,
+  bomId: number,
+  sourceFile: string
+): Promise<BomTreeItem[]> {
+  return fetchAllBomItemsRaw<BomTreeItem>(
+    supabase,
+    bomId,
+    sourceFile,
+    "part_no,description,qty,uom,level,parent_path,line_no"
+  );
+}
+
+export interface BomTreeNode {
+  item: BomTreeItem;
+  path: string;
+  children: BomTreeNode[];
+}
+
+/**
+ * Reconstructs the BOM's tree structure from its flat row list.
+ * `parent_path` on each item is the "/"-joined chain of ancestor part
+ * numbers (set by every lib/bom-parse.ts parser) — grouping rows by that
+ * value gives each node's children directly, and appending the node's own
+ * part_no gives the path key its own children are grouped under. Siblings
+ * are ordered by line_no (original file order) rather than alphabetically.
+ */
+export function buildBomTree(items: BomTreeItem[]): BomTreeNode[] {
+  const byParentPath = new Map<string, BomTreeItem[]>();
+  for (const item of items) {
+    const list = byParentPath.get(item.parent_path);
+    if (list) list.push(item);
+    else byParentPath.set(item.parent_path, [item]);
+  }
+  for (const list of byParentPath.values()) {
+    list.sort((a, b) => a.line_no - b.line_no);
+  }
+
+  function build(parentPath: string): BomTreeNode[] {
+    const children = byParentPath.get(parentPath) ?? [];
+    return children.map((item) => {
+      const path = parentPath ? `${parentPath}/${item.part_no}` : item.part_no;
+      return { item, path, children: build(path) };
+    });
+  }
+
+  return build("");
 }
 
 const AMBIGUOUS = "ambiguous" as const;
