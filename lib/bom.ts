@@ -350,7 +350,11 @@ async function fetchFullBomTreeItemsPage(
  * statement timeout") on a set this size, where keyset pagination costs
  * the same index-assisted amount of work on every page regardless of depth.
  */
-export async function fetchFullBomTreeItems(supabase: SupabaseClient, machineName: string): Promise<BomTreeItem[]> {
+export async function fetchFullBomTreeItems(
+  supabase: SupabaseClient,
+  machineName: string,
+  onPage?: (pageItems: BomTreeItem[], itemsSoFar: number) => void
+): Promise<BomTreeItem[]> {
   const pageSize = 1000;
   const items: BomTreeItem[] = [];
   let afterId = 0;
@@ -358,6 +362,7 @@ export async function fetchFullBomTreeItems(supabase: SupabaseClient, machineNam
     const data = await fetchFullBomTreeItemsPage(supabase, machineName, afterId, pageSize);
     if (data.length === 0) break;
     items.push(...data);
+    onPage?.(data, items.length);
     afterId = data[data.length - 1].id;
     if (data.length < pageSize) break;
   }
@@ -396,9 +401,21 @@ async function fetchDistinctMachineNames(supabase: SupabaseClient, table: string
 }
 
 /** Names of every machine that has a stored Full BOM, for populating a
- * machine picker without fetching all the item rows first. */
+ * machine picker without fetching all the item rows first. Reads
+ * bom_machines.has_full_bom (set by uploadFullBomEntry) rather than
+ * scanning full_bom_items directly — full_bom_items can run to tens of
+ * thousands of rows per machine, and even the index-assisted
+ * fetchDistinctMachineNames skip-scan above still costs one request per
+ * distinct machine there; bom_machines is small, so this is a single fast
+ * indexed-boolean query instead. */
 export async function fetchFullBomMachineNames(supabase: SupabaseClient): Promise<string[]> {
-  return fetchDistinctMachineNames(supabase, "full_bom_items");
+  const { data, error } = await supabase
+    .from("bom_machines")
+    .select("machine_name")
+    .eq("has_full_bom", true)
+    .order("machine_name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return Array.from(new Set((data ?? []).map((row) => row.machine_name as string)));
 }
 
 export interface BomTreeNode {
@@ -633,6 +650,15 @@ export async function uploadFullBomEntry(
     const { error: insertError } = await withRetry(() => supabase.from("full_bom_items").insert(batch));
     if (insertError) throw new Error(insertError.message);
   }
+
+  // Lets fetchFullBomMachineNames read a small, fast, indexed flag on
+  // bom_machines instead of scanning full_bom_items — a machine can have
+  // several bom_machines rows (one per module subpart file), so this
+  // updates all of them, not just one.
+  const { error: flagError } = await withRetry(() =>
+    supabase.from("bom_machines").update({ has_full_bom: true }).eq("machine_name", machineName)
+  );
+  if (flagError) throw new Error(flagError.message);
 }
 
 export interface FidEntry {

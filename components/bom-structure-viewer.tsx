@@ -92,7 +92,20 @@ export function BomStructureViewer({
   title: string;
   description: string;
   fetchMachineNames: (supabase: SupabaseClient) => Promise<string[]>;
-  fetchSubparts: (supabase: SupabaseClient, machineName: string) => Promise<BomStructureSubpart[]>;
+  /**
+   * `onProgress` is optional to call — a caller whose data always arrives
+   * in one shot (e.g. Modules, where each subpart is small) can just
+   * ignore it and return the final array. A caller reading a large,
+   * slow-to-fully-load dataset (e.g. Full BOM, tens of thousands of rows)
+   * can call it repeatedly with the best-known-so-far subpart list as data
+   * streams in, so the tree renders progressively instead of staying
+   * blank until everything has loaded.
+   */
+  fetchSubparts: (
+    supabase: SupabaseClient,
+    machineName: string,
+    onProgress: (partial: BomStructureSubpart[]) => void
+  ) => Promise<BomStructureSubpart[]>;
 }) {
   const supabaseRef = useRef<SupabaseClient | null>(null);
   function getSupabase() {
@@ -107,6 +120,7 @@ export function BomStructureViewer({
   const [visibleDocumentCodes, setVisibleDocumentCodes] = useState<Set<string>>(new Set());
   const [listLoading, setListLoading] = useState(true);
   const [treeLoading, setTreeLoading] = useState(false);
+  const [streamingMore, setStreamingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Rebuilt whenever visibleDocumentCodes changes — filtering the flat
@@ -257,23 +271,15 @@ export function BomStructureViewer({
     setActiveMatchIndex((i) => (i - 1 + matches.length) % matches.length);
   }
 
-  async function handleMachineChange(value: string) {
-    setMachine(value);
-    setSubpartData([]);
-    setSelectedSourceFiles(new Set());
-    setError(null);
-    setManualExpandedIds(new Set());
-    setTreeLoading(true);
-    try {
-      const data = await fetchSubparts(getSupabase(), value);
-      setSubpartData(data);
-      setSelectedSourceFiles(new Set(data.map((d) => d.sourceFile)));
-
-      // Auto-expand just each subpart's root(s) so there's something
-      // useful to see immediately without a huge initial render. Built
-      // against the current document-parts visibility so it matches what
-      // subpartTrees will actually render.
-      const initial = new Set<string>();
+  // Auto-expand just each subpart's root(s) so there's something useful to
+  // see immediately without a huge initial render. Built against the
+  // current document-parts visibility so it matches what subpartTrees will
+  // actually render. Called on every progress update too (not just once at
+  // the end) so the root is expanded as soon as it's known, rather than
+  // only after a large dataset has fully finished streaming in.
+  function expandRootsOf(data: BomStructureSubpart[]) {
+    setManualExpandedIds((prev) => {
+      const next = new Set(prev);
       for (const d of data) {
         const roots = buildBomTree(
           d.items.filter((i) => {
@@ -282,14 +288,38 @@ export function BomStructureViewer({
           })
         );
         for (const root of roots) {
-          if (root.children.length > 0) initial.add(`${d.bomId}:${root.path}`);
+          if (root.children.length > 0) next.add(`${d.bomId}:${root.path}`);
         }
       }
-      setManualExpandedIds(initial);
+      return next;
+    });
+  }
+
+  async function handleMachineChange(value: string) {
+    setMachine(value);
+    setSubpartData([]);
+    setSelectedSourceFiles(new Set());
+    setError(null);
+    setManualExpandedIds(new Set());
+    setTreeLoading(true);
+    setStreamingMore(true);
+    let gotFirstProgress = false;
+    try {
+      const data = await fetchSubparts(getSupabase(), value, (partial) => {
+        gotFirstProgress = true;
+        setTreeLoading(false);
+        setSubpartData(partial);
+        setSelectedSourceFiles(new Set(partial.map((d) => d.sourceFile)));
+        expandRootsOf(partial);
+      });
+      setSubpartData(data);
+      setSelectedSourceFiles(new Set(data.map((d) => d.sourceFile)));
+      expandRootsOf(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setTreeLoading(false);
+      if (!gotFirstProgress) setTreeLoading(false);
+      setStreamingMore(false);
     }
   }
 
@@ -435,6 +465,12 @@ export function BomStructureViewer({
               </Button>
             </div>
           </>
+        )}
+
+        {streamingMore && !treeLoading && (
+          <p className="text-muted-foreground mb-3 text-sm">
+            Loading more… ({subpartData.reduce((n, d) => n + d.items.length, 0).toLocaleString()} items so far)
+          </p>
         )}
 
         <div className="grid gap-4">
