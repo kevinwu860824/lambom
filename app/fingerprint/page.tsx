@@ -5,7 +5,7 @@ import Link from "next/link";
 import * as XLSX from "xlsx-js-style";
 import { Check, Download, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { chunk } from "@/lib/bom";
+import { chunk, fetchAllBomItems, normalizeDescription, type BomItem } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -363,6 +363,76 @@ export default function FingerprintPage() {
     }
   }
 
+  /**
+   * When a machine is added to a tool type, auto-fill any of its cells we
+   * can confidently infer from what other machines in this SAME tool type
+   * already have recorded: build a part_no/description -> slot lookup from
+   * every other machine's existing key_parts rows in this tool type's
+   * slots (skipping a key if different machines disagree on which slot it
+   * belongs to), then check the new machine's own BOM for matches. Scoped
+   * to this tool type's slots specifically (not lib/bom.ts's
+   * autoMatchKeyParts, which matches system-wide by custom_name and could
+   * pull in a slot_id from a different tool type that would never show up
+   * in this table).
+   */
+  async function autoMatchNewMachine(machineName: string): Promise<number> {
+    const supabase = getSupabase();
+    const slotIds = slots.map((s) => s.id);
+    if (slotIds.length === 0) return 0;
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("key_parts")
+      .select("part_no,description,slot_id,machine_name")
+      .in("slot_id", slotIds);
+    if (existingErr) throw new Error(existingErr.message);
+
+    const AMBIGUOUS = "ambiguous" as const;
+    const byPartNo = new Map<string, number | typeof AMBIGUOUS>();
+    const byDescription = new Map<string, number | typeof AMBIGUOUS>();
+    function record(map: Map<string, number | typeof AMBIGUOUS>, key: string, slotId: number) {
+      if (!key) return;
+      const existing = map.get(key);
+      if (existing === undefined) map.set(key, slotId);
+      else if (existing !== AMBIGUOUS && existing !== slotId) map.set(key, AMBIGUOUS);
+    }
+    for (const row of existingRows ?? []) {
+      if (row.machine_name === machineName) continue;
+      record(byPartNo, row.part_no as string, row.slot_id as number);
+      record(byDescription, normalizeDescription(row.description as string | null), row.slot_id as number);
+    }
+
+    const { data: machineRows, error: machineErr } = await supabase
+      .from("bom_machines")
+      .select("id,source_file")
+      .eq("machine_name", machineName);
+    if (machineErr) throw new Error(machineErr.message);
+
+    const allItems: BomItem[] = [];
+    for (const m of machineRows ?? []) {
+      allItems.push(...(await fetchAllBomItems(supabase, m.id as number, m.source_file as string)));
+    }
+
+    const filledSlotIds = new Set<number>();
+    const toInsert: { part_no: string; custom_name: string; machine_name: string; slot_id: number }[] = [];
+    for (const item of allItems) {
+      let slotId = byPartNo.get(item.part_no);
+      if (slotId === undefined || slotId === AMBIGUOUS) {
+        slotId = byDescription.get(normalizeDescription(item.description));
+      }
+      if (slotId === undefined || slotId === AMBIGUOUS) continue;
+      if (filledSlotIds.has(slotId)) continue; // first BOM match wins per slot
+      const slot = slots.find((s) => s.id === slotId);
+      if (!slot) continue;
+      filledSlotIds.add(slotId);
+      toInsert.push({ part_no: item.part_no, custom_name: slot.custom_name, machine_name: machineName, slot_id: slotId });
+    }
+
+    if (toInsert.length === 0) return 0;
+    const { error: insertErr } = await supabase.from("key_parts").insert(toInsert);
+    if (insertErr) throw new Error(insertErr.message);
+    return toInsert.length;
+  }
+
   async function addMachine() {
     const name = addMachineValue.trim();
     if (!name) return;
@@ -378,6 +448,14 @@ export default function FingerprintPage() {
         .update({ tool_type: selectedToolType })
         .eq("machine_name", name);
       if (error) throw new Error(error.message);
+
+      try {
+        await autoMatchNewMachine(name);
+      } catch (err) {
+        // The machine was added successfully either way — auto-match is a
+        // best-effort convenience on top of that, not a required step.
+        console.error("Auto-match failed for newly added machine:", err);
+      }
 
       setAddMachineValue("");
       await loadForToolType(selectedToolType);
