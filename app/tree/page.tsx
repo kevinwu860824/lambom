@@ -4,7 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { buildBomTree, fetchBomTreeItems, fetchMachineGroups, type BomTreeNode, type MachineGroup } from "@/lib/bom";
+import {
+  buildBomTree,
+  fetchBomTreeItems,
+  fetchMachineGroups,
+  isDocumentPart,
+  DOCUMENT_PART_PREFIXES,
+  type BomTreeItem,
+  type BomTreeNode,
+  type MachineGroup,
+} from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,6 +26,12 @@ interface SubpartTree {
   bomId: number;
   sourceFile: string;
   roots: BomTreeNode[];
+}
+
+interface SubpartData {
+  bomId: number;
+  sourceFile: string;
+  items: BomTreeItem[];
 }
 
 interface TreeMatch {
@@ -73,11 +88,26 @@ export default function TreePage() {
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machine, setMachine] = useState("");
-  const [subpartTrees, setSubpartTrees] = useState<SubpartTree[]>([]);
+  const [subpartData, setSubpartData] = useState<SubpartData[]>([]);
   const [selectedSourceFiles, setSelectedSourceFiles] = useState<Set<string>>(new Set());
+  const [showDocumentParts, setShowDocumentParts] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [treeLoading, setTreeLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Rebuilt whenever showDocumentParts changes — filtering the flat items
+  // before buildBomTree naturally drops a hidden node's whole subtree too
+  // (its children become unreachable from the root during tree
+  // construction), not just the node itself.
+  const subpartTrees = useMemo<SubpartTree[]>(
+    () =>
+      subpartData.map((d) => ({
+        bomId: d.bomId,
+        sourceFile: d.sourceFile,
+        roots: buildBomTree(showDocumentParts ? d.items : d.items.filter((i) => !isDocumentPart(i.part_no))),
+      })),
+    [subpartData, showDocumentParts]
+  );
   // Expansion the user asked for explicitly (clicks, Expand/Collapse All,
   // the initial auto-expanded root). Kept separate from search-driven
   // expansion (below) so a new/cleared search never leaves stale branches
@@ -178,7 +208,7 @@ export default function TreePage() {
 
   function toggleAllSubparts() {
     setSelectedSourceFiles((prev) =>
-      prev.size === subpartTrees.length ? new Set() : new Set(subpartTrees.map((t) => t.sourceFile))
+      prev.size === subpartData.length ? new Set() : new Set(subpartData.map((d) => d.sourceFile))
     );
   }
 
@@ -194,7 +224,7 @@ export default function TreePage() {
 
   async function handleMachineChange(value: string) {
     setMachine(value);
-    setSubpartTrees([]);
+    setSubpartData([]);
     setSelectedSourceFiles(new Set());
     setError(null);
     setManualExpandedIds(new Set());
@@ -203,21 +233,24 @@ export default function TreePage() {
       const group = machineGroups.find((g) => g.machine === value);
       if (!group) return;
 
-      const trees = await Promise.all(
+      const data = await Promise.all(
         group.subparts.map(async (entry) => {
           const items = await fetchBomTreeItems(getSupabase(), entry.bomId, entry.source_file);
-          return { bomId: entry.bomId, sourceFile: entry.source_file, roots: buildBomTree(items) };
+          return { bomId: entry.bomId, sourceFile: entry.source_file, items };
         })
       );
-      setSubpartTrees(trees);
-      setSelectedSourceFiles(new Set(trees.map((t) => t.sourceFile)));
+      setSubpartData(data);
+      setSelectedSourceFiles(new Set(data.map((d) => d.sourceFile)));
 
       // Auto-expand just each subpart's root(s) so there's something
-      // useful to see immediately without a huge initial render.
+      // useful to see immediately without a huge initial render. Built
+      // against the default (document parts hidden) filter, matching
+      // showDocumentParts's initial state.
       const initial = new Set<string>();
-      for (const tree of trees) {
-        for (const root of tree.roots) {
-          if (root.children.length > 0) initial.add(`${tree.bomId}:${root.path}`);
+      for (const d of data) {
+        const roots = buildBomTree(d.items.filter((i) => !isDocumentPart(i.part_no)));
+        for (const root of roots) {
+          if (root.children.length > 0) initial.add(`${d.bomId}:${root.path}`);
         }
       }
       setManualExpandedIds(initial);
@@ -309,6 +342,16 @@ export default function TreePage() {
                     </div>
                   </PopoverContent>
                 </Popover>
+                <label
+                  className="text-muted-foreground mt-1 flex w-fit items-center gap-2 text-sm"
+                  title={DOCUMENT_PART_PREFIXES.map((p) => `${p.code} - ${p.label}`).join(", ")}
+                >
+                  <Checkbox
+                    checked={showDocumentParts}
+                    onCheckedChange={(v) => setShowDocumentParts(v === true)}
+                  />
+                  Show document/reference parts ({DOCUMENT_PART_PREFIXES.map((p) => p.code).join(", ")})
+                </label>
               </div>
             )}
           </CardContent>

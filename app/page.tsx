@@ -9,9 +9,11 @@ import {
   buildKeyPartDisplayRows,
   checkKeyParts,
   compareBoms,
+  DOCUMENT_PART_PREFIXES,
   fetchAllBomItems,
   fetchMachineGroups,
   formatAggregatedMatches,
+  isDocumentPart,
   type BomEntry,
   type BomItem,
   type CompareResult,
@@ -80,6 +82,7 @@ export default function Home() {
   const [summaryA, setSummaryA] = useState<BomSummary | null>(null);
   const [summaryB, setSummaryB] = useState<BomSummary | null>(null);
   const [resultFilter, setResultFilter] = useState("");
+  const [showDocumentParts, setShowDocumentParts] = useState(false);
   const [resultsExpanded, setResultsExpanded] = useState(true);
   const [bomAItems, setBomAItems] = useState<BomItem[]>([]);
   const [bomBItems, setBomBItems] = useState<BomItem[]>([]);
@@ -301,8 +304,11 @@ export default function Home() {
   }
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
-  const filteredOnlyA = result?.onlyA.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
-  const filteredOnlyB = result?.onlyB.filter((item) => matchesResultFilter(item, resultFilter)) ?? [];
+  function isVisible(item: AggregatedItem): boolean {
+    return matchesResultFilter(item, resultFilter) && (showDocumentParts || !isDocumentPart(item.part_no));
+  }
+  const filteredOnlyA = result?.onlyA.filter(isVisible) ?? [];
+  const filteredOnlyB = result?.onlyB.filter(isVisible) ?? [];
 
   // Key parts: each machine's own key parts get sorted to the top and flagged
   // in "Only in A/B" (A shows which subpart it appears in + its custom name);
@@ -544,16 +550,25 @@ export default function Home() {
           {resultsExpanded && (
             <CardContent>
               {result && (
-                <div className="mb-4 flex gap-2">
-                  <Input
-                    value={resultFilter}
-                    onChange={(e) => setResultFilter(e.target.value)}
-                    placeholder="Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)"
-                  />
-                  <Button variant="outline" onClick={handleExportClick} className="shrink-0">
-                    <Download className="h-4 w-4" />
-                    Download Excel
-                  </Button>
+                <div className="mb-4 grid gap-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={resultFilter}
+                      onChange={(e) => setResultFilter(e.target.value)}
+                      placeholder="Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)"
+                    />
+                    <Button variant="outline" onClick={handleExportClick} className="shrink-0">
+                      <Download className="h-4 w-4" />
+                      Download Excel
+                    </Button>
+                  </div>
+                  <label
+                    className="text-muted-foreground flex w-fit items-center gap-2 text-sm"
+                    title={DOCUMENT_PART_PREFIXES.map((p) => `${p.code} - ${p.label}`).join(", ")}
+                  >
+                    <Checkbox checked={showDocumentParts} onCheckedChange={(v) => setShowDocumentParts(v === true)} />
+                    Show document/reference parts ({DOCUMENT_PART_PREFIXES.map((p) => p.code).join(", ")})
+                  </label>
                 </div>
               )}
 

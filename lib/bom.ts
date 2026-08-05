@@ -676,6 +676,32 @@ export async function fetchZbomOptions(supabase: SupabaseClient, machineName: st
   return Array.from(sections.entries()).map(([section, options]) => ({ section, options }));
 }
 
+/** Leading dash-segment codes for document/reference line items (procedure
+ * & spec docs, schematics, drawings, completed-assembly labels, EFEM
+ * config) that show up in BOMs alongside real parts but aren't physical
+ * components — hidden by default in the Comparison Tool and BOM Structure
+ * viewer, with a checkbox to reveal them. */
+export const DOCUMENT_PART_PREFIXES: { code: string; label: string }[] = [
+  { code: "74", label: "Procedures & Process Specs" },
+  { code: "76", label: "Schematics Diagrams" },
+  { code: "202", label: "Procedures" },
+  { code: "210", label: "Schematic" },
+  { code: "224", label: "Interconnect" },
+  { code: "253", label: "Facility Drawing" },
+  { code: "853", label: "Completed Assembly" },
+  { code: "99999", label: "EFEM Config" },
+];
+
+const DOCUMENT_PART_PREFIX_SET = new Set(DOCUMENT_PART_PREFIXES.map((p) => p.code));
+
+/** A part number's category code is its leading dash-delimited segment
+ * (e.g. "857" in "857-231719-001") — matched exactly, not as a raw
+ * character prefix, so a real part number that merely starts with the same
+ * digits (e.g. "7401234-56") isn't mistaken for category "74". */
+export function isDocumentPart(partNo: string): boolean {
+  return DOCUMENT_PART_PREFIX_SET.has(partNo.split("-")[0]);
+}
+
 export function toNumericQty(value: BomItem["qty"]): number {
   if (value === null || value === undefined || value === "") {
     return 0;
