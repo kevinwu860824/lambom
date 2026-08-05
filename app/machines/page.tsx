@@ -62,6 +62,27 @@ export default function MachinesPage() {
       .eq("machine_name", oldName);
     if (renameError) throw new Error(renameError.message);
 
+    // Same machine_name-as-loose-string-key issue as deleteMachine — these
+    // tables need to be repointed to the new name too, or their rows get
+    // orphaned under a machine name that no longer exists anywhere.
+    const { error: keyPartsError } = await supabase
+      .from("key_parts")
+      .update({ machine_name: newName })
+      .eq("machine_name", oldName);
+    if (keyPartsError) throw new Error(keyPartsError.message);
+
+    const { error: fullBomError } = await supabase
+      .from("full_bom_items")
+      .update({ machine_name: newName })
+      .eq("machine_name", oldName);
+    if (fullBomError) throw new Error(fullBomError.message);
+
+    const { error: zbomError } = await supabase
+      .from("zbom_options")
+      .update({ machine_name: newName })
+      .eq("machine_name", oldName);
+    if (zbomError) throw new Error(zbomError.message);
+
     setGroups((prev) =>
       prev.map((g) =>
         g.machine === oldName
@@ -112,6 +133,29 @@ export default function MachinesPage() {
         .delete()
         .eq("machine_name", group.machine);
       if (machinesError) throw new Error(machinesError.message);
+
+      // key_parts/full_bom_items/zbom_options are all keyed by machine_name
+      // directly (not by bom_id), so deleting bom_machines/bom_items above
+      // doesn't cascade to them — without this they'd become orphaned rows
+      // that keep showing up (e.g. in Key Parts Fingerprint) for a machine
+      // that no longer exists.
+      const { error: keyPartsError } = await supabase
+        .from("key_parts")
+        .delete()
+        .eq("machine_name", group.machine);
+      if (keyPartsError) throw new Error(keyPartsError.message);
+
+      const { error: fullBomError } = await supabase
+        .from("full_bom_items")
+        .delete()
+        .eq("machine_name", group.machine);
+      if (fullBomError) throw new Error(fullBomError.message);
+
+      const { error: zbomError } = await supabase
+        .from("zbom_options")
+        .delete()
+        .eq("machine_name", group.machine);
+      if (zbomError) throw new Error(zbomError.message);
 
       setGroups((prev) => prev.filter((g) => g.machine !== group.machine));
     } catch (err) {
