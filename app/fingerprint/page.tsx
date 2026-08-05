@@ -475,12 +475,17 @@ export default function FingerprintPage() {
   /**
    * Bulk-import from a downloaded-and-filled-in template. (Category, Slot
    * Name) rows not already in this tool type are created automatically
-   * (same as the "Add Row" form above); columns whose header doesn't match
-   * a machine already in this table are ignored rather than erroring out,
-   * since the template's machine columns are fixed at download time.
-   * A blank cell in the file leaves that cell's existing value untouched —
-   * this is a fill-in/update operation, not a full overwrite, so a
-   * partially-filled-in re-upload can't accidentally wipe data.
+   * (same as the "Add Row" form above). Machine columns are matched
+   * against every machine that exists at all (not just ones already in
+   * this tool type's table) — a matched machine not yet in this table is
+   * auto-added to it (same as "Add Machine"), so typing a machine name
+   * into the header of a manually-built template works, not just editing
+   * a freshly-downloaded one. A header that matches no machine anywhere
+   * (typo, or a machine with no BOM uploaded yet) is ignored rather than
+   * erroring out the whole upload. A blank cell in the file leaves that
+   * cell's existing value untouched — this is a fill-in/update operation,
+   * not a full overwrite, so a partially-filled-in re-upload can't
+   * accidentally wipe data.
    */
   async function handleTemplateFile(file: File) {
     setUploadError(null);
@@ -501,15 +506,27 @@ export default function FingerprintPage() {
 
       const machineCols = header
         .map((h, idx) => ({ h, idx }))
-        .filter(({ h, idx }) => idx !== categoryIdx && idx !== slotNameIdx && machines.includes(h));
+        .filter(({ h, idx }) => idx !== categoryIdx && idx !== slotNameIdx && allMachineNames.includes(h));
       if (machineCols.length === 0) {
         throw new Error(
-          "No matching machine columns found — column headers must exactly match machine names already in this table"
+          "No matching machine columns found — column headers must exactly match an existing machine name"
         );
       }
 
       const supabase = getSupabase();
       const dataRows = rows.slice(1).filter((r) => r.some((c) => (c ?? "").toString().trim() !== ""));
+
+      // Pass 0: any matched machine not yet in this tool type's table gets
+      // added to it first (same effect as "Add Machine"), so its column's
+      // cell values have somewhere to attach to.
+      const newMachineNames = machineCols.map((c) => c.h).filter((h) => !machines.includes(h));
+      if (newMachineNames.length > 0) {
+        const { error: addMachinesErr } = await supabase
+          .from("bom_machines")
+          .update({ tool_type: selectedToolType })
+          .in("machine_name", newMachineNames);
+        if (addMachinesErr) throw new Error(`Failed to add machine(s) to this tool type: ${addMachinesErr.message}`);
+      }
 
       // Pass 1: ensure every (category, slot name) row exists, creating any that don't (same as "Add Row").
       const slotByKey = new Map<string, KeyPartSlot>();
