@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
+import * as XLSX from "xlsx-js-style";
+import { Check, Download, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { chunk } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -93,6 +95,10 @@ export default function FingerprintPage() {
 
   const [addMachineValue, setAddMachineValue] = useState("");
   const [addMachineError, setAddMachineError] = useState<string | null>(null);
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const templateFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadToolTypes();
@@ -450,6 +456,151 @@ export default function FingerprintPage() {
     });
   }
 
+  function downloadTemplate() {
+    const header = ["Category", "Slot Name", ...machines];
+    const rows = groups.flatMap((group) =>
+      group.rows.map((slot) => [
+        slot.category,
+        slot.custom_name,
+        ...machines.map((m) => cells.get(cellKey(slot.id, m))?.part_no ?? ""),
+      ])
+    );
+    const sheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    sheet["!cols"] = [{ wch: 16 }, { wch: 24 }, ...machines.map(() => ({ wch: 18 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, "Key Parts");
+    XLSX.writeFile(wb, `${selectedToolType}_Key_Parts_Template.xlsx`);
+  }
+
+  /**
+   * Bulk-import from a downloaded-and-filled-in template. (Category, Slot
+   * Name) rows not already in this tool type are created automatically
+   * (same as the "Add Row" form above); columns whose header doesn't match
+   * a machine already in this table are ignored rather than erroring out,
+   * since the template's machine columns are fixed at download time.
+   * A blank cell in the file leaves that cell's existing value untouched —
+   * this is a fill-in/update operation, not a full overwrite, so a
+   * partially-filled-in re-upload can't accidentally wipe data.
+   */
+  async function handleTemplateFile(file: File) {
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+      if (rows.length < 2) throw new Error("This file has no data rows besides the header");
+
+      const header = rows[0].map((h) => (h ?? "").toString().trim());
+      const categoryIdx = header.findIndex((h) => h.toLowerCase() === "category");
+      const slotNameIdx = header.findIndex((h) => h.toLowerCase() === "slot name");
+      if (categoryIdx === -1 || slotNameIdx === -1) {
+        throw new Error('Required columns not found ("Category" / "Slot Name") — check the file format');
+      }
+
+      const machineCols = header
+        .map((h, idx) => ({ h, idx }))
+        .filter(({ h, idx }) => idx !== categoryIdx && idx !== slotNameIdx && machines.includes(h));
+      if (machineCols.length === 0) {
+        throw new Error(
+          "No matching machine columns found — column headers must exactly match machine names already in this table"
+        );
+      }
+
+      const supabase = getSupabase();
+      const dataRows = rows.slice(1).filter((r) => r.some((c) => (c ?? "").toString().trim() !== ""));
+
+      // Pass 1: ensure every (category, slot name) row exists, creating any that don't (same as "Add Row").
+      const slotByKey = new Map<string, KeyPartSlot>();
+      for (const s of slots) slotByKey.set(`${s.category}::${s.custom_name}`, s);
+      let nextSortOrder = slots.length > 0 ? Math.max(...slots.map((s) => s.sort_order)) + 10 : 0;
+
+      for (const row of dataRows) {
+        const category = (row[categoryIdx] ?? "").toString().trim();
+        const customName = (row[slotNameIdx] ?? "").toString().trim();
+        if (!category || !customName) continue;
+        const key = `${category}::${customName}`;
+        if (slotByKey.has(key)) continue;
+
+        const color = slots.find((s) => s.category === category)?.color ?? null;
+        const { data, error } = await supabase
+          .from("key_part_slots")
+          .insert({
+            tool_type: selectedToolType,
+            category,
+            custom_name: customName,
+            sort_order: nextSortOrder,
+            color,
+          })
+          .select("id,tool_type,category,custom_name,sort_order,color")
+          .single();
+        if (error) throw new Error(`Failed to create row "${category} / ${customName}": ${error.message}`);
+        nextSortOrder += 10;
+        slotByKey.set(key, data as KeyPartSlot);
+      }
+
+      // Pass 2: look up which (slot, machine) cells already exist, to tell insert from update.
+      const allSlotIds = [...slotByKey.values()].map((s) => s.id);
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("key_parts")
+        .select("id,slot_id,machine_name")
+        .in("slot_id", allSlotIds)
+        .in(
+          "machine_name",
+          machineCols.map((c) => c.h)
+        );
+      if (existingErr) throw new Error(existingErr.message);
+      const existingIdByKey = new Map<string, number>();
+      for (const r of existingRows ?? []) {
+        existingIdByKey.set(`${r.slot_id}::${r.machine_name}`, r.id as number);
+      }
+
+      // Pass 3: apply non-empty cells only — blank cells leave existing data untouched.
+      const toInsert: { part_no: string; custom_name: string; machine_name: string; slot_id: number }[] = [];
+      const toUpdate: { id: number; part_no: string }[] = [];
+
+      for (const row of dataRows) {
+        const category = (row[categoryIdx] ?? "").toString().trim();
+        const customName = (row[slotNameIdx] ?? "").toString().trim();
+        if (!category || !customName) continue;
+        const slot = slotByKey.get(`${category}::${customName}`);
+        if (!slot) continue;
+
+        for (const { h: machineName, idx } of machineCols) {
+          const value = (row[idx] ?? "").toString().trim();
+          if (!value) continue;
+          const existingId = existingIdByKey.get(`${slot.id}::${machineName}`);
+          if (existingId) {
+            toUpdate.push({ id: existingId, part_no: value });
+          } else {
+            toInsert.push({ part_no: value, custom_name: slot.custom_name, machine_name: machineName, slot_id: slot.id });
+          }
+        }
+      }
+
+      for (const batch of chunk(toInsert, 500)) {
+        const { error } = await supabase.from("key_parts").insert(batch);
+        if (error) throw new Error(error.message);
+      }
+
+      for (const batch of chunk(toUpdate, 20)) {
+        const results = await Promise.all(
+          batch.map((u) => supabase.from("key_parts").update({ part_no: u.part_no }).eq("id", u.id))
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw new Error(failed.error.message);
+      }
+
+      await loadForToolType(selectedToolType);
+      loadToolTypes();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className="bg-background min-h-screen">
       <div className="mx-auto max-w-[1800px] px-4 py-8 md:px-6">
@@ -535,10 +686,35 @@ export default function FingerprintPage() {
                   <Plus className="h-4 w-4" />
                   Add Machine
                 </Button>
+                <Button size="sm" variant="outline" onClick={downloadTemplate}>
+                  <Download className="h-4 w-4" />
+                  Download Template
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={uploading}
+                  onClick={() => templateFileInputRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4" />
+                  {uploading ? "Uploading…" : "Upload Template"}
+                </Button>
+                <input
+                  ref={templateFileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleTemplateFile(file);
+                    e.target.value = "";
+                  }}
+                />
               </div>
             </CardHeader>
             <CardContent>
               {addMachineError && <p className="text-destructive mb-3 text-sm">{addMachineError}</p>}
+              {uploadError && <p className="text-destructive mb-3 text-sm">Template upload failed: {uploadError}</p>}
 
               <div className="mb-4 flex flex-wrap items-end gap-2 rounded-md border p-3">
                 <div className="grid gap-1.5">
