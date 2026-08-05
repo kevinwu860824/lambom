@@ -1,12 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-display);
+  --font-sans: -apple-system, BlinkMacSystemFont, var(--font-inter), "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
   --font-mono: var(--font-geist-mono);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
@@ -16,6 +15,7 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -39,30 +39,55 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: #6a7885;
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #6de3c6;
-  --primary-foreground: #111827;
-  --secondary: #6a7885;
-  --secondary-foreground: #f8fafc;
-  --muted: #eef2f4;
-  --muted-foreground: #6a7885;
-  --accent: #6a7885;
-  --accent-foreground: #f8fafc;
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: #d8dee3;
-  --input: #d8dee3;
-  --ring: #6de3c6;
+  --radius: 0.75rem;
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
+  --primary: #0071e3;
+  --primary-foreground: #ffffff;
+  --secondary: #e8e8ed;
+  --secondary-foreground: #1d1d1f;
+  --muted: #e8e8ed;
+  --muted-foreground: #6e6e73;
+  --accent: #e8e8ed;
+  --accent-foreground: #1d1d1f;
+  --destructive: #ff3b30;
+  --destructive-foreground: #ffffff;
+  --border: #d2d2d7;
+  --input: #d2d2d7;
+  --ring: #0071e3;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #000000;
+    --foreground: #f5f5f7;
+    --card: #1c1c1e;
+    --card-foreground: #f5f5f7;
+    --popover: #1c1c1e;
+    --popover-foreground: #f5f5f7;
+    --primary: #0a84ff;
+    --primary-foreground: #ffffff;
+    --secondary: #2c2c2e;
+    --secondary-foreground: #f5f5f7;
+    --muted: #2c2c2e;
+    --muted-foreground: #98989d;
+    --accent: #2c2c2e;
+    --accent-foreground: #f5f5f7;
+    --destructive: #ff453a;
+    --destructive-foreground: #ffffff;
+    --border: #38383a;
+    --input: #38383a;
+    --ring: #0a84ff;
+  }
 }
 
 @layer base {

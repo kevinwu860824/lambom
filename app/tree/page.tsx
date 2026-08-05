@@ -331,7 +331,7 @@ export default function TreePage() {
                 placeholder="Search part no. / description…"
                 className="flex-1"
               />
-              <span className="w-16 shrink-0 text-center text-sm whitespace-nowrap text-white">
+              <span className="text-muted-foreground w-16 shrink-0 text-center text-sm whitespace-nowrap">
                 {query.trim() ? `${matches.length > 0 ? activeMatchIndexResolved + 1 : 0} / ${matches.length}` : ""}
               </span>
               <Button

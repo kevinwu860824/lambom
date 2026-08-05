@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Playfair_Display, Geist_Mono } from "next/font/google";
+import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-// Didot itself isn't a web font (Mac-only system font), so we use Playfair
-// Display — a Google Font explicitly designed as a Didot-style high-contrast
-// serif — which renders consistently on every platform.
-const displaySerif = Playfair_Display({
-  variable: "--font-display",
+// Inter is a metrics-compatible substitute for San Francisco (true SF Pro
+// isn't licensable for web embedding). The -apple-system/BlinkMacSystemFont
+// stack in globals.css's --font-sans means real Mac/iOS users still get
+// native San Francisco; Inter only kicks in as the fallback everywhere else.
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
@@ -26,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${displaySerif.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${geistMono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );

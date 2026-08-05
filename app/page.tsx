@@ -403,8 +403,8 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px] px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">BOM Comparison Tool</h1>
-            <p className="mt-1 text-sm text-white/70">
+            <h1 className="text-2xl font-semibold tracking-tight">BOM Comparison Tool</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
               Select two machine BOMs to compare their differences.
             </p>
           </div>
