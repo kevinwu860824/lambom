@@ -229,22 +229,34 @@ export async function withRetry<T extends { error: { message: string } | null }>
 async function fetchBomItemsPage<T>(
   supabase: SupabaseClient,
   bomId: number,
-  from: number,
+  afterId: number,
   pageSize: number,
   columns: string
-): Promise<T[]> {
+): Promise<(T & { id: number })[]> {
   const { data, error } = await withRetry(() =>
     supabase
       .from("bom_items")
-      .select(columns)
+      .select(`id,${columns}`)
       .eq("bom_id", bomId)
+      .gt("id", afterId)
       .order("id", { ascending: true })
-      .range(from, from + pageSize - 1)
+      .limit(pageSize)
   );
   if (error) throw new Error(error.message);
-  return (data ?? []) as T[];
+  return (data ?? []) as unknown as (T & { id: number })[];
 }
 
+/**
+ * Pages through bom_items via keyset pagination (id > lastSeenId, ordered
+ * by id) rather than .range()'s offset-based pagination. A single machine's
+ * row count can run into the tens of thousands (e.g. Full BOM items —
+ * fetchFullBomTreeItems below shares this same concern), and OFFSET makes
+ * Postgres walk past every already-seen row on each successive page, so
+ * later pages get progressively slower and can eventually hit the
+ * project's statement timeout on a large enough set. Keyset pagination
+ * costs the same (index-assisted) amount of work on every page regardless
+ * of how deep in the result set it is.
+ */
 async function fetchAllBomItemsRaw<T>(
   supabase: SupabaseClient,
   bomId: number,
@@ -253,15 +265,12 @@ async function fetchAllBomItemsRaw<T>(
 ): Promise<T[]> {
   const pageSize = 1000;
   const items: T[] = [];
-  let from = 0;
+  let afterId = 0;
 
-  // The Supabase project caps rows-per-request server-side (db-max-rows),
-  // so a single request with a high .limit() is silently truncated.
-  // Page through with .range() until a page comes back short.
   for (;;) {
-    let data: T[];
+    let data: (T & { id: number })[];
     try {
-      data = await fetchBomItemsPage<T>(supabase, bomId, from, pageSize, columns);
+      data = await fetchBomItemsPage<T>(supabase, bomId, afterId, pageSize, columns);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to load subpart (${sourceFile}): ${message}`);
@@ -269,8 +278,8 @@ async function fetchAllBomItemsRaw<T>(
 
     if (data.length === 0) break;
     items.push(...data);
+    afterId = data[data.length - 1].id;
     if (data.length < pageSize) break;
-    from += pageSize;
   }
 
   return items;
@@ -314,36 +323,43 @@ export async function fetchBomTreeItems(
 async function fetchFullBomTreeItemsPage(
   supabase: SupabaseClient,
   machineName: string,
-  from: number,
+  afterId: number,
   pageSize: number
-): Promise<BomTreeItem[]> {
+): Promise<(BomTreeItem & { id: number })[]> {
   const { data, error } = await withRetry(() =>
     supabase
       .from("full_bom_items")
-      .select("part_no,description,qty,uom,level,parent_path,line_no")
+      .select("id,part_no,description,qty,uom,level,parent_path,line_no")
       .eq("machine_name", machineName)
+      .gt("id", afterId)
       .order("id", { ascending: true })
-      .range(from, from + pageSize - 1)
+      .limit(pageSize)
   );
   if (error) throw new Error(error.message);
-  return (data ?? []) as BomTreeItem[];
+  return (data ?? []) as (BomTreeItem & { id: number })[];
 }
 
-/** Same shape as fetchBomTreeItems, but reading from full_bom_items
- * (machine_name-keyed, no bom_id/source_file) instead of bom_items — Full
- * BOM can run to tens of thousands of rows (e.g. 23522 for one real
- * machine), so this pages through .range() the same way fetchAllBomItems
- * does rather than trusting a single unbounded request. */
+/**
+ * Same shape as fetchBomTreeItems, but reading from full_bom_items
+ * (machine_name-keyed, no bom_id/source_file) instead of bom_items. Uses
+ * keyset pagination (id > lastSeenId) rather than .range()'s OFFSET —
+ * verified against real production data (dozens of machines, 20k-26k+ rows
+ * each): OFFSET pagination makes Postgres walk past every already-seen row
+ * on each successive page, so later pages get progressively slower and can
+ * hit the project's statement timeout ("canceling statement due to
+ * statement timeout") on a set this size, where keyset pagination costs
+ * the same index-assisted amount of work on every page regardless of depth.
+ */
 export async function fetchFullBomTreeItems(supabase: SupabaseClient, machineName: string): Promise<BomTreeItem[]> {
   const pageSize = 1000;
   const items: BomTreeItem[] = [];
-  let from = 0;
+  let afterId = 0;
   for (;;) {
-    const data = await fetchFullBomTreeItemsPage(supabase, machineName, from, pageSize);
+    const data = await fetchFullBomTreeItemsPage(supabase, machineName, afterId, pageSize);
     if (data.length === 0) break;
     items.push(...data);
+    afterId = data[data.length - 1].id;
     if (data.length < pageSize) break;
-    from += pageSize;
   }
   return items;
 }

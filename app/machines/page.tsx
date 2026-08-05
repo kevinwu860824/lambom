@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
-import { fetchMachineGroups, type BomEntry, type MachineGroup } from "@/lib/bom";
+import { fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -56,31 +56,31 @@ export default function MachinesPage() {
 
   async function renameMachine(oldName: string, newName: string) {
     const supabase = getSupabase();
-    const { error: renameError } = await supabase
-      .from("bom_machines")
-      .update({ machine_name: newName })
-      .eq("machine_name", oldName);
+    const { error: renameError } = await withRetry(() =>
+      supabase.from("bom_machines").update({ machine_name: newName }).eq("machine_name", oldName)
+    );
     if (renameError) throw new Error(renameError.message);
 
     // Same machine_name-as-loose-string-key issue as deleteMachine — these
     // tables need to be repointed to the new name too, or their rows get
-    // orphaned under a machine name that no longer exists anywhere.
-    const { error: keyPartsError } = await supabase
-      .from("key_parts")
-      .update({ machine_name: newName })
-      .eq("machine_name", oldName);
+    // orphaned under a machine name that no longer exists anywhere. Each
+    // touches every row for this machine at once (full_bom_items alone can
+    // be tens of thousands), so — same as bom_items elsewhere — wrapped in
+    // withRetry to ride out a transient "canceling statement due to
+    // statement timeout" on a cold table page.
+    const { error: keyPartsError } = await withRetry(() =>
+      supabase.from("key_parts").update({ machine_name: newName }).eq("machine_name", oldName)
+    );
     if (keyPartsError) throw new Error(keyPartsError.message);
 
-    const { error: fullBomError } = await supabase
-      .from("full_bom_items")
-      .update({ machine_name: newName })
-      .eq("machine_name", oldName);
+    const { error: fullBomError } = await withRetry(() =>
+      supabase.from("full_bom_items").update({ machine_name: newName }).eq("machine_name", oldName)
+    );
     if (fullBomError) throw new Error(fullBomError.message);
 
-    const { error: zbomError } = await supabase
-      .from("zbom_options")
-      .update({ machine_name: newName })
-      .eq("machine_name", oldName);
+    const { error: zbomError } = await withRetry(() =>
+      supabase.from("zbom_options").update({ machine_name: newName }).eq("machine_name", oldName)
+    );
     if (zbomError) throw new Error(zbomError.message);
 
     setGroups((prev) =>
