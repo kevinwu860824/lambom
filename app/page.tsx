@@ -9,11 +9,11 @@ import {
   buildKeyPartDisplayRows,
   checkKeyParts,
   compareBoms,
+  documentPartCodeFor,
   DOCUMENT_PART_PREFIXES,
   fetchAllBomItems,
   fetchMachineGroups,
   formatAggregatedMatches,
-  isDocumentPart,
   type BomEntry,
   type BomItem,
   type CompareResult,
@@ -21,6 +21,7 @@ import {
   type KeyPartInfo,
   type MachineGroup,
 } from "@/lib/bom";
+import { DocumentPartsFilter } from "@/components/document-parts-filter";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -82,7 +83,7 @@ export default function Home() {
   const [summaryA, setSummaryA] = useState<BomSummary | null>(null);
   const [summaryB, setSummaryB] = useState<BomSummary | null>(null);
   const [resultFilter, setResultFilter] = useState("");
-  const [showDocumentParts, setShowDocumentParts] = useState(false);
+  const [visibleDocumentCodes, setVisibleDocumentCodes] = useState<Set<string>>(new Set());
   const [resultsExpanded, setResultsExpanded] = useState(true);
   const [bomAItems, setBomAItems] = useState<BomItem[]>([]);
   const [bomBItems, setBomBItems] = useState<BomItem[]>([]);
@@ -305,10 +306,27 @@ export default function Home() {
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
   function isVisible(item: AggregatedItem): boolean {
-    return matchesResultFilter(item, resultFilter) && (showDocumentParts || !isDocumentPart(item.part_no));
+    if (!matchesResultFilter(item, resultFilter)) return false;
+    const code = documentPartCodeFor(item.part_no);
+    return code === null || visibleDocumentCodes.has(code);
   }
   const filteredOnlyA = result?.onlyA.filter(isVisible) ?? [];
   const filteredOnlyB = result?.onlyB.filter(isVisible) ?? [];
+
+  function toggleDocumentCode(code: string) {
+    setVisibleDocumentCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
+  function toggleAllDocumentCodes() {
+    setVisibleDocumentCodes((prev) =>
+      prev.size === DOCUMENT_PART_PREFIXES.length ? new Set() : new Set(DOCUMENT_PART_PREFIXES.map((p) => p.code))
+    );
+  }
 
   // Key parts: each machine's own key parts get sorted to the top and flagged
   // in "Only in A/B" (A shows which subpart it appears in + its custom name);
@@ -562,13 +580,11 @@ export default function Home() {
                       Download Excel
                     </Button>
                   </div>
-                  <label
-                    className="text-muted-foreground flex w-fit items-center gap-2 text-sm"
-                    title={DOCUMENT_PART_PREFIXES.map((p) => `${p.code} - ${p.label}`).join(", ")}
-                  >
-                    <Checkbox checked={showDocumentParts} onCheckedChange={(v) => setShowDocumentParts(v === true)} />
-                    Show document/reference parts ({DOCUMENT_PART_PREFIXES.map((p) => p.code).join(", ")})
-                  </label>
+                  <DocumentPartsFilter
+                    visibleCodes={visibleDocumentCodes}
+                    onToggle={toggleDocumentCode}
+                    onToggleAll={toggleAllDocumentCodes}
+                  />
                 </div>
               )}
 
