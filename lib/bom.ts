@@ -311,6 +311,80 @@ export async function fetchBomTreeItems(
   );
 }
 
+async function fetchFullBomTreeItemsPage(
+  supabase: SupabaseClient,
+  machineName: string,
+  from: number,
+  pageSize: number
+): Promise<BomTreeItem[]> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("full_bom_items")
+      .select("part_no,description,qty,uom,level,parent_path,line_no")
+      .eq("machine_name", machineName)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1)
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []) as BomTreeItem[];
+}
+
+/** Same shape as fetchBomTreeItems, but reading from full_bom_items
+ * (machine_name-keyed, no bom_id/source_file) instead of bom_items — Full
+ * BOM can run to tens of thousands of rows (e.g. 23522 for one real
+ * machine), so this pages through .range() the same way fetchAllBomItems
+ * does rather than trusting a single unbounded request. */
+export async function fetchFullBomTreeItems(supabase: SupabaseClient, machineName: string): Promise<BomTreeItem[]> {
+  const pageSize = 1000;
+  const items: BomTreeItem[] = [];
+  let from = 0;
+  for (;;) {
+    const data = await fetchFullBomTreeItemsPage(supabase, machineName, from, pageSize);
+    if (data.length === 0) break;
+    items.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return items;
+}
+
+/**
+ * Distinct machine_name values in `table`, via an index-assisted "skip
+ * scan": repeatedly ask for the single smallest machine_name greater than
+ * the last one seen. A plain "select machine_name" over every row hits the
+ * Supabase project's server-side rows-per-request cap before ever reaching
+ * a second machine once one machine has enough rows (full_bom_items can
+ * have tens of thousands for a single machine alone) — silently returning
+ * an incomplete list — and paginating through every row to dedupe
+ * client-side is correct but scales with total row count, which for a
+ * table like that can mean many tens of requests just to list machines.
+ * This instead costs exactly one request per distinct machine (each
+ * cheap, since `order + gt + limit(1)` lets Postgres use the machine_name
+ * index to jump straight to the next value), regardless of how many rows
+ * any one machine has — both full_bom_items and zbom_options already have
+ * a machine_name index.
+ */
+async function fetchDistinctMachineNames(supabase: SupabaseClient, table: string): Promise<string[]> {
+  const names: string[] = [];
+  let last: string | null = null;
+  for (;;) {
+    let query = supabase.from(table).select("machine_name").order("machine_name", { ascending: true }).limit(1);
+    if (last !== null) query = query.gt("machine_name", last);
+    const { data, error } = await withRetry(() => query);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    last = data[0].machine_name as string;
+    names.push(last);
+  }
+  return names;
+}
+
+/** Names of every machine that has a stored Full BOM, for populating a
+ * machine picker without fetching all the item rows first. */
+export async function fetchFullBomMachineNames(supabase: SupabaseClient): Promise<string[]> {
+  return fetchDistinctMachineNames(supabase, "full_bom_items");
+}
+
 export interface BomTreeNode {
   item: BomTreeItem;
   path: string;
@@ -645,11 +719,7 @@ export interface ZbomSection {
 /** Names of every machine that has at least one stored ZBOM option, for
  * populating a machine picker without fetching all the option rows first. */
 export async function fetchZbomMachineNames(supabase: SupabaseClient): Promise<string[]> {
-  const { data, error } = await supabase.from("zbom_options").select("machine_name");
-  if (error) throw new Error(error.message);
-  const names = Array.from(new Set((data ?? []).map((row) => row.machine_name as string)));
-  names.sort((a, b) => a.localeCompare(b));
-  return names;
+  return fetchDistinctMachineNames(supabase, "zbom_options");
 }
 
 /** One machine's ZBOM options, grouped by section in the order they were

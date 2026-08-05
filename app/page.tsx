@@ -442,6 +442,9 @@ export default function Home() {
             <Button variant="outline" asChild>
               <Link href="/tree">BOM Structure</Link>
             </Button>
+            <Button variant="outline" asChild>
+              <Link href="/full-bom">Full BOM Structure</Link>
+            </Button>
             <Button variant="outline" size="icon" asChild>
               <Link href="/machines" aria-label="Edit machine names">
                 <Settings className="h-4 w-4" />
