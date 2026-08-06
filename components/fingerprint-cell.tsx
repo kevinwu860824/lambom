@@ -54,6 +54,23 @@ export function FingerprintCell({
   return (
     <div className="min-w-[140px]">
       <div className="flex items-center gap-1">
+        {foundInModules && foundInModules.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-muted-foreground shrink-0 pl-1">
+                <Layers className="h-3 w-3" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Also found in:</p>
+              <ul className="mt-0.5 list-disc pl-3">
+                {foundInModules.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            </TooltipContent>
+          </Tooltip>
+        )}
         <input
           value={draft}
           disabled={saving}
@@ -73,23 +90,6 @@ export function FingerprintCell({
             mismatch && "text-red-600 font-semibold"
           )}
         />
-        {foundInModules && foundInModules.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="text-muted-foreground shrink-0 pr-1">
-                <Layers className="h-3 w-3" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">Also found in:</p>
-              <ul className="mt-0.5 list-disc pl-3">
-                {foundInModules.map((m) => (
-                  <li key={m}>{m}</li>
-                ))}
-              </ul>
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}
     </div>
