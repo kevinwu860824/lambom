@@ -107,6 +107,22 @@ export default function FingerprintPage() {
     return supabaseRef.current;
   }
 
+  // Caches each machine's Full BOM + Modules lookup for the lifetime of
+  // this page (a machine's BOM data doesn't change while browsing/editing
+  // this table), so editing several cells for the same machine in a row —
+  // manually here, or via Excel upload — only fetches it once instead of
+  // on every single edit.
+  const machineLookupCacheRef = useRef<Map<string, Promise<MachineBomLookup>>>(new Map());
+  function getMachineLookup(machineName: string): Promise<MachineBomLookup> {
+    const cache = machineLookupCacheRef.current;
+    let promise = cache.get(machineName);
+    if (!promise) {
+      promise = fetchMachineBomLookup(getSupabase(), machineName);
+      cache.set(machineName, promise);
+    }
+    return promise;
+  }
+
   const [toolTypes, setToolTypes] = useState<string[]>([]);
   const [selectedToolType, setSelectedToolType] = useState("");
   const [newToolType, setNewToolType] = useState("");
@@ -541,18 +557,40 @@ export default function FingerprintPage() {
       return;
     }
 
+    // Same validation as an Excel template upload, just for this one cell:
+    // check the new value against the machine's actual Full BOM/Modules
+    // data (cached per machine, see getMachineLookup above) before writing
+    // anything. If it's not found anywhere, ask for confirmation instead of
+    // silently saving a likely typo — declining leaves the cell unchanged.
+    let foundInModules: string[] | null = null;
+    try {
+      const lookup = await getMachineLookup(machineName);
+      const inFullBom = lookup.fullBomPartNos.has(newValue);
+      const moduleSources = lookup.modulePartNoSources.get(newValue) ?? null;
+      foundInModules = moduleSources && moduleSources.length > 0 ? moduleSources : null;
+      if (!inFullBom && !foundInModules) {
+        const proceed = window.confirm(
+          `"${newValue}" wasn't found in ${machineName}'s Full BOM or Modules data — it may be a typo. Save it anyway?`
+        );
+        if (!proceed) throw new Error("Cancelled — not found in Full BOM or Modules");
+      }
+    } catch (err) {
+      // A validation-lookup failure (e.g. network hiccup) shouldn't block
+      // saving — fall back to saving without the found_in_modules info,
+      // same as before this validation existed. A user-declined
+      // confirmation is a real cancellation and must still abort, though.
+      if (err instanceof Error && err.message.startsWith("Cancelled")) throw err;
+    }
+
     if (existing) {
-      // Manually typing a new value invalidates whatever found_in_modules
-      // was recorded for the old one (that was only ever computed during
-      // an Excel template upload) — clear it rather than leave stale info.
       const { error } = await supabase
         .from("key_parts")
-        .update({ part_no: newValue, found_in_modules: null })
+        .update({ part_no: newValue, found_in_modules: foundInModules })
         .eq("id", existing.id);
       if (error) throw new Error(error.message);
       setCells((prev) => {
         const next = new Map(prev);
-        next.set(key, { id: existing.id, part_no: newValue, foundInModules: null });
+        next.set(key, { id: existing.id, part_no: newValue, foundInModules });
         return next;
       });
       return;
@@ -565,13 +603,14 @@ export default function FingerprintPage() {
         custom_name: slot.custom_name,
         machine_name: machineName,
         slot_id: slot.id,
+        found_in_modules: foundInModules,
       })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
     setCells((prev) => {
       const next = new Map(prev);
-      next.set(key, { id: data!.id as number, part_no: newValue, foundInModules: null });
+      next.set(key, { id: data!.id as number, part_no: newValue, foundInModules });
       return next;
     });
   }
@@ -752,13 +791,14 @@ export default function FingerprintPage() {
       }
 
       // Pass 2: validate every non-blank cell against its machine's Full
-      // BOM + Modules data. One lookup per distinct machine, fetched in
-      // parallel, reused across every cell for that machine.
+      // BOM + Modules data. One lookup per distinct machine (via the same
+      // page-lifetime cache manual cell edits use), fetched in parallel,
+      // reused across every cell for that machine.
       const involvedMachines = Array.from(new Set(machineCols.map((c) => c.h)));
       const lookupByMachine = new Map<string, MachineBomLookup>();
       await Promise.all(
         involvedMachines.map(async (m) => {
-          lookupByMachine.set(m, await fetchMachineBomLookup(supabase, m));
+          lookupByMachine.set(m, await getMachineLookup(m));
         })
       );
 
