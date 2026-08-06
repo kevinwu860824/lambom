@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * Lightweight blur-to-save cell editor for the fingerprint matrix — unlike
@@ -73,12 +74,21 @@ export function FingerprintCell({
           )}
         />
         {foundInModules && foundInModules.length > 0 && (
-          <span
-            title={`Also found in: ${foundInModules.join(", ")}`}
-            className="text-muted-foreground shrink-0 pr-1"
-          >
-            <Layers className="h-3 w-3" />
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-muted-foreground shrink-0 pr-1">
+                <Layers className="h-3 w-3" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Also found in:</p>
+              <ul className="mt-0.5 list-disc pl-3">
+                {foundInModules.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}
