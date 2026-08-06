@@ -12,16 +12,22 @@ import {
   documentPartCodeFor,
   DOCUMENT_PART_PREFIXES,
   fetchAllBomItems,
+  fetchBomTreeItems,
   fetchFullBomItems,
+  fetchFullBomTreeItems,
   fetchMachineGroups,
+  findPartLocations,
   formatAggregatedMatches,
   type BomEntry,
   type BomItem,
+  type BomTreeItem,
   type CompareResult,
   type KeyPart,
   type KeyPartInfo,
   type MachineGroup,
+  type PartLocation,
 } from "@/lib/bom";
+import { cn } from "@/lib/utils";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +36,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -95,6 +108,69 @@ export default function Home() {
   const [keyParts, setKeyParts] = useState<KeyPart[]>([]);
   const [keyPartsLoading, setKeyPartsLoading] = useState(true);
   const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
+
+  // "Where is this part?" dialog — opened by clicking a row in Only in A/B.
+  // Full BOM tree + per-module trees are page-lifetime cached (keyed by
+  // machine name / bomId) since they're each a paginated fetch of
+  // potentially 20k+ rows and the same machine's data doesn't change while
+  // browsing this page.
+  const fullBomTreeCacheRef = useRef<Map<string, Promise<BomTreeItem[]>>>(new Map());
+  function getFullBomTree(machine: string) {
+    let promise = fullBomTreeCacheRef.current.get(machine);
+    if (!promise) {
+      promise = fetchFullBomTreeItems(getSupabase(), machine);
+      fullBomTreeCacheRef.current.set(machine, promise);
+    }
+    return promise;
+  }
+
+  const moduleTreeCacheRef = useRef<Map<number, Promise<BomTreeItem[]>>>(new Map());
+  function getModuleTree(bomId: number, sourceFile: string) {
+    let promise = moduleTreeCacheRef.current.get(bomId);
+    if (!promise) {
+      promise = fetchBomTreeItems(getSupabase(), bomId, sourceFile);
+      moduleTreeCacheRef.current.set(bomId, promise);
+    }
+    return promise;
+  }
+
+  const [positionTarget, setPositionTarget] = useState<{
+    partNo: string;
+    description: string | null;
+    machine: string;
+  } | null>(null);
+  const [positionLoading, setPositionLoading] = useState(false);
+  const [positionError, setPositionError] = useState<string | null>(null);
+  const [positionFullBom, setPositionFullBom] = useState<PartLocation[] | null>(null);
+  const [positionModules, setPositionModules] = useState<
+    { sourceFile: string; locations: PartLocation[] }[] | null
+  >(null);
+
+  async function openPositionDialog(item: AggregatedItem, machine: string) {
+    setPositionTarget({ partNo: item.part_no, description: item.description, machine });
+    setPositionLoading(true);
+    setPositionError(null);
+    setPositionFullBom(null);
+    setPositionModules(null);
+
+    try {
+      const [fullBomTree, moduleResults] = await Promise.all([
+        getFullBomTree(machine),
+        Promise.all(
+          subpartsFor(machine).map(async (entry) => ({
+            sourceFile: entry.source_file,
+            locations: findPartLocations(await getModuleTree(entry.bomId, entry.source_file), item.part_no),
+          }))
+        ),
+      ]);
+      setPositionFullBom(findPartLocations(fullBomTree, item.part_no));
+      setPositionModules(moduleResults.filter((m) => m.locations.length > 0));
+    } catch (err) {
+      setPositionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPositionLoading(false);
+    }
+  }
 
   function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -641,6 +717,8 @@ export default function Home() {
                   renameInfo={renameInfoA}
                   otherSideLabel="B"
                   keyPartColumnVariant="detail"
+                  machine={summaryA?.machine ?? ""}
+                  onSelectPart={openPositionDialog}
                 />
                 <PartTable
                   title="Only in B"
@@ -650,11 +728,79 @@ export default function Home() {
                   renameRank={renameRankB}
                   otherSideLabel="A"
                   keyPartColumnVariant="badge"
+                  machine={summaryB?.machine ?? ""}
+                  onSelectPart={openPositionDialog}
                 />
               </div>
             </CardContent>
           )}
         </Card>
+
+        <Dialog open={positionTarget !== null} onOpenChange={(open) => !open && setPositionTarget(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{positionTarget?.partNo}</DialogTitle>
+              <DialogDescription>
+                {positionTarget?.description ?? "-"} — machine {positionTarget?.machine}
+              </DialogDescription>
+            </DialogHeader>
+
+            {positionLoading ? (
+              <p className="text-muted-foreground text-sm">Loading…</p>
+            ) : positionError ? (
+              <p className="text-destructive text-sm">{positionError}</p>
+            ) : (
+              <div className="grid max-h-[60vh] gap-4 overflow-y-auto">
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">Full BOM</p>
+                  {positionFullBom && positionFullBom.length > 0 ? (
+                    <ul className="grid gap-1.5">
+                      {positionFullBom.map((loc, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-sm">
+                          <Badge variant="outline" className="shrink-0">
+                            Level {loc.level}
+                          </Badge>
+                          <span className={loc.breadcrumb ? undefined : "text-muted-foreground"}>
+                            {loc.breadcrumb || "Root level"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
+                  )}
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">Modules</p>
+                  {positionModules && positionModules.length > 0 ? (
+                    <div className="grid gap-3">
+                      {positionModules.map((m) => (
+                        <div key={m.sourceFile}>
+                          <p className="text-sm font-medium">{m.sourceFile}</p>
+                          <ul className="mt-1 grid gap-1.5">
+                            {m.locations.map((loc, i) => (
+                              <li key={i} className="flex items-start gap-1.5 text-sm">
+                                <Badge variant="outline" className="shrink-0">
+                                  Level {loc.level}
+                                </Badge>
+                                <span className={loc.breadcrumb ? undefined : "text-muted-foreground"}>
+                                  {loc.breadcrumb || "Root level"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-sm italic">Not found in any module</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <KeyPartsPanel
           machineA={machineA}
@@ -781,6 +927,8 @@ function PartTable({
   renameRank,
   otherSideLabel,
   keyPartColumnVariant = "badge",
+  machine,
+  onSelectPart,
 }: {
   title: string;
   items?: AggregatedItem[];
@@ -789,6 +937,8 @@ function PartTable({
   renameRank?: Map<string, number>;
   otherSideLabel?: string;
   keyPartColumnVariant?: "badge" | "detail";
+  machine: string;
+  onSelectPart: (item: AggregatedItem, machine: string) => void;
 }) {
   const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0 || (renameInfo?.size ?? 0) > 0;
 
@@ -822,7 +972,16 @@ function PartTable({
               {rows.map(({ item, keyPartInfo: info, renameText }) => (
                 <TableRow
                   key={item.part_no}
-                  className={renameText ? "text-red-600 dark:text-red-400" : undefined}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectPart(item, machine)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") onSelectPart(item, machine);
+                  }}
+                  className={cn(
+                    "hover:bg-accent cursor-pointer",
+                    renameText && "text-red-600 dark:text-red-400"
+                  )}
                 >
                   <TableCell>{item.part_no}</TableCell>
                   <TableCell>{item.description}</TableCell>

@@ -524,6 +524,41 @@ export function buildBomTree(items: BomTreeItem[]): BomTreeNode[] {
   return build("");
 }
 
+export interface PartLocation {
+  level: number;
+  /** Human-readable ancestor chain (root first), e.g.
+   * '1000-AAA (Main Frame) › 2000-BBB (Sub Assembly)' — empty when the
+   * part sits at the root level. */
+  breadcrumb: string;
+}
+
+/** Finds every occurrence of a part number within a flat tree-item list
+ * (the same part can legitimately appear under more than one parent) and
+ * describes each occurrence's depth + ancestor chain, reusing parent_path
+ * (already a "/"-joined chain of ancestor part numbers — see buildBomTree)
+ * instead of walking the reconstructed tree. */
+export function findPartLocations(items: BomTreeItem[], partNo: string): PartLocation[] {
+  const descriptionByPartNo = new Map<string, string | null>();
+  for (const item of items) {
+    if (!descriptionByPartNo.has(item.part_no)) {
+      descriptionByPartNo.set(item.part_no, item.description);
+    }
+  }
+
+  return items
+    .filter((item) => item.part_no === partNo)
+    .map((item) => {
+      const ancestors = item.parent_path ? item.parent_path.split("/") : [];
+      const breadcrumb = ancestors
+        .map((ancestorPartNo) => {
+          const desc = descriptionByPartNo.get(ancestorPartNo);
+          return desc ? `${ancestorPartNo} (${desc})` : ancestorPartNo;
+        })
+        .join(" › ");
+      return { level: item.level, breadcrumb };
+    });
+}
+
 const AMBIGUOUS = "ambiguous" as const;
 type Ambiguous = typeof AMBIGUOUS;
 
