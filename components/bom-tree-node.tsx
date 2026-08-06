@@ -76,7 +76,6 @@ export function BomTreeNodeRow({
   onToggle,
   normalizedQuery,
   activeMatchId,
-  highlightIds,
 }: {
   node: BomTreeNode;
   idPrefix: string;
@@ -84,16 +83,11 @@ export function BomTreeNodeRow({
   onToggle: (id: string) => void;
   normalizedQuery: string;
   activeMatchId: string | null;
-  /** Extra ids to highlight the same way as activeMatchId, all at once —
-   * used by the Comparison Tool's "where is this part" dialog to mark
-   * every occurrence of a part number rather than a single cycled-through
-   * search match. */
-  highlightIds?: Set<string> | null;
 }) {
   const id = `${idPrefix}:${node.path}`;
   const expanded = expandedPaths.has(id);
   const hasChildren = node.children.length > 0;
-  const isActiveMatch = id === activeMatchId || (highlightIds?.has(id) ?? false);
+  const isActiveMatch = id === activeMatchId;
 
   return (
     <div>
@@ -133,7 +127,6 @@ export function BomTreeNodeRow({
               onToggle={onToggle}
               normalizedQuery={normalizedQuery}
               activeMatchId={activeMatchId}
-              highlightIds={highlightIds}
             />
           ))}
         </div>
