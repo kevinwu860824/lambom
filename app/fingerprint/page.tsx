@@ -5,10 +5,25 @@ import Link from "next/link";
 import * as XLSX from "xlsx-js-style";
 import { Check, Download, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { chunk, fetchAllBomItems, normalizeDescription, type BomItem } from "@/lib/bom";
+import {
+  chunk,
+  fetchAllBomItems,
+  fetchMachineBomLookup,
+  normalizeDescription,
+  type BomItem,
+  type MachineBomLookup,
+} from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -42,6 +57,23 @@ interface KeyPartSlot {
 interface CellValue {
   id: number;
   part_no: string;
+  foundInModules: string[] | null;
+}
+
+/** One cell from an Excel template upload, classified against the target
+ * machine's Full BOM + Modules data. */
+interface ClassifiedCell {
+  category: string;
+  customName: string;
+  slotId: number;
+  machineName: string;
+  partNo: string;
+  foundInModules: string[] | null;
+}
+
+interface PendingUpload {
+  foundCells: ClassifiedCell[];
+  notFoundCells: ClassifiedCell[];
 }
 
 const CATEGORY_COLORS = [
@@ -99,6 +131,12 @@ export default function FingerprintPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const templateFileInputRef = useRef<HTMLInputElement>(null);
+  // Set when an upload finds cells whose part number isn't in the target
+  // machine's Full BOM or Modules at all — the upload pauses here and
+  // waits for the user to choose how to proceed via the dialog below,
+  // rather than silently writing unverified data.
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [applyingUpload, setApplyingUpload] = useState(false);
 
   useEffect(() => {
     loadToolTypes();
@@ -171,7 +209,7 @@ export default function FingerprintPage() {
       if (machineNames.length > 0 && slotRows.length > 0) {
         const { data: keyPartRows, error: keyPartsError } = await supabase
           .from("key_parts")
-          .select("id,part_no,machine_name,slot_id")
+          .select("id,part_no,machine_name,slot_id,found_in_modules")
           .in("machine_name", machineNames);
         if (keyPartsError) throw new Error(keyPartsError.message);
 
@@ -181,6 +219,7 @@ export default function FingerprintPage() {
           map.set(cellKey(row.slot_id as number, row.machine_name as string), {
             id: row.id as number,
             part_no: (row.part_no as string) ?? "",
+            foundInModules: (row.found_in_modules as string[] | null) ?? null,
           });
         }
         setCells(map);
@@ -503,14 +542,17 @@ export default function FingerprintPage() {
     }
 
     if (existing) {
+      // Manually typing a new value invalidates whatever found_in_modules
+      // was recorded for the old one (that was only ever computed during
+      // an Excel template upload) — clear it rather than leave stale info.
       const { error } = await supabase
         .from("key_parts")
-        .update({ part_no: newValue })
+        .update({ part_no: newValue, found_in_modules: null })
         .eq("id", existing.id);
       if (error) throw new Error(error.message);
       setCells((prev) => {
         const next = new Map(prev);
-        next.set(key, { id: existing.id, part_no: newValue });
+        next.set(key, { id: existing.id, part_no: newValue, foundInModules: null });
         return next;
       });
       return;
@@ -529,7 +571,7 @@ export default function FingerprintPage() {
     if (error) throw new Error(error.message);
     setCells((prev) => {
       const next = new Map(prev);
-      next.set(key, { id: data!.id as number, part_no: newValue });
+      next.set(key, { id: data!.id as number, part_no: newValue, foundInModules: null });
       return next;
     });
   }
@@ -551,6 +593,73 @@ export default function FingerprintPage() {
   }
 
   /**
+   * Actually writes a set of classified cells to key_parts (insert-or-update,
+   * same semantics as before: blank cells never reach here at all, so
+   * existing data for cells not present in this batch is left untouched).
+   * Shared by the no-issues-found fast path and both "proceed anyway"
+   * choices from the not-found-parts dialog.
+   */
+  async function applyUploadPlan(cellsToApply: ClassifiedCell[]) {
+    if (cellsToApply.length === 0) return;
+    const supabase = getSupabase();
+
+    const allSlotIds = Array.from(new Set(cellsToApply.map((c) => c.slotId)));
+    const allMachineNamesInPlan = Array.from(new Set(cellsToApply.map((c) => c.machineName)));
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("key_parts")
+      .select("id,slot_id,machine_name")
+      .in("slot_id", allSlotIds)
+      .in("machine_name", allMachineNamesInPlan);
+    if (existingErr) throw new Error(existingErr.message);
+    const existingIdByKey = new Map<string, number>();
+    for (const r of existingRows ?? []) {
+      existingIdByKey.set(`${r.slot_id}::${r.machine_name}`, r.id as number);
+    }
+
+    const toInsert: {
+      part_no: string;
+      custom_name: string;
+      machine_name: string;
+      slot_id: number;
+      found_in_modules: string[] | null;
+    }[] = [];
+    const toUpdate: { id: number; part_no: string; found_in_modules: string[] | null }[] = [];
+
+    for (const c of cellsToApply) {
+      const existingId = existingIdByKey.get(`${c.slotId}::${c.machineName}`);
+      if (existingId) {
+        toUpdate.push({ id: existingId, part_no: c.partNo, found_in_modules: c.foundInModules });
+      } else {
+        toInsert.push({
+          part_no: c.partNo,
+          custom_name: c.customName,
+          machine_name: c.machineName,
+          slot_id: c.slotId,
+          found_in_modules: c.foundInModules,
+        });
+      }
+    }
+
+    for (const batch of chunk(toInsert, 500)) {
+      const { error } = await supabase.from("key_parts").insert(batch);
+      if (error) throw new Error(error.message);
+    }
+
+    for (const batch of chunk(toUpdate, 20)) {
+      const results = await Promise.all(
+        batch.map((u) =>
+          supabase.from("key_parts").update({ part_no: u.part_no, found_in_modules: u.found_in_modules }).eq("id", u.id)
+        )
+      );
+      const failed = results.find((r) => r.error);
+      if (failed?.error) throw new Error(failed.error.message);
+    }
+
+    await loadForToolType(selectedToolType);
+    loadToolTypes();
+  }
+
+  /**
    * Bulk-import from a downloaded-and-filled-in template. (Category, Slot
    * Name) rows not already in this tool type are created automatically
    * (same as the "Add Row" form above). Machine columns are matched
@@ -564,6 +673,13 @@ export default function FingerprintPage() {
    * cell's existing value untouched — this is a fill-in/update operation,
    * not a full overwrite, so a partially-filled-in re-upload can't
    * accidentally wipe data.
+   *
+   * Every non-blank cell is validated against its machine's Full BOM and
+   * Modules data: found in Modules (possibly more than one) gets recorded
+   * so the table can show it; found only in Full BOM (or only in Modules)
+   * still goes through as normal; found in neither pauses the whole upload
+   * and shows a confirmation dialog instead of silently writing what's
+   * likely a typo'd/wrong part number.
    */
   async function handleTemplateFile(file: File) {
     setUploadError(null);
@@ -635,25 +751,19 @@ export default function FingerprintPage() {
         slotByKey.set(key, data as KeyPartSlot);
       }
 
-      // Pass 2: look up which (slot, machine) cells already exist, to tell insert from update.
-      const allSlotIds = [...slotByKey.values()].map((s) => s.id);
-      const { data: existingRows, error: existingErr } = await supabase
-        .from("key_parts")
-        .select("id,slot_id,machine_name")
-        .in("slot_id", allSlotIds)
-        .in(
-          "machine_name",
-          machineCols.map((c) => c.h)
-        );
-      if (existingErr) throw new Error(existingErr.message);
-      const existingIdByKey = new Map<string, number>();
-      for (const r of existingRows ?? []) {
-        existingIdByKey.set(`${r.slot_id}::${r.machine_name}`, r.id as number);
-      }
+      // Pass 2: validate every non-blank cell against its machine's Full
+      // BOM + Modules data. One lookup per distinct machine, fetched in
+      // parallel, reused across every cell for that machine.
+      const involvedMachines = Array.from(new Set(machineCols.map((c) => c.h)));
+      const lookupByMachine = new Map<string, MachineBomLookup>();
+      await Promise.all(
+        involvedMachines.map(async (m) => {
+          lookupByMachine.set(m, await fetchMachineBomLookup(supabase, m));
+        })
+      );
 
-      // Pass 3: apply non-empty cells only — blank cells leave existing data untouched.
-      const toInsert: { part_no: string; custom_name: string; machine_name: string; slot_id: number }[] = [];
-      const toUpdate: { id: number; part_no: string }[] = [];
+      const foundCells: ClassifiedCell[] = [];
+      const notFoundCells: ClassifiedCell[] = [];
 
       for (const row of dataRows) {
         const category = (row[categoryIdx] ?? "").toString().trim();
@@ -665,34 +775,54 @@ export default function FingerprintPage() {
         for (const { h: machineName, idx } of machineCols) {
           const value = (row[idx] ?? "").toString().trim();
           if (!value) continue;
-          const existingId = existingIdByKey.get(`${slot.id}::${machineName}`);
-          if (existingId) {
-            toUpdate.push({ id: existingId, part_no: value });
-          } else {
-            toInsert.push({ part_no: value, custom_name: slot.custom_name, machine_name: machineName, slot_id: slot.id });
-          }
+
+          const lookup = lookupByMachine.get(machineName);
+          const inFullBom = lookup?.fullBomPartNos.has(value) ?? false;
+          const moduleSources = lookup?.modulePartNoSources.get(value) ?? null;
+          const foundInModules = moduleSources && moduleSources.length > 0 ? moduleSources : null;
+
+          const entry: ClassifiedCell = {
+            category,
+            customName,
+            slotId: slot.id,
+            machineName,
+            partNo: value,
+            foundInModules,
+          };
+          if (inFullBom || foundInModules) foundCells.push(entry);
+          else notFoundCells.push(entry);
         }
       }
 
-      for (const batch of chunk(toInsert, 500)) {
-        const { error } = await supabase.from("key_parts").insert(batch);
-        if (error) throw new Error(error.message);
+      if (notFoundCells.length > 0) {
+        // Pause here — applyUploadPlan runs later from the dialog's own
+        // handlers once the user picks how to proceed.
+        setPendingUpload({ foundCells, notFoundCells });
+        return;
       }
 
-      for (const batch of chunk(toUpdate, 20)) {
-        const results = await Promise.all(
-          batch.map((u) => supabase.from("key_parts").update({ part_no: u.part_no }).eq("id", u.id))
-        );
-        const failed = results.find((r) => r.error);
-        if (failed?.error) throw new Error(failed.error.message);
-      }
-
-      await loadForToolType(selectedToolType);
-      loadToolTypes();
+      await applyUploadPlan(foundCells);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function confirmPendingUpload(includeNotFound: boolean) {
+    if (!pendingUpload) return;
+    setApplyingUpload(true);
+    setUploadError(null);
+    try {
+      const cellsToApply = includeNotFound
+        ? [...pendingUpload.foundCells, ...pendingUpload.notFoundCells]
+        : pendingUpload.foundCells;
+      await applyUploadPlan(cellsToApply);
+      setPendingUpload(null);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplyingUpload(false);
     }
   }
 
@@ -788,7 +918,7 @@ export default function FingerprintPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={uploading}
+                  disabled={uploading || pendingUpload !== null}
                   onClick={() => templateFileInputRef.current?.click()}
                 >
                   <Upload className="h-4 w-4" />
@@ -978,6 +1108,7 @@ export default function FingerprintPage() {
                                   onSave={(newValue) => saveCell(slot, m, newValue)}
                                   mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
                                   readOnly={!editMode}
+                                  foundInModules={cell?.foundInModules}
                                 />
                               </TableCell>
                             );
@@ -992,6 +1123,56 @@ export default function FingerprintPage() {
           </Card>
         )}
       </div>
+
+      <Dialog open={pendingUpload !== null} onOpenChange={(open) => !open && !applyingUpload && setPendingUpload(null)}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Some part numbers weren&apos;t found</DialogTitle>
+            <DialogDescription>
+              {pendingUpload?.notFoundCells.length} part number(s) in this file don&apos;t appear in the target
+              machine&apos;s Full BOM or Modules data at all — possibly a typo. {pendingUpload?.foundCells.length}{" "}
+              other cell(s) were verified fine and aren&apos;t affected by this choice.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-64 overflow-y-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Machine</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Slot</TableHead>
+                  <TableHead>Part No.</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pendingUpload?.notFoundCells.map((c, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{c.machineName}</TableCell>
+                    <TableCell>{c.category}</TableCell>
+                    <TableCell>{c.customName}</TableCell>
+                    <TableCell className="font-mono text-xs">{c.partNo}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {uploadError && <p className="text-destructive text-sm">{uploadError}</p>}
+
+          <DialogFooter>
+            <Button variant="outline" disabled={applyingUpload} onClick={() => setPendingUpload(null)}>
+              Cancel Upload
+            </Button>
+            <Button variant="outline" disabled={applyingUpload} onClick={() => confirmPendingUpload(false)}>
+              {applyingUpload ? "Working…" : "Skip These, Add the Rest"}
+            </Button>
+            <Button disabled={applyingUpload} onClick={() => confirmPendingUpload(true)}>
+              {applyingUpload ? "Working…" : "Add All Anyway"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

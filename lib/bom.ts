@@ -369,6 +369,68 @@ export async function fetchFullBomTreeItems(
   return items;
 }
 
+/** Just the part_no values for one machine's Full BOM (keyset-paginated,
+ * same as fetchFullBomTreeItems) — used to check whether a given part
+ * number exists anywhere in a machine's Full BOM without pulling the full
+ * row shape for every item. */
+export async function fetchFullBomPartNos(supabase: SupabaseClient, machineName: string): Promise<Set<string>> {
+  const partNos = new Set<string>();
+  const pageSize = 1000;
+  let afterId = 0;
+  for (;;) {
+    const { data, error } = await withRetry(() =>
+      supabase
+        .from("full_bom_items")
+        .select("id,part_no")
+        .eq("machine_name", machineName)
+        .gt("id", afterId)
+        .order("id", { ascending: true })
+        .limit(pageSize)
+    );
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    for (const row of data) partNos.add(row.part_no as string);
+    afterId = data[data.length - 1].id as number;
+    if (data.length < pageSize) break;
+  }
+  return partNos;
+}
+
+export interface MachineBomLookup {
+  fullBomPartNos: Set<string>;
+  /** part_no -> every module (bom_machines.source_file) it appears in for
+   * this machine — a part can legitimately show up in more than one
+   * module. */
+  modulePartNoSources: Map<string, string[]>;
+}
+
+/** Combines fetchFullBomPartNos with every module's (bom_machines row's)
+ * part numbers for one machine, for validating/annotating a part number
+ * against everything actually known about that machine's BOM. */
+export async function fetchMachineBomLookup(supabase: SupabaseClient, machineName: string): Promise<MachineBomLookup> {
+  const [fullBomPartNos, moduleRowsRes] = await Promise.all([
+    fetchFullBomPartNos(supabase, machineName),
+    supabase.from("bom_machines").select("id,source_file").eq("machine_name", machineName),
+  ]);
+  if (moduleRowsRes.error) throw new Error(moduleRowsRes.error.message);
+
+  const modulePartNoSources = new Map<string, string[]>();
+  for (const m of moduleRowsRes.data ?? []) {
+    const sourceFile = m.source_file as string;
+    const items = await fetchAllBomItems(supabase, m.id as number, sourceFile);
+    for (const item of items) {
+      const list = modulePartNoSources.get(item.part_no);
+      if (list) {
+        if (!list.includes(sourceFile)) list.push(sourceFile);
+      } else {
+        modulePartNoSources.set(item.part_no, [sourceFile]);
+      }
+    }
+  }
+
+  return { fullBomPartNos, modulePartNoSources };
+}
+
 /**
  * Distinct machine_name values in `table`, via an index-assisted "skip
  * scan": repeatedly ask for the single smallest machine_name greater than

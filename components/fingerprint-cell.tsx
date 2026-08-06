@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,11 +15,16 @@ export function FingerprintCell({
   onSave,
   mismatch,
   readOnly,
+  foundInModules,
 }: {
   value: string;
   onSave: (newValue: string) => Promise<void>;
   mismatch?: boolean;
   readOnly?: boolean;
+  /** Modules (source_file names) this part number was also found in when
+   * last validated via the Excel template upload — shown as a small icon
+   * with a tooltip listing them. */
+  foundInModules?: string[] | null;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -46,25 +52,35 @@ export function FingerprintCell({
 
   return (
     <div className="min-w-[140px]">
-      <input
-        value={draft}
-        disabled={saving}
-        readOnly={readOnly}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setDraft(value);
-        }}
-        className={cn(
-          "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
-          !readOnly &&
-            "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
-          saving && "opacity-50",
-          error && "border-destructive",
-          mismatch && "text-red-600 font-semibold"
+      <div className="flex items-center gap-1">
+        <input
+          value={draft}
+          disabled={saving}
+          readOnly={readOnly}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") setDraft(value);
+          }}
+          className={cn(
+            "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
+            !readOnly &&
+              "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
+            saving && "opacity-50",
+            error && "border-destructive",
+            mismatch && "text-red-600 font-semibold"
+          )}
+        />
+        {foundInModules && foundInModules.length > 0 && (
+          <span
+            title={`Also found in: ${foundInModules.join(", ")}`}
+            className="text-muted-foreground shrink-0 pr-1"
+          >
+            <Layers className="h-3 w-3" />
+          </span>
         )}
-      />
+      </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}
     </div>
   );
