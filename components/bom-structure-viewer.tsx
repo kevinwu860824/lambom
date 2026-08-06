@@ -60,8 +60,10 @@ function collectMatches(subpartTrees: SubpartTree[], normalizedQuery: string): T
  * needs to be "expanded" for the match to actually be visible on screen —
  * derived by walking the "/"-joined path prefixes encoded in the match id
  * itself (`${idPrefix}:${path}`). Only ancestors, never the match's own
- * descendants — finding a part shouldn't blow open everything beneath it. */
-function ancestorIdsOf(matchId: string): string[] {
+ * descendants — finding a part shouldn't blow open everything beneath it.
+ * Exported for reuse by the Comparison Tool's "where is this part" dialog,
+ * which auto-expands a found part's ancestor chain the same way. */
+export function ancestorIdsOf(matchId: string): string[] {
   const sep = matchId.indexOf(":");
   const idPrefix = matchId.slice(0, sep);
   const path = matchId.slice(sep + 1);

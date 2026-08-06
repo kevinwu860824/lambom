@@ -6,6 +6,7 @@ import { ChevronDown, Download, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
+  buildBomTree,
   buildKeyPartDisplayRows,
   checkKeyParts,
   compareBoms,
@@ -16,18 +17,19 @@ import {
   fetchFullBomItems,
   fetchFullBomTreeItems,
   fetchMachineGroups,
-  findPartLocations,
   formatAggregatedMatches,
   type BomEntry,
   type BomItem,
   type BomTreeItem,
+  type BomTreeNode,
   type CompareResult,
   type KeyPart,
   type KeyPartInfo,
   type MachineGroup,
-  type PartLocation,
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
+import { ancestorIdsOf } from "@/components/bom-structure-viewer";
+import { BomTreeNodeRow } from "@/components/bom-tree-node";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
 import { Button } from "@/components/ui/button";
 import {
@@ -141,36 +143,88 @@ export default function Home() {
   } | null>(null);
   const [positionLoading, setPositionLoading] = useState(false);
   const [positionError, setPositionError] = useState<string | null>(null);
-  const [positionFullBom, setPositionFullBom] = useState<PartLocation[] | null>(null);
-  const [positionModules, setPositionModules] = useState<
-    { sourceFile: string; locations: PartLocation[] }[] | null
+  const [positionFullBomItems, setPositionFullBomItems] = useState<BomTreeItem[] | null>(null);
+  const [positionModuleItems, setPositionModuleItems] = useState<
+    { bomId: number; sourceFile: string; items: BomTreeItem[] }[] | null
   >(null);
+  // Expand/collapse state the user sets by clicking a chevron inside the
+  // dialog's tree — separate from the auto-expanded ancestor chain (below)
+  // so toggling one node doesn't fight with the auto-expansion on re-render.
+  const [positionManualExpandedIds, setPositionManualExpandedIds] = useState<Set<string>>(new Set());
+
+  function togglePositionExpanded(id: string) {
+    setPositionManualExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function openPositionDialog(item: AggregatedItem, machine: string) {
     setPositionTarget({ partNo: item.part_no, description: item.description, machine });
     setPositionLoading(true);
     setPositionError(null);
-    setPositionFullBom(null);
-    setPositionModules(null);
+    setPositionFullBomItems(null);
+    setPositionModuleItems(null);
+    setPositionManualExpandedIds(new Set());
 
     try {
-      const [fullBomTree, moduleResults] = await Promise.all([
+      const [fullBomItems, moduleResults] = await Promise.all([
         getFullBomTree(machine),
         Promise.all(
           subpartsFor(machine).map(async (entry) => ({
+            bomId: entry.bomId,
             sourceFile: entry.source_file,
-            locations: findPartLocations(await getModuleTree(entry.bomId, entry.source_file), item.part_no),
+            items: await getModuleTree(entry.bomId, entry.source_file),
           }))
         ),
       ]);
-      setPositionFullBom(findPartLocations(fullBomTree, item.part_no));
-      setPositionModules(moduleResults.filter((m) => m.locations.length > 0));
+      setPositionFullBomItems(fullBomItems);
+      setPositionModuleItems(moduleResults.filter((m) => m.items.some((i) => i.part_no === item.part_no)));
     } catch (err) {
       setPositionError(err instanceof Error ? err.message : String(err));
     } finally {
       setPositionLoading(false);
     }
   }
+
+  /** Every node in `roots` whose part_no exactly matches — the same tree
+   * shape/id scheme buildBomTree + BomTreeNodeRow already use (idPrefix
+   * plus "/"-joined node.path), so the resulting ids plug directly into
+   * ancestorIdsOf for auto-expanding the dialog's tree down to each match. */
+  function collectExactMatchIds(roots: BomTreeNode[], idPrefix: string, partNo: string): Set<string> {
+    const ids = new Set<string>();
+    function walk(nodes: BomTreeNode[]) {
+      for (const node of nodes) {
+        if (node.item.part_no === partNo) ids.add(`${idPrefix}:${node.path}`);
+        walk(node.children);
+      }
+    }
+    walk(roots);
+    return ids;
+  }
+
+  const positionFullBomView = useMemo(() => {
+    if (!positionFullBomItems || !positionTarget) return null;
+    const roots = buildBomTree(positionFullBomItems);
+    const matchIds = collectExactMatchIds(roots, "fullbom", positionTarget.partNo);
+    const expandedIds = new Set<string>();
+    for (const id of matchIds) for (const ancestorId of ancestorIdsOf(id)) expandedIds.add(ancestorId);
+    return { roots, matchIds, expandedIds };
+  }, [positionFullBomItems, positionTarget]);
+
+  const positionModuleTrees = useMemo(() => {
+    if (!positionModuleItems || !positionTarget) return [];
+    return positionModuleItems.map((m) => {
+      const roots = buildBomTree(m.items);
+      const idPrefix = String(m.bomId);
+      const matchIds = collectExactMatchIds(roots, idPrefix, positionTarget.partNo);
+      const expandedIds = new Set<string>();
+      for (const id of matchIds) for (const ancestorId of ancestorIdsOf(id)) expandedIds.add(ancestorId);
+      return { bomId: m.bomId, sourceFile: m.sourceFile, roots, matchIds, expandedIds };
+    });
+  }, [positionModuleItems, positionTarget]);
 
   function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -737,7 +791,7 @@ export default function Home() {
         </Card>
 
         <Dialog open={positionTarget !== null} onOpenChange={(open) => !open && setPositionTarget(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>{positionTarget?.partNo}</DialogTitle>
               <DialogDescription>
@@ -750,22 +804,26 @@ export default function Home() {
             ) : positionError ? (
               <p className="text-destructive text-sm">{positionError}</p>
             ) : (
-              <div className="grid max-h-[60vh] gap-4 overflow-y-auto">
+              <div className="grid gap-4">
                 <div>
                   <p className="mb-1.5 text-sm font-medium">Full BOM</p>
-                  {positionFullBom && positionFullBom.length > 0 ? (
-                    <ul className="grid gap-1.5">
-                      {positionFullBom.map((loc, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-sm">
-                          <Badge variant="outline" className="shrink-0">
-                            Level {loc.level}
-                          </Badge>
-                          <span className={loc.breadcrumb ? undefined : "text-muted-foreground"}>
-                            {loc.breadcrumb || "Root level"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                  {positionFullBomView && positionFullBomView.matchIds.size > 0 ? (
+                    <Card>
+                      <CardContent>
+                        {positionFullBomView.roots.map((root) => (
+                          <BomTreeNodeRow
+                            key={root.path}
+                            node={root}
+                            idPrefix="fullbom"
+                            expandedPaths={new Set([...positionFullBomView.expandedIds, ...positionManualExpandedIds])}
+                            onToggle={togglePositionExpanded}
+                            normalizedQuery=""
+                            activeMatchId={null}
+                            highlightIds={positionFullBomView.matchIds}
+                          />
+                        ))}
+                      </CardContent>
+                    </Card>
                   ) : (
                     <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
                   )}
@@ -773,24 +831,26 @@ export default function Home() {
 
                 <div>
                   <p className="mb-1.5 text-sm font-medium">Modules</p>
-                  {positionModules && positionModules.length > 0 ? (
+                  {positionModuleTrees.length > 0 ? (
                     <div className="grid gap-3">
-                      {positionModules.map((m) => (
-                        <div key={m.sourceFile}>
-                          <p className="text-sm font-medium">{m.sourceFile}</p>
-                          <ul className="mt-1 grid gap-1.5">
-                            {m.locations.map((loc, i) => (
-                              <li key={i} className="flex items-start gap-1.5 text-sm">
-                                <Badge variant="outline" className="shrink-0">
-                                  Level {loc.level}
-                                </Badge>
-                                <span className={loc.breadcrumb ? undefined : "text-muted-foreground"}>
-                                  {loc.breadcrumb || "Root level"}
-                                </span>
-                              </li>
+                      {positionModuleTrees.map((m) => (
+                        <Card key={m.bomId}>
+                          <CardContent>
+                            <p className="mb-1.5 text-sm font-medium">{m.sourceFile}</p>
+                            {m.roots.map((root) => (
+                              <BomTreeNodeRow
+                                key={root.path}
+                                node={root}
+                                idPrefix={String(m.bomId)}
+                                expandedPaths={new Set([...m.expandedIds, ...positionManualExpandedIds])}
+                                onToggle={togglePositionExpanded}
+                                normalizedQuery=""
+                                activeMatchId={null}
+                                highlightIds={m.matchIds}
+                              />
                             ))}
-                          </ul>
-                        </div>
+                          </CardContent>
+                        </Card>
                       ))}
                     </div>
                   ) : (
