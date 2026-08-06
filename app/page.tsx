@@ -847,7 +847,7 @@ export default function Home() {
         </Card>
 
         <Dialog open={positionTarget !== null} onOpenChange={(open) => !open && setPositionTarget(null)}>
-          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>{positionTarget?.partNo}</DialogTitle>
               <DialogDescription>
@@ -855,92 +855,94 @@ export default function Home() {
               </DialogDescription>
             </DialogHeader>
 
-            {positionLoading ? (
-              <p className="text-muted-foreground text-sm">Loading…</p>
-            ) : positionError ? (
-              <p className="text-destructive text-sm">{positionError}</p>
-            ) : (
-              <div className="grid gap-4">
-                {positionMatches.length > 1 && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-muted-foreground">
-                      Match {positionActiveIndex + 1} / {positionMatches.length}
-                    </span>
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      className="h-7 w-7"
-                      onClick={goToPrevMatch}
-                      aria-label="Previous match"
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      className="h-7 w-7"
-                      onClick={goToNextMatch}
-                      aria-label="Next match"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-
-                {positionTarget?.mode === "fullBom" ? (
-                  <div>
-                    <p className="mb-1.5 text-sm font-medium">Full BOM</p>
-                    {positionFullBomView && positionFullBomView.matchIds.length > 0 ? (
-                      <Card>
-                        <CardContent>
-                          {positionFullBomView.roots.map((root) => (
-                            <BomTreeNodeRow
-                              key={root.path}
-                              node={root}
-                              idPrefix="fullbom"
-                              expandedPaths={positionExpandedIds}
-                              onToggle={togglePositionExpanded}
-                              normalizedQuery=""
-                              activeMatchId={positionActiveMatchId}
-                            />
-                          ))}
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <p className="mb-1.5 text-sm font-medium">Modules</p>
-                    {positionModuleTrees.length > 0 ? (
-                      <div className="grid gap-3">
-                        {positionModuleTrees.map((m) => (
-                          <Card key={m.bomId}>
-                            <CardContent>
-                              <p className="mb-1.5 text-sm font-medium">{m.sourceFile}</p>
-                              {m.roots.map((root) => (
-                                <BomTreeNodeRow
-                                  key={root.path}
-                                  node={root}
-                                  idPrefix={String(m.bomId)}
-                                  expandedPaths={positionExpandedIds}
-                                  onToggle={togglePositionExpanded}
-                                  normalizedQuery=""
-                                  activeMatchId={positionActiveMatchId}
-                                />
-                              ))}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground text-sm italic">Not found in any module</p>
-                    )}
-                  </div>
-                )}
+            {positionMatches.length > 1 && (
+              <div className="flex shrink-0 items-center gap-2 border-b pb-3 text-sm">
+                <span className="text-muted-foreground">
+                  Match {positionActiveIndex + 1} / {positionMatches.length}
+                </span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-7 w-7"
+                  onClick={goToPrevMatch}
+                  aria-label="Previous match"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-7 w-7"
+                  onClick={goToNextMatch}
+                  aria-label="Next match"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
               </div>
             )}
+
+            <div className="min-h-0 overflow-y-auto">
+              {positionLoading ? (
+                <p className="text-muted-foreground text-sm">Loading…</p>
+              ) : positionError ? (
+                <p className="text-destructive text-sm">{positionError}</p>
+              ) : (
+                <div className="grid gap-4">
+                  {positionTarget?.mode === "fullBom" ? (
+                    <div>
+                      <p className="mb-1.5 text-sm font-medium">Full BOM</p>
+                      {positionFullBomView && positionFullBomView.matchIds.length > 0 ? (
+                        <Card>
+                          <CardContent>
+                            {positionFullBomView.roots.map((root) => (
+                              <BomTreeNodeRow
+                                key={root.path}
+                                node={root}
+                                idPrefix="fullbom"
+                                expandedPaths={positionExpandedIds}
+                                onToggle={togglePositionExpanded}
+                                normalizedQuery=""
+                                activeMatchId={positionActiveMatchId}
+                              />
+                            ))}
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="mb-1.5 text-sm font-medium">Modules</p>
+                      {positionModuleTrees.length > 0 ? (
+                        <div className="grid gap-3">
+                          {positionModuleTrees.map((m) => (
+                            <Card key={m.bomId}>
+                              <CardContent>
+                                <p className="mb-1.5 text-sm font-medium">{m.sourceFile}</p>
+                                {m.roots.map((root) => (
+                                  <BomTreeNodeRow
+                                    key={root.path}
+                                    node={root}
+                                    idPrefix={String(m.bomId)}
+                                    expandedPaths={positionExpandedIds}
+                                    onToggle={togglePositionExpanded}
+                                    normalizedQuery=""
+                                    activeMatchId={positionActiveMatchId}
+                                  />
+                                ))}
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground text-sm italic">Not found in any module</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </DialogContent>
         </Dialog>
 
