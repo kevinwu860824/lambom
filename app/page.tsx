@@ -12,6 +12,7 @@ import {
   documentPartCodeFor,
   DOCUMENT_PART_PREFIXES,
   fetchAllBomItems,
+  fetchFullBomItems,
   fetchMachineGroups,
   formatAggregatedMatches,
   type BomEntry,
@@ -73,6 +74,7 @@ export default function Home() {
   const [subpartsA, setSubpartsA] = useState<Set<string>>(new Set());
   const [machineB, setMachineB] = useState("");
   const [subpartsB, setSubpartsB] = useState<Set<string>>(new Set());
+  const [compareMode, setCompareMode] = useState<"modules" | "fullBom">("modules");
 
   const [initLoading, setInitLoading] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
@@ -145,6 +147,20 @@ export default function Home() {
     };
   }
 
+  async function combineAndLoadFullBom(machine: string): Promise<BomEntry | null> {
+    if (!machine) return null;
+    const items = await fetchFullBomItems(getSupabase(), machine);
+    if (items.length === 0) return null;
+
+    return {
+      bomId: -1,
+      source_file: "Full BOM",
+      machine,
+      items,
+      itemsLoaded: true,
+    };
+  }
+
   async function runCompare(
     machineAName: string,
     entriesA: BomEntry[],
@@ -155,10 +171,10 @@ export default function Home() {
     setCompareError(null);
 
     try {
-      const [bomA, bomB] = await Promise.all([
-        combineAndLoad(machineAName, entriesA),
-        combineAndLoad(machineBName, entriesB),
-      ]);
+      const [bomA, bomB] =
+        compareMode === "fullBom"
+          ? await Promise.all([combineAndLoadFullBom(machineAName), combineAndLoadFullBom(machineBName)])
+          : await Promise.all([combineAndLoad(machineAName, entriesA), combineAndLoad(machineBName, entriesB)]);
 
       if (!bomA || !bomB) {
         return;
@@ -166,8 +182,10 @@ export default function Home() {
 
       setBomAItems(bomA.items);
       setBomBItems(bomB.items);
-      setSubpartMapA(buildSubpartMap(entriesA));
-      setSubpartMapB(buildSubpartMap(entriesB));
+      // Full BOM has no per-module breakdown, so there's nothing to show in
+      // the "Subparts: ..." key-part detail column in that mode.
+      setSubpartMapA(compareMode === "fullBom" ? new Map() : buildSubpartMap(entriesA));
+      setSubpartMapB(compareMode === "fullBom" ? new Map() : buildSubpartMap(entriesB));
       setResult(compareBoms(bomA, bomB));
       setSummaryA({
         machine: bomA.machine,
@@ -470,6 +488,29 @@ export default function Home() {
             <CardTitle>Select Comparison Targets</CardTitle>
           </CardHeader>
           <CardContent>
+            <div className="mb-4 flex items-center gap-2">
+              <span className="text-sm font-medium">Compare using</span>
+              <div className="inline-flex rounded-md border p-0.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={compareMode === "modules" ? "default" : "ghost"}
+                  className="h-7"
+                  onClick={() => setCompareMode("modules")}
+                >
+                  Modules
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={compareMode === "fullBom" ? "default" : "ghost"}
+                  className="h-7"
+                  onClick={() => setCompareMode("fullBom")}
+                >
+                  Full BOM
+                </Button>
+              </div>
+            </div>
             <div className="grid gap-6 md:grid-cols-2">
               <MachineSelectGroup
                 label="A"
@@ -478,6 +519,7 @@ export default function Home() {
                 machineGroups={machineGroups}
                 subparts={subpartsFor(machineA)}
                 disabled={initLoading}
+                hideSubparts={compareMode === "fullBom"}
                 onMachineChange={handleMachineAChange}
                 onToggleSubpart={toggleSubpartA}
                 onToggleAll={toggleAllSubpartsA}
@@ -489,6 +531,7 @@ export default function Home() {
                 machineGroups={machineGroups}
                 subparts={subpartsFor(machineB)}
                 disabled={initLoading}
+                hideSubparts={compareMode === "fullBom"}
                 onMachineChange={handleMachineBChange}
                 onToggleSubpart={toggleSubpartB}
                 onToggleAll={toggleAllSubpartsB}
@@ -502,8 +545,7 @@ export default function Home() {
                 compareLoading ||
                 !machineA ||
                 !machineB ||
-                subpartsA.size === 0 ||
-                subpartsB.size === 0
+                (compareMode === "modules" && (subpartsA.size === 0 || subpartsB.size === 0))
               }
             >
               {compareLoading ? "Comparing…" : "Start Comparison"}
@@ -639,6 +681,7 @@ function MachineSelectGroup({
   machineGroups,
   subparts,
   disabled,
+  hideSubparts,
   onMachineChange,
   onToggleSubpart,
   onToggleAll,
@@ -649,6 +692,9 @@ function MachineSelectGroup({
   machineGroups: MachineGroup[];
   subparts: BomEntry[];
   disabled: boolean;
+  /** Full BOM comparison mode has no per-module breakdown to pick from —
+   * just hide the subpart picker and compare using the whole machine. */
+  hideSubparts?: boolean;
   onMachineChange: (value: string) => void;
   onToggleSubpart: (sourceFile: string) => void;
   onToggleAll: () => void;
@@ -677,50 +723,52 @@ function MachineSelectGroup({
           </SelectContent>
         </Select>
       </div>
-      <div className="grid gap-1.5">
-        <label className="text-sm font-medium">Subpart {label}</label>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              disabled={disabled}
-              className="h-9 w-full justify-between font-normal"
-            >
-              <span className="truncate">
-                {subparts.length === 0
-                  ? "No subparts"
-                  : selectedSubparts.size === 0
-                    ? "No subparts selected"
-                    : selectedSubparts.size === subparts.length
-                      ? "All subparts"
-                      : `${selectedSubparts.size}/${subparts.length} subparts selected`}
-              </span>
-              <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
-            <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
-              <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
-              All subparts
-            </label>
-            <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
-              {subparts.map((entry) => (
-                <label
-                  key={entry.source_file}
-                  className="hover:bg-accent flex items-center gap-2 rounded px-1 py-1 text-sm"
-                >
-                  <Checkbox
-                    checked={selectedSubparts.has(entry.source_file)}
-                    onCheckedChange={() => onToggleSubpart(entry.source_file)}
-                    disabled={disabled}
-                  />
-                  {entry.source_file}
-                </label>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
+      {!hideSubparts && (
+        <div className="grid gap-1.5">
+          <label className="text-sm font-medium">Subpart {label}</label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={disabled}
+                className="h-9 w-full justify-between font-normal"
+              >
+                <span className="truncate">
+                  {subparts.length === 0
+                    ? "No subparts"
+                    : selectedSubparts.size === 0
+                      ? "No subparts selected"
+                      : selectedSubparts.size === subparts.length
+                        ? "All subparts"
+                        : `${selectedSubparts.size}/${subparts.length} subparts selected`}
+                </span>
+                <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
+              <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
+                <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
+                All subparts
+              </label>
+              <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
+                {subparts.map((entry) => (
+                  <label
+                    key={entry.source_file}
+                    className="hover:bg-accent flex items-center gap-2 rounded px-1 py-1 text-sm"
+                  >
+                    <Checkbox
+                      checked={selectedSubparts.has(entry.source_file)}
+                      onCheckedChange={() => onToggleSubpart(entry.source_file)}
+                      disabled={disabled}
+                    />
+                    {entry.source_file}
+                  </label>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      )}
     </div>
   );
 }

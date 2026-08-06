@@ -369,6 +369,14 @@ export async function fetchFullBomTreeItems(
   return items;
 }
 
+/** Same rows as fetchAllBomItems (part_no/description/qty/uom only, no
+ * hierarchy columns), but for one machine's whole Full BOM instead of a
+ * single module — used by the Comparison Tool's "Full BOM" mode. */
+export async function fetchFullBomItems(supabase: SupabaseClient, machineName: string): Promise<BomItem[]> {
+  const items = await fetchFullBomTreeItems(supabase, machineName);
+  return items.map(({ part_no, description, qty, uom }) => ({ part_no, description, qty, uom }));
+}
+
 /** Just the part_no values for one machine's Full BOM (keyset-paginated,
  * same as fetchFullBomTreeItems) — used to check whether a given part
  * number exists anywhere in a machine's Full BOM without pulling the full
