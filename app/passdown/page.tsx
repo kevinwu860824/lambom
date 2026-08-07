@@ -8,18 +8,21 @@ import {
   addUpdate,
   fetchEntriesForDate,
   fetchEntriesHistory,
+  fetchKnownMachines,
+  fetchLatestEntryDateBefore,
   fetchPeople,
   fetchUpdatesForEntries,
   SHIFT_LABELS,
   STATUS_LABELS,
   upsertEntry,
+  type KnownMachine,
   type PassdownEntry,
   type PassdownPerson,
   type PassdownShift,
   type PassdownStatus,
   type PassdownUpdate,
 } from "@/lib/passdown";
-import { PassdownEntryCard } from "@/components/passdown-entry-card";
+import { PassdownEntryRow } from "@/components/passdown-entry-row";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -35,6 +38,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
+type BoardEntry = PassdownEntry & { isPlaceholder?: boolean };
+
+function machineKey(e: { toolId: string; module: string }): string {
+  return `${e.toolId}|${e.module}`;
+}
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -105,10 +114,14 @@ function buildEmailHtml(date: string, entries: PassdownEntry[], updates: Map<num
     </table>`;
 }
 
+const CUSTOM_MACHINE_KEY = "__custom__";
+
 function NewEntryDialog({
   open,
   onOpenChange,
   onCreate,
+  knownMachines,
+  excludeKeys,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -119,7 +132,10 @@ function NewEntryDialog({
     status: PassdownStatus;
     problemStatement: string;
   }) => Promise<void>;
+  knownMachines: KnownMachine[];
+  excludeKeys: Set<string>;
 }) {
+  const [selectedKey, setSelectedKey] = useState("");
   const [toolId, setToolId] = useState("");
   const [product, setProduct] = useState("");
   const [module, setModule] = useState("");
@@ -128,9 +144,37 @@ function NewEntryDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const availableMachines = knownMachines.filter((m) => !excludeKeys.has(machineKey(m)));
+  const isCustom = selectedKey === CUSTOM_MACHINE_KEY;
+
+  function handleSelectMachine(key: string) {
+    setSelectedKey(key);
+    if (key === CUSTOM_MACHINE_KEY) {
+      setToolId("");
+      setProduct("");
+      setModule("");
+      return;
+    }
+    const m = availableMachines.find((m) => machineKey(m) === key);
+    if (m) {
+      setToolId(m.toolId);
+      setModule(m.module);
+      setProduct(m.product ?? "");
+    }
+  }
+
+  function reset() {
+    setSelectedKey("");
+    setToolId("");
+    setProduct("");
+    setModule("");
+    setStatus("other");
+    setProblemStatement("");
+  }
+
   async function handleSubmit() {
     if (!toolId.trim() || !module.trim()) {
-      setError("Tool ID / Module 必填");
+      setError("請選擇機台,或選「其他」手動輸入 Tool ID / Module");
       return;
     }
     setSaving(true);
@@ -143,11 +187,7 @@ function NewEntryDialog({
         status,
         problemStatement: problemStatement.trim(),
       });
-      setToolId("");
-      setProduct("");
-      setModule("");
-      setStatus("other");
-      setProblemStatement("");
+      reset();
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -157,27 +197,54 @@ function NewEntryDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) reset();
+        onOpenChange(v);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>新增今日項目</DialogTitle>
-          <DialogDescription>建立今天這台機台/Module 的交接列。</DialogDescription>
+          <DialogTitle>新增機台</DialogTitle>
+          <DialogDescription>選擇要加進今天看板的機台/Module。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="mb-1">Tool ID</Label>
-              <Input value={toolId} onChange={(e) => setToolId(e.target.value)} placeholder="CCTEN1" />
-            </div>
-            <div>
-              <Label className="mb-1">Module</Label>
-              <Input value={module} onChange={(e) => setModule(e.target.value)} placeholder="PM1" />
-            </div>
-          </div>
           <div>
-            <Label className="mb-1">Product</Label>
-            <Input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="TEOS" />
+            <Label className="mb-1">機台</Label>
+            <Select value={selectedKey} onValueChange={handleSelectMachine}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="選擇機台..." />
+              </SelectTrigger>
+              <SelectContent>
+                {availableMachines.map((m) => (
+                  <SelectItem key={machineKey(m)} value={machineKey(m)}>
+                    {m.toolId} - {m.module}
+                    {m.product ? ` (${m.product})` : ""}
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_MACHINE_KEY}>其他(手動輸入新機台)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
+          {isCustom && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="mb-1">Tool ID</Label>
+                <Input value={toolId} onChange={(e) => setToolId(e.target.value)} placeholder="CCTEN1" />
+              </div>
+              <div>
+                <Label className="mb-1">Module</Label>
+                <Input value={module} onChange={(e) => setModule(e.target.value)} placeholder="PM1" />
+              </div>
+            </div>
+          )}
+          {isCustom && (
+            <div>
+              <Label className="mb-1">Product</Label>
+              <Input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="TEOS" />
+            </div>
+          )}
           <div>
             <Label className="mb-1">Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as PassdownStatus)}>
@@ -200,7 +267,7 @@ function NewEntryDialog({
           {error && <p className="text-destructive text-sm">{error}</p>}
         </div>
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={saving}>
+          <Button onClick={handleSubmit} disabled={saving || !toolId.trim() || !module.trim()}>
             {saving ? "建立中..." : "建立"}
           </Button>
         </DialogFooter>
@@ -218,7 +285,7 @@ export default function PassdownPage() {
 
   const [view, setView] = useState<"board" | "history">("board");
   const [date, setDate] = useState(todayStr());
-  const [entries, setEntries] = useState<PassdownEntry[]>([]);
+  const [entries, setEntries] = useState<BoardEntry[]>([]);
   const [updatesByEntry, setUpdatesByEntry] = useState<Map<number, PassdownUpdate[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -229,6 +296,7 @@ export default function PassdownPage() {
   const [people, setPeople] = useState<PassdownPerson[]>([]);
   const [meId, setMeId] = useState<string>("");
   const [shift, setShift] = useState<PassdownShift>("day");
+  const [knownMachines, setKnownMachines] = useState<KnownMachine[]>([]);
 
   const [historyFrom, setHistoryFrom] = useState(addDays(todayStr(), -7));
   const [historyTo, setHistoryTo] = useState(todayStr());
@@ -242,28 +310,53 @@ export default function PassdownPage() {
     fetchPeople(getSupabase())
       .then(setPeople)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    fetchKnownMachines(getSupabase())
+      .then(setKnownMachines)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
     const savedMe = localStorage.getItem("passdown_me");
     if (savedMe) setMeId(savedMe);
     const savedShift = localStorage.getItem("passdown_shift");
     if (savedShift === "day" || savedShift === "night") setShift(savedShift);
   }, []);
 
+  // Seeds the day's board from whatever machines were already being tracked
+  // as of the most recent earlier date with data, instead of starting blank
+  // every day — carried-forward rows are flagged isPlaceholder and only
+  // become real passdown_entries rows once someone edits them (see
+  // handleStatusChange/handleFieldSave/handleAddNote below).
   const loadBoard = useCallback(async (d: string) => {
     setLoading(true);
     setError(null);
     try {
       const supabase = getSupabase();
-      const entryRows = await fetchEntriesForDate(supabase, d);
+      const todayEntries = await fetchEntriesForDate(supabase, d);
+      const todayKeys = new Set(todayEntries.map(machineKey));
+
+      const prevDate = await fetchLatestEntryDateBefore(supabase, d);
+      const prevEntries = prevDate ? await fetchEntriesForDate(supabase, prevDate) : [];
+
+      const board: BoardEntry[] = [...todayEntries];
+      for (const p of prevEntries) {
+        if (todayKeys.has(machineKey(p))) continue;
+        board.push({
+          ...p,
+          entryDate: d,
+          updatedById: null,
+          updatedByName: null,
+          isPlaceholder: true,
+        });
+      }
+
       const updates = await fetchUpdatesForEntries(
         supabase,
-        entryRows.map((e) => e.id)
+        todayEntries.map((e) => e.id)
       );
       const map = new Map<number, PassdownUpdate[]>();
       for (const u of updates) {
         if (!map.has(u.entryId)) map.set(u.entryId, []);
         map.get(u.entryId)!.push(u);
       }
-      setEntries(entryRows);
+      setEntries(board);
       setUpdatesByEntry(map);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -308,17 +401,18 @@ export default function PassdownPage() {
     localStorage.setItem("passdown_shift", s);
   }
 
-  const grouped = useMemo(() => {
+  const boardRows = useMemo(() => {
     const list = onlyOpen ? entries.filter((e) => e.status !== "up") : entries;
-    const map = new Map<string, PassdownEntry[]>();
-    for (const e of list) {
-      if (!map.has(e.toolId)) map.set(e.toolId, []);
-      map.get(e.toolId)!.push(e);
-    }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return [...list].sort((a, b) => a.toolId.localeCompare(b.toolId) || a.module.localeCompare(b.module));
   }, [entries, onlyOpen]);
 
-  async function handleStatusChange(entry: PassdownEntry, status: PassdownStatus) {
+  const boardKeys = useMemo(() => new Set(entries.map(machineKey)), [entries]);
+
+  // Placeholder (carried-forward) rows aren't real passdown_entries rows yet
+  // — any edit upserts one keyed on (entryDate, toolId, module), which is
+  // exactly what materializes it. Matching by machineKey (not id) here is
+  // what makes that swap-in transparent for both placeholder and real rows.
+  async function handleStatusChange(entry: BoardEntry, status: PassdownStatus) {
     const updated = await upsertEntry(getSupabase(), {
       entryDate: entry.entryDate,
       toolId: entry.toolId,
@@ -329,10 +423,10 @@ export default function PassdownPage() {
       remark: entry.remark,
       updatedById: meId ? Number(meId) : null,
     });
-    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    setEntries((prev) => prev.map((e) => (machineKey(e) === machineKey(entry) ? updated : e)));
   }
 
-  async function handleFieldSave(entry: PassdownEntry, field: "problemStatement" | "remark", value: string) {
+  async function handleFieldSave(entry: BoardEntry, field: "problemStatement" | "remark", value: string) {
     const updated = await upsertEntry(getSupabase(), {
       entryDate: entry.entryDate,
       toolId: entry.toolId,
@@ -343,15 +437,29 @@ export default function PassdownPage() {
       remark: field === "remark" ? value : entry.remark,
       updatedById: meId ? Number(meId) : null,
     });
-    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    setEntries((prev) => prev.map((e) => (machineKey(e) === machineKey(entry) ? updated : e)));
   }
 
-  async function handleAddNote(entry: PassdownEntry, note: string) {
+  async function handleAddNote(entry: BoardEntry, note: string) {
     if (!meId) throw new Error("請先在上方選擇你的名字");
-    const created = await addUpdate(getSupabase(), { entryId: entry.id, personId: Number(meId), shift, note });
+    let target: PassdownEntry = entry;
+    if (entry.isPlaceholder) {
+      target = await upsertEntry(getSupabase(), {
+        entryDate: entry.entryDate,
+        toolId: entry.toolId,
+        product: entry.product,
+        module: entry.module,
+        status: entry.status,
+        problemStatement: entry.problemStatement,
+        remark: entry.remark,
+        updatedById: meId ? Number(meId) : null,
+      });
+      setEntries((prev) => prev.map((e) => (machineKey(e) === machineKey(entry) ? target : e)));
+    }
+    const created = await addUpdate(getSupabase(), { entryId: target.id, personId: Number(meId), shift, note });
     setUpdatesByEntry((prev) => {
       const next = new Map(prev);
-      next.set(entry.id, [...(next.get(entry.id) ?? []), created]);
+      next.set(target.id, [...(next.get(target.id) ?? []), created]);
       return next;
     });
   }
@@ -504,7 +612,7 @@ export default function PassdownPage() {
                 </Button>
                 <Button size="sm" onClick={() => setNewEntryOpen(true)}>
                   <Plus className="h-4 w-4" />
-                  新增今日項目
+                  新增機台
                 </Button>
               </div>
             </div>
@@ -513,33 +621,49 @@ export default function PassdownPage() {
 
             {loading ? (
               <p className="text-muted-foreground text-sm">載入中...</p>
-            ) : grouped.length === 0 ? (
+            ) : boardRows.length === 0 ? (
               <p className="text-muted-foreground text-sm">{date} 尚無交接記錄。</p>
             ) : (
-              <div className="space-y-6">
-                {grouped.map(([toolId, list]) => (
-                  <div key={toolId}>
-                    <h2 className="mb-2 text-sm font-semibold tracking-wide text-muted-foreground">{toolId}</h2>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      {list.map((entry) => (
-                        <PassdownEntryCard
-                          key={entry.id}
+              <Card>
+                <CardContent className="px-0 pt-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Tool ID</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Module</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Problem Statement</TableHead>
+                        <TableHead>Activities &amp; Planning</TableHead>
+                        <TableHead>Remark</TableHead>
+                        <TableHead>Updated By</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {boardRows.map((entry) => (
+                        <PassdownEntryRow
+                          key={machineKey(entry)}
                           entry={entry}
                           updates={updatesByEntry.get(entry.id) ?? []}
-                          canEdit
                           currentShift={shift}
                           onStatusChange={(status) => handleStatusChange(entry, status)}
                           onFieldSave={(field, value) => handleFieldSave(entry, field, value)}
                           onAddNote={(note) => handleAddNote(entry, note)}
                         />
                       ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             )}
 
-            <NewEntryDialog open={newEntryOpen} onOpenChange={setNewEntryOpen} onCreate={handleCreateEntry} />
+            <NewEntryDialog
+              open={newEntryOpen}
+              onOpenChange={setNewEntryOpen}
+              onCreate={handleCreateEntry}
+              knownMachines={knownMachines}
+              excludeKeys={boardKeys}
+            />
           </>
         )}
 

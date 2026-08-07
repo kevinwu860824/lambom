@@ -82,6 +82,39 @@ function mapEntryRow(row: EntryRow): PassdownEntry {
   };
 }
 
+/** Latest entry_date strictly before `date` that has any rows — used to seed
+ * a day's board with whatever machines were being tracked in the prior
+ * shift/day, instead of starting from a blank slate every day. */
+export async function fetchLatestEntryDateBefore(supabase: SupabaseClient, date: string): Promise<string | null> {
+  const { data, error } = await withRetry(() =>
+    supabase.from("passdown_entries").select("entry_date").lt("entry_date", date).order("entry_date", { ascending: false }).limit(1)
+  );
+  if (error) throw new Error(error.message);
+  return data && data.length > 0 ? (data[0] as { entry_date: string }).entry_date : null;
+}
+
+export interface KnownMachine {
+  toolId: string;
+  module: string;
+  product: string | null;
+}
+
+/** Distinct (tool_id, module) combos seen recently — powers the "+" add
+ * dialog's machine picker so people select an existing machine instead of
+ * retyping Tool ID/Module by hand every time. */
+export async function fetchKnownMachines(supabase: SupabaseClient): Promise<KnownMachine[]> {
+  const { data, error } = await withRetry(() =>
+    supabase.from("passdown_entries").select("tool_id,module,product").order("entry_date", { ascending: false }).limit(3000)
+  );
+  if (error) throw new Error(error.message);
+  const seen = new Map<string, KnownMachine>();
+  for (const row of (data ?? []) as { tool_id: string; module: string; product: string | null }[]) {
+    const key = `${row.tool_id}|${row.module}`;
+    if (!seen.has(key)) seen.set(key, { toolId: row.tool_id, module: row.module, product: row.product });
+  }
+  return [...seen.values()].sort((a, b) => a.toolId.localeCompare(b.toolId) || a.module.localeCompare(b.module));
+}
+
 export async function fetchPeople(supabase: SupabaseClient): Promise<PassdownPerson[]> {
   const { data, error } = await withRetry(() =>
     supabase.from("passdown_people").select("id,name,active").eq("active", true).order("name")
