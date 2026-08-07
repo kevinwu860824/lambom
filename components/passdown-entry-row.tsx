@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import {
   SHIFT_LABELS,
@@ -12,7 +12,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EditableField } from "@/components/editable-field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableCell, TableRow } from "@/components/ui/table";
@@ -27,6 +26,13 @@ const STATUS_BADGE_CLASS: Record<PassdownStatus, string> = {
 
 const STATUS_OPTIONS: PassdownStatus[] = ["up", "down", "monitor", "other"];
 
+// Shared box treatment (border/radius/padding/shadow) so Problem Statement,
+// Activities & Planning, and Remark all read as the same kind of cell,
+// whether their content is an editable textarea or the note-log + add-note
+// control.
+const CELL_BOX = "min-h-[38px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs";
+const CELL_WIDTH = "min-w-56 max-w-80";
+
 export interface PassdownRowEntry {
   id: number;
   toolId: string;
@@ -37,6 +43,55 @@ export interface PassdownRowEntry {
   remark: string | null;
   updatedByName: string | null;
   isPlaceholder?: boolean;
+}
+
+/** Textarea-based inline-editable cell, saving on blur — matches how a
+ * spreadsheet cell commits when you click away, and keeps this column's
+ * multi-line text (most migrated Problem Statement/Remark values have
+ * several lines) visible without a separate expand step. */
+function EditableTextCell({ value, onSave }: { value: string; onSave: (value: string) => Promise<void> }) {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  async function commit() {
+    const trimmed = draft.trim();
+    if (trimmed === (value ?? "")) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(trimmed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDraft(value);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <Textarea
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft(value);
+            e.currentTarget.blur();
+          }
+        }}
+        rows={2}
+        className={cn(CELL_BOX, "resize-none shadow-none")}
+      />
+      {error && <p className="text-destructive mt-1 text-xs">{error}</p>}
+    </div>
+  );
 }
 
 export function PassdownEntryRow({
@@ -104,11 +159,11 @@ export function PassdownEntryRow({
           </SelectContent>
         </Select>
       </TableCell>
-      <TableCell className="min-w-48 max-w-72 align-top whitespace-normal">
-        <EditableField value={entry.problemStatement ?? ""} onSave={(v) => onFieldSave("problemStatement", v)} />
+      <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
+        <EditableTextCell value={entry.problemStatement ?? ""} onSave={(v) => onFieldSave("problemStatement", v)} />
       </TableCell>
-      <TableCell className="min-w-56 max-w-80 align-top whitespace-normal">
-        <div className="space-y-1">
+      <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
+        <div className={cn(CELL_BOX, "space-y-1.5")}>
           {updates.map((u) => (
             <div key={u.id} className="bg-muted/50 rounded p-1.5 text-xs">
               <div className="text-muted-foreground mb-0.5 flex items-center gap-1">
@@ -120,7 +175,7 @@ export function PassdownEntryRow({
           ))}
           <Popover open={notePopoverOpen} onOpenChange={setNotePopoverOpen}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="xs" className="text-muted-foreground">
+              <Button variant="ghost" size="xs" className="text-muted-foreground -ml-2">
                 <MessageSquarePlus className="h-3.5 w-3.5" />
                 留言
               </Button>
@@ -144,8 +199,8 @@ export function PassdownEntryRow({
           </Popover>
         </div>
       </TableCell>
-      <TableCell className="min-w-40 max-w-64 align-top whitespace-normal">
-        <EditableField value={entry.remark ?? ""} onSave={(v) => onFieldSave("remark", v)} />
+      <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
+        <EditableTextCell value={entry.remark ?? ""} onSave={(v) => onFieldSave("remark", v)} />
       </TableCell>
       <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
         {entry.isPlaceholder ? <Badge variant="outline">沿用上次</Badge> : entry.updatedByName || "-"}

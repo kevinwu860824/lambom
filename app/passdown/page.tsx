@@ -324,46 +324,72 @@ export default function PassdownPage() {
   // every day — carried-forward rows are flagged isPlaceholder and only
   // become real passdown_entries rows once someone edits them (see
   // handleStatusChange/handleFieldSave/handleAddNote below).
-  const loadBoard = useCallback(async (d: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const supabase = getSupabase();
-      const todayEntries = await fetchEntriesForDate(supabase, d);
-      const todayKeys = new Set(todayEntries.map(machineKey));
+  const fetchBoardData = useCallback(async (d: string) => {
+    const supabase = getSupabase();
+    const todayEntries = await fetchEntriesForDate(supabase, d);
+    const todayKeys = new Set(todayEntries.map(machineKey));
 
-      const prevDate = await fetchLatestEntryDateBefore(supabase, d);
-      const prevEntries = prevDate ? await fetchEntriesForDate(supabase, prevDate) : [];
+    const prevDate = await fetchLatestEntryDateBefore(supabase, d);
+    const prevEntries = prevDate ? await fetchEntriesForDate(supabase, prevDate) : [];
 
-      const board: BoardEntry[] = [...todayEntries];
-      for (const p of prevEntries) {
-        if (todayKeys.has(machineKey(p))) continue;
-        board.push({
-          ...p,
-          entryDate: d,
-          updatedById: null,
-          updatedByName: null,
-          isPlaceholder: true,
-        });
-      }
-
-      const updates = await fetchUpdatesForEntries(
-        supabase,
-        todayEntries.map((e) => e.id)
-      );
-      const map = new Map<number, PassdownUpdate[]>();
-      for (const u of updates) {
-        if (!map.has(u.entryId)) map.set(u.entryId, []);
-        map.get(u.entryId)!.push(u);
-      }
-      setEntries(board);
-      setUpdatesByEntry(map);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
+    const board: BoardEntry[] = [...todayEntries];
+    for (const p of prevEntries) {
+      if (todayKeys.has(machineKey(p))) continue;
+      board.push({
+        ...p,
+        entryDate: d,
+        updatedById: null,
+        updatedByName: null,
+        isPlaceholder: true,
+      });
     }
+
+    const updates = await fetchUpdatesForEntries(
+      supabase,
+      todayEntries.map((e) => e.id)
+    );
+    const map = new Map<number, PassdownUpdate[]>();
+    for (const u of updates) {
+      if (!map.has(u.entryId)) map.set(u.entryId, []);
+      map.get(u.entryId)!.push(u);
+    }
+    return { board, updatesMap: map };
   }, []);
+
+  const loadBoard = useCallback(
+    async (d: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { board, updatesMap } = await fetchBoardData(d);
+        setEntries(board);
+        setUpdatesByEntry(updatesMap);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fetchBoardData]
+  );
+
+  // Same fetch as loadBoard, but doesn't touch the loading flag — used for
+  // realtime-triggered refreshes (including the echo of our own edits) so
+  // the table quietly re-syncs instead of flashing to a "載入中" screen on
+  // every status change or note.
+  const refreshBoardSilently = useCallback(
+    async (d: string) => {
+      try {
+        const { board, updatesMap } = await fetchBoardData(d);
+        setEntries(board);
+        setUpdatesByEntry(updatesMap);
+      } catch {
+        // Best-effort background refresh; a real problem will surface on the
+        // next explicit load (date change) instead of interrupting editing.
+      }
+    },
+    [fetchBoardData]
+  );
 
   useEffect(() => {
     loadBoard(date);
@@ -380,16 +406,16 @@ export default function PassdownPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "passdown_entries", filter: `entry_date=eq.${date}` },
-        () => loadBoard(date)
+        () => refreshBoardSilently(date)
       )
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "passdown_updates" }, () =>
-        loadBoard(date)
+        refreshBoardSilently(date)
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [date, loadBoard]);
+  }, [date, refreshBoardSilently]);
 
   function saveMe(id: string) {
     setMeId(id);
@@ -481,7 +507,7 @@ export default function PassdownPage() {
       remark: null,
       updatedById: meId ? Number(meId) : null,
     });
-    await loadBoard(date);
+    await refreshBoardSilently(date);
   }
 
   async function handleCopyEmail() {
