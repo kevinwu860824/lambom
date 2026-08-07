@@ -50,7 +50,7 @@ export default function ZbomPage() {
               View a machine&apos;s stored SAP Variant Configuration options.
             </p>
           </div>
-          <Link href="/" className="text-sm underline underline-offset-4">
+          <Link href="/lambom" className="text-sm underline underline-offset-4">
             Back to Comparison Tool
           </Link>
         </div>

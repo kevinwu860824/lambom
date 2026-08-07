@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BOM Comparison Tool",
-  description: "Select two machine BOMs to compare their differences",
+  title: "Internal Tools",
+  description: "F22 internal tools portal",
 };
 
 export default function RootLayout({

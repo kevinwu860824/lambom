@@ -225,7 +225,7 @@ export default function MachinesPage() {
             >
               {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
             </Button>
-            <Link href="/" className="text-sm underline underline-offset-4">
+            <Link href="/lambom" className="text-sm underline underline-offset-4">
               Back to Comparison Tool
             </Link>
           </div>

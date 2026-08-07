@@ -876,7 +876,7 @@ export default function FingerprintPage() {
               View/edit each machine&apos;s key part numbers by tool type — reads and writes directly to key_parts.
             </p>
           </div>
-          <Link href="/" className="text-sm underline underline-offset-4">
+          <Link href="/lambom" className="text-sm underline underline-offset-4">
             Back to Comparison Tool
           </Link>
         </div>
