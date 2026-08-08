@@ -25,7 +25,6 @@ import {
 import { PassdownEntryRow } from "@/components/passdown-entry-row";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +121,7 @@ function NewEntryDialog({
   onCreate,
   knownMachines,
   excludeKeys,
+  existingKeys,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -133,7 +133,14 @@ function NewEntryDialog({
     problemStatement: string;
   }) => Promise<void>;
   knownMachines: KnownMachine[];
+  /** Machines currently visible on the board — hidden from the picker since
+   * there's nothing to "bring back". */
   excludeKeys: Set<string>;
+  /** Machines that already have a row today (visible or hidden). Picking one
+   * of these just reveals it — the Status/Problem fields below are ignored
+   * so a hidden Up machine's real data never gets clobbered by whatever's
+   * sitting in this form. */
+  existingKeys: Set<string>;
 }) {
   const [selectedKey, setSelectedKey] = useState("");
   const [toolId, setToolId] = useState("");
@@ -146,6 +153,7 @@ function NewEntryDialog({
 
   const availableMachines = knownMachines.filter((m) => !excludeKeys.has(machineKey(m)));
   const isCustom = selectedKey === CUSTOM_MACHINE_KEY;
+  const isExistingHidden = selectedKey !== "" && !isCustom && existingKeys.has(selectedKey);
 
   function handleSelectMachine(key: string) {
     setSelectedKey(key);
@@ -245,30 +253,38 @@ function NewEntryDialog({
               <Input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="TEOS" />
             </div>
           )}
-          <div>
-            <Label className="mb-1">Status</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as PassdownStatus)}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(["up", "down", "monitor", "other"] as PassdownStatus[]).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {STATUS_LABELS[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="mb-1">Problem Statement</Label>
-            <Input value={problemStatement} onChange={(e) => setProblemStatement(e.target.value)} />
-          </div>
+          {isExistingHidden ? (
+            <p className="text-muted-foreground text-sm">
+              這台今天已經有記錄(狀態是 Up 所以被隱藏),選「顯示」會直接把它叫出來,不會更動它原本的資料。
+            </p>
+          ) : (
+            <>
+              <div>
+                <Label className="mb-1">Status</Label>
+                <Select value={status} onValueChange={(v) => setStatus(v as PassdownStatus)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(["up", "down", "monitor", "other"] as PassdownStatus[]).map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {STATUS_LABELS[s]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="mb-1">Problem Statement</Label>
+                <Input value={problemStatement} onChange={(e) => setProblemStatement(e.target.value)} />
+              </div>
+            </>
+          )}
           {error && <p className="text-destructive text-sm">{error}</p>}
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={saving || !toolId.trim() || !module.trim()}>
-            {saving ? "建立中..." : "建立"}
+            {saving ? "處理中..." : isExistingHidden ? "顯示" : "建立"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -289,7 +305,10 @@ export default function PassdownPage() {
   const [updatesByEntry, setUpdatesByEntry] = useState<Map<number, PassdownUpdate[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [onlyOpen, setOnlyOpen] = useState(false);
+  // Machines explicitly pulled back onto the board via "+新增機台" even
+  // though their status is Up — reset whenever the viewed date changes (see
+  // loadBoard below).
+  const [forcedVisibleKeys, setForcedVisibleKeys] = useState<Set<string>>(new Set());
   const [newEntryOpen, setNewEntryOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
 
@@ -360,6 +379,7 @@ export default function PassdownPage() {
     async (d: string) => {
       setLoading(true);
       setError(null);
+      setForcedVisibleKeys(new Set());
       try {
         const { board, updatesMap } = await fetchBoardData(d);
         setEntries(board);
@@ -427,12 +447,17 @@ export default function PassdownPage() {
     localStorage.setItem("passdown_shift", s);
   }
 
+  // Up machines are hidden by default — most machines are fine most of the
+  // time, so the board should read as "what needs attention", not a full
+  // roster. "+新增機台" is the escape hatch (forcedVisibleKeys) for
+  // deliberately bringing one back into view.
   const boardRows = useMemo(() => {
-    const list = onlyOpen ? entries.filter((e) => e.status !== "up") : entries;
+    const list = entries.filter((e) => e.status !== "up" || forcedVisibleKeys.has(machineKey(e)));
     return [...list].sort((a, b) => a.toolId.localeCompare(b.toolId) || a.module.localeCompare(b.module));
-  }, [entries, onlyOpen]);
+  }, [entries, forcedVisibleKeys]);
 
-  const boardKeys = useMemo(() => new Set(entries.map(machineKey)), [entries]);
+  const visibleKeys = useMemo(() => new Set(boardRows.map(machineKey)), [boardRows]);
+  const existingKeys = useMemo(() => new Set(entries.map(machineKey)), [entries]);
 
   // Placeholder (carried-forward) rows aren't real passdown_entries rows yet
   // — any edit upserts one keyed on (entryDate, toolId, module), which is
@@ -497,6 +522,14 @@ export default function PassdownPage() {
     status: PassdownStatus;
     problemStatement: string;
   }) {
+    const key = machineKey(input);
+    // Already tracked today, just hidden (status Up) — reveal it as-is
+    // instead of overwriting its real data with whatever the dialog's form
+    // happened to hold.
+    if (existingKeys.has(key)) {
+      setForcedVisibleKeys((prev) => new Set(prev).add(key));
+      return;
+    }
     await upsertEntry(getSupabase(), {
       entryDate: date,
       toolId: input.toolId,
@@ -507,11 +540,12 @@ export default function PassdownPage() {
       remark: null,
       updatedById: meId ? Number(meId) : null,
     });
+    setForcedVisibleKeys((prev) => new Set(prev).add(key));
     await refreshBoardSilently(date);
   }
 
   async function handleCopyEmail() {
-    const list = onlyOpen ? entries.filter((e) => e.status !== "up") : entries;
+    const list = boardRows;
     const text = buildEmailText(date, list, updatesByEntry);
     try {
       if (typeof ClipboardItem !== "undefined") {
@@ -623,12 +657,8 @@ export default function PassdownPage() {
                   </Button>
                 )}
               </div>
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={onlyOpen} onCheckedChange={(v) => setOnlyOpen(v === true)} />
-                只顯示未結案(非 Up)
-              </label>
               <div className="ml-auto flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={handleCopyEmail} disabled={entries.length === 0}>
+                <Button variant="outline" size="sm" onClick={handleCopyEmail} disabled={boardRows.length === 0}>
                   {copyState === "copied" ? (
                     <ClipboardCheck className="h-4 w-4" />
                   ) : (
@@ -648,7 +678,11 @@ export default function PassdownPage() {
             {loading ? (
               <p className="text-muted-foreground text-sm">載入中...</p>
             ) : boardRows.length === 0 ? (
-              <p className="text-muted-foreground text-sm">{date} 尚無交接記錄。</p>
+              <p className="text-muted-foreground text-sm">
+                {entries.length === 0
+                  ? `${date} 尚無交接記錄。`
+                  : "今天追蹤中的機台都是 Up,沒有需要交接的項目。需要記錄可以按右上「新增機台」。"}
+              </p>
             ) : (
               <Card>
                 <CardContent className="px-0 pt-0">
@@ -688,7 +722,8 @@ export default function PassdownPage() {
               onOpenChange={setNewEntryOpen}
               onCreate={handleCreateEntry}
               knownMachines={knownMachines}
-              excludeKeys={boardKeys}
+              excludeKeys={visibleKeys}
+              existingKeys={existingKeys}
             />
           </>
         )}
