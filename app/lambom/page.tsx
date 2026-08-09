@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, Download, Settings } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Home as HomeIcon, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
@@ -65,7 +65,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { UploadBomDialog } from "@/components/upload-bom-dialog";
 import { DescriptionSearch } from "@/components/description-search";
 import { KeyPartsPanel } from "@/components/key-parts-panel";
 import { exportCompareToExcel } from "@/lib/export-excel";
@@ -455,15 +454,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleUploaded() {
-    setInitLoading(true);
-    setInitError(null);
-    loadData().catch((err) => {
-      setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
-      setInitLoading(false);
-    });
-  }
-
   function handleMachineAChange(machine: string) {
     setMachineA(machine);
     setSubpartsA(new Set(subpartsFor(machine).map((s) => s.source_file)));
@@ -654,10 +644,11 @@ export default function Home() {
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
-            <UploadBomDialog
-              existingMachines={machineGroups.map((g) => g.machine)}
-              onUploaded={handleUploaded}
-            />
+            <Button variant="outline" size="icon" asChild>
+              <Link href="/" aria-label="回首頁">
+                <HomeIcon className="h-4 w-4" />
+              </Link>
+            </Button>
           </div>
         </div>
 
