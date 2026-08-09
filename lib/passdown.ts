@@ -259,6 +259,92 @@ export async function fetchUpdatesForEntries(
   return (data ?? []).map((row) => mapUpdateRow(row as unknown as UpdateRow));
 }
 
+export interface SimilarProblem {
+  id: number;
+  entryDate: string;
+  toolId: string;
+  module: string;
+  problemStatement: string;
+  similarity: number;
+}
+
+/** Fuzzy (trigram) search over historical Problem Statement text — real data
+ * shows the same failure mode recurs constantly and often gets typed with
+ * typos/abbreviations, so this deliberately isn't an exact/prefix match.
+ * Same-tool_id matches are ranked first (see passdown_search_similar_problems
+ * in scripts/passdown-similar-problems-schema.sql) since a repeat on the
+ * same machine is far more likely to be the same root cause. */
+export async function fetchSimilarProblems(
+  supabase: SupabaseClient,
+  opts: { searchText: string; toolId?: string; limit?: number }
+): Promise<SimilarProblem[]> {
+  const { data, error } = await withRetry(() =>
+    supabase.rpc("passdown_search_similar_problems", {
+      search_text: opts.searchText,
+      p_tool_id: opts.toolId ?? null,
+      p_limit: opts.limit ?? 6,
+    })
+  );
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as {
+      id: number;
+      entry_date: string;
+      tool_id: string;
+      module: string;
+      problem_statement: string;
+      similarity: number;
+    }[]
+  ).map((row) => ({
+    id: row.id,
+    entryDate: row.entry_date,
+    toolId: row.tool_id,
+    module: row.module,
+    problemStatement: row.problem_statement,
+    similarity: row.similarity,
+  }));
+}
+
+export interface ProblemHistoryNote {
+  entryDate: string;
+  note: PassdownUpdate;
+}
+
+/** All historical shift notes for every entry sharing the same tool+module
+ * and exact problem text — captures a whole multi-day "episode" (the same
+ * wording tends to get carried forward day to day for as long as an issue
+ * stays open, confirmed by real data), used to build the read-only "what
+ * was done last time" reference card.
+ *
+ * Sorted by the entry's entry_date, not the note's created_at: every note
+ * migrated from the old Excel got the migration run's timestamp, not its
+ * real original date, so created_at order would scramble a historical
+ * episode's actual chronology (new, directly-authored notes do have a
+ * meaningful created_at, but entry_date+id sorts those correctly too). */
+export async function fetchProblemHistoryNotes(
+  supabase: SupabaseClient,
+  opts: { toolId: string; module: string; problemStatement: string }
+): Promise<ProblemHistoryNote[]> {
+  const { data: entries, error } = await withRetry(() =>
+    supabase
+      .from("passdown_entries")
+      .select("id,entry_date")
+      .eq("tool_id", opts.toolId)
+      .eq("module", opts.module)
+      .eq("problem_statement", opts.problemStatement)
+  );
+  if (error) throw new Error(error.message);
+  const entryRows = (entries ?? []) as { id: number; entry_date: string }[];
+  const dateByEntryId = new Map(entryRows.map((r) => [r.id, r.entry_date]));
+  const notes = await fetchUpdatesForEntries(
+    supabase,
+    entryRows.map((r) => r.id)
+  );
+  return notes
+    .map((note) => ({ note, entryDate: dateByEntryId.get(note.entryId) ?? "" }))
+    .sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.note.id - b.note.id);
+}
+
 /** Appends one shift-handover note as a new row — never edits or removes
  * anyone else's note, which is the core fix for the old shared-Excel-cell
  * problem where two people's write-ups could overwrite each other. */

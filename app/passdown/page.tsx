@@ -11,6 +11,8 @@ import {
   fetchKnownMachines,
   fetchLatestEntryDateBefore,
   fetchPeople,
+  fetchProblemHistoryNotes,
+  fetchSimilarProblems,
   fetchUpdatesForEntries,
   SHIFT_LABELS,
   STATUS_LABELS,
@@ -544,6 +546,14 @@ export default function PassdownPage() {
     await refreshBoardSilently(date);
   }
 
+  function handleSearchSimilarProblems(searchText: string, toolId: string) {
+    return fetchSimilarProblems(getSupabase(), { searchText, toolId });
+  }
+
+  function handleFetchProblemHistory(target: { toolId: string; module: string; problemStatement: string }) {
+    return fetchProblemHistoryNotes(getSupabase(), target);
+  }
+
   async function handleCopyEmail() {
     const list = boardRows;
     const text = buildEmailText(date, list, updatesByEntry);
@@ -709,6 +719,8 @@ export default function PassdownPage() {
                           onStatusChange={(status) => handleStatusChange(entry, status)}
                           onFieldSave={(field, value) => handleFieldSave(entry, field, value)}
                           onAddNote={(note) => handleAddNote(entry, note)}
+                          onSearchSimilarProblems={handleSearchSimilarProblems}
+                          onFetchProblemHistory={handleFetchProblemHistory}
                         />
                       ))}
                     </TableBody>
