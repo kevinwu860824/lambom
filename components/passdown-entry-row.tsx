@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import {
   SHIFT_LABELS,
@@ -48,15 +48,30 @@ export interface PassdownRowEntry {
 /** Textarea-based inline-editable cell, saving on blur — matches how a
  * spreadsheet cell commits when you click away, and keeps this column's
  * multi-line text (most migrated Problem Statement/Remark values have
- * several lines) visible without a separate expand step. */
+ * several lines) visible without a separate expand step.
+ *
+ * Height is min-height driven by its own content (auto-grow, so nothing is
+ * ever clipped/scrolled inside this one cell) combined with `h-full` (so it
+ * also stretches to match whichever of Problem Statement/Activities &
+ * Planning/Remark is tallest in the row — plain HTML table rows already
+ * size every cell to the tallest one, this just makes the box fill that
+ * height instead of leaving empty space below a shorter box). */
 function EditableTextCell({ value, onSave }: { value: string; onSave: (value: string) => Promise<void> }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setDraft(value);
   }, [value]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.minHeight = "0px";
+    el.style.minHeight = `${el.scrollHeight}px`;
+  }, [draft]);
 
   async function commit() {
     const trimmed = draft.trim();
@@ -74,8 +89,9 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
   }
 
   return (
-    <div>
+    <div className="h-full">
       <Textarea
+        ref={textareaRef}
         value={draft}
         disabled={saving}
         onChange={(e) => setDraft(e.target.value)}
@@ -86,8 +102,8 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
             e.currentTarget.blur();
           }
         }}
-        rows={2}
-        className={cn(CELL_BOX, "resize-none shadow-none")}
+        rows={1}
+        className={cn(CELL_BOX, "h-full resize-none overflow-hidden shadow-none")}
       />
       {error && <p className="text-destructive mt-1 text-xs">{error}</p>}
     </div>
@@ -163,7 +179,7 @@ export function PassdownEntryRow({
         <EditableTextCell value={entry.problemStatement ?? ""} onSave={(v) => onFieldSave("problemStatement", v)} />
       </TableCell>
       <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
-        <div className={cn(CELL_BOX, "space-y-1.5")}>
+        <div className={cn(CELL_BOX, "h-full space-y-1.5")}>
           {updates.map((u) => (
             <div key={u.id} className="bg-muted/50 rounded p-1.5 text-xs">
               <div className="text-muted-foreground mb-0.5 flex items-center gap-1">
