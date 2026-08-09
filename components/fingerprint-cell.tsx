@@ -17,6 +17,7 @@ export function FingerprintCell({
   mismatch,
   readOnly,
   foundInModules,
+  onViewPosition,
 }: {
   value: string;
   onSave: (newValue: string) => Promise<void>;
@@ -26,6 +27,12 @@ export function FingerprintCell({
    * last validated via the Excel template upload — shown as a small icon
    * with a tooltip listing them. */
   foundInModules?: string[] | null;
+  /** When set, a non-empty value is shown as a click-to-view-position
+   * button instead of a plain input while readOnly — matches the "where is
+   * this part?" affordance in the BOM Comparison Tool's Only in A/B rows.
+   * Never shown in edit mode, so it can't get in the way of actually
+   * editing the cell. */
+  onViewPosition?: () => void;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -71,25 +78,39 @@ export function FingerprintCell({
             </TooltipContent>
           </Tooltip>
         )}
-        <input
-          value={draft}
-          disabled={saving}
-          readOnly={readOnly}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") setDraft(value);
-          }}
-          className={cn(
-            "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
-            !readOnly &&
-              "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
-            saving && "opacity-50",
-            error && "border-destructive",
-            mismatch && "text-red-600 font-semibold"
-          )}
-        />
+        {readOnly && value && onViewPosition ? (
+          <button
+            type="button"
+            onClick={onViewPosition}
+            className={cn(
+              "w-full truncate rounded px-1.5 py-1 text-left text-sm underline-offset-2 outline-none",
+              "hover:bg-accent hover:underline",
+              mismatch && "text-red-600 font-semibold"
+            )}
+          >
+            {value}
+          </button>
+        ) : (
+          <input
+            value={draft}
+            disabled={saving}
+            readOnly={readOnly}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") setDraft(value);
+            }}
+            className={cn(
+              "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
+              !readOnly &&
+                "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
+              saving && "opacity-50",
+              error && "border-destructive",
+              mismatch && "text-red-600 font-semibold"
+            )}
+          />
+        )}
       </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}
     </div>

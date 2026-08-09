@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, Download, Home as HomeIcon, Settings } from "lucide-react";
+import { ChevronDown, Download, Home as HomeIcon, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   aggregateByPartNo,
-  buildBomTree,
   buildKeyPartDisplayRows,
   checkKeyParts,
   compareBoms,
@@ -21,16 +20,14 @@ import {
   type BomEntry,
   type BomItem,
   type BomTreeItem,
-  type BomTreeNode,
   type CompareResult,
   type KeyPart,
   type KeyPartInfo,
   type MachineGroup,
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
-import { ancestorIdsOf } from "@/components/bom-structure-viewer";
-import { BomTreeNodeRow } from "@/components/bom-tree-node";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
+import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -38,13 +35,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -116,169 +106,44 @@ export default function Home() {
   const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
 
   // "Where is this part?" dialog — opened by clicking a row in Only in A/B.
-  // Full BOM tree + per-module trees are page-lifetime cached (keyed by
-  // machine name / bomId) since they're each a paginated fetch of
-  // potentially 20k+ rows and the same machine's data doesn't change while
-  // browsing this page.
+  // The fetch/match/render logic lives in the shared PartPositionDialog
+  // component; this page just supplies page-lifetime-cached data getters
+  // (each is a paginated fetch of potentially 20k+ rows, so worth caching
+  // across repeated opens) and which target/mode to show.
   const fullBomTreeCacheRef = useRef<Map<string, Promise<BomTreeItem[]>>>(new Map());
-  function getFullBomTree(machine: string) {
+  const getFullBomTree = useCallback((machine: string) => {
     let promise = fullBomTreeCacheRef.current.get(machine);
     if (!promise) {
       promise = fetchFullBomTreeItems(getSupabase(), machine);
       fullBomTreeCacheRef.current.set(machine, promise);
     }
     return promise;
-  }
+  }, []);
 
   const moduleTreeCacheRef = useRef<Map<number, Promise<BomTreeItem[]>>>(new Map());
-  function getModuleTree(bomId: number, sourceFile: string) {
+  const getModuleTree = useCallback((bomId: number, sourceFile: string) => {
     let promise = moduleTreeCacheRef.current.get(bomId);
     if (!promise) {
       promise = fetchBomTreeItems(getSupabase(), bomId, sourceFile);
       moduleTreeCacheRef.current.set(bomId, promise);
     }
     return promise;
-  }
+  }, []);
 
-  const [positionTarget, setPositionTarget] = useState<{
-    partNo: string;
-    description: string | null;
-    machine: string;
-    mode: "modules" | "fullBom";
-  } | null>(null);
-  const [positionLoading, setPositionLoading] = useState(false);
-  const [positionError, setPositionError] = useState<string | null>(null);
-  const [positionFullBomItems, setPositionFullBomItems] = useState<BomTreeItem[] | null>(null);
-  const [positionModuleItems, setPositionModuleItems] = useState<
-    { bomId: number; sourceFile: string; items: BomTreeItem[] }[] | null
-  >(null);
-  // Expand/collapse state the user sets by clicking a chevron inside the
-  // dialog's tree — separate from the auto-expanded ancestor chain (below)
-  // so toggling one node doesn't fight with the auto-expansion on re-render.
-  const [positionManualExpandedIds, setPositionManualExpandedIds] = useState<Set<string>>(new Set());
-  // Which of positionMatches (below) is currently scrolled-to/highlighted —
-  // cycled by the Prev/Next buttons, shown only when a part occurs more
-  // than once (the same part can legitimately appear under more than one
-  // parent, or in more than one module).
-  const [positionActiveIndex, setPositionActiveIndex] = useState(0);
-
-  function togglePositionExpanded(id: string) {
-    setPositionManualExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function openPositionDialog(item: AggregatedItem, machine: string) {
-    setPositionTarget({ partNo: item.part_no, description: item.description, machine, mode: resultCompareMode });
-    setPositionLoading(true);
-    setPositionError(null);
-    setPositionFullBomItems(null);
-    setPositionModuleItems(null);
-    setPositionManualExpandedIds(new Set());
-    setPositionActiveIndex(0);
-
-    try {
-      // Only fetch whichever data source the currently-displayed comparison
-      // actually used — Full BOM mode never needs the per-module trees and
-      // vice versa, and each is a paginated fetch of potentially 20k+ rows.
-      if (resultCompareMode === "fullBom") {
-        setPositionFullBomItems(await getFullBomTree(machine));
-      } else {
-        const moduleResults = await Promise.all(
-          subpartsFor(machine).map(async (entry) => ({
-            bomId: entry.bomId,
-            sourceFile: entry.source_file,
-            items: await getModuleTree(entry.bomId, entry.source_file),
-          }))
-        );
-        setPositionModuleItems(moduleResults.filter((m) => m.items.some((i) => i.part_no === item.part_no)));
-      }
-    } catch (err) {
-      setPositionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPositionLoading(false);
-    }
-  }
-
-  /** Every node in `roots` whose part_no exactly matches, in tree walk
-   * (pre)order — the same id scheme buildBomTree + BomTreeNodeRow already
-   * use (idPrefix plus "/"-joined node.path), so the resulting ids plug
-   * directly into ancestorIdsOf for auto-expanding the dialog's tree down
-   * to each match, and their walk order gives Prev/Next a sensible
-   * top-to-bottom sequence. */
-  function collectExactMatchIds(roots: BomTreeNode[], idPrefix: string, partNo: string): string[] {
-    const ids: string[] = [];
-    function walk(nodes: BomTreeNode[]) {
-      for (const node of nodes) {
-        if (node.item.part_no === partNo) ids.push(`${idPrefix}:${node.path}`);
-        walk(node.children);
-      }
-    }
-    walk(roots);
-    return ids;
-  }
-
-  const positionFullBomView = useMemo(() => {
-    if (!positionFullBomItems || !positionTarget) return null;
-    const roots = buildBomTree(positionFullBomItems);
-    const matchIds = collectExactMatchIds(roots, "fullbom", positionTarget.partNo);
-    return { roots, matchIds };
-  }, [positionFullBomItems, positionTarget]);
-
-  const positionModuleTrees = useMemo(() => {
-    if (!positionModuleItems || !positionTarget) return [];
-    return positionModuleItems.map((m) => {
-      const roots = buildBomTree(m.items);
-      const matchIds = collectExactMatchIds(roots, String(m.bomId), positionTarget.partNo);
-      return { bomId: m.bomId, sourceFile: m.sourceFile, roots, matchIds };
-    });
-  }, [positionModuleItems, positionTarget]);
-
-  const positionMatches = useMemo(() => {
-    if (!positionTarget) return [];
-    return positionTarget.mode === "fullBom"
-      ? (positionFullBomView?.matchIds ?? [])
-      : positionModuleTrees.flatMap((m) => m.matchIds);
-  }, [positionTarget, positionFullBomView, positionModuleTrees]);
-
-  const positionActiveMatchId = positionMatches[positionActiveIndex] ?? null;
-
-  const positionAutoExpandedIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const id of positionMatches) for (const ancestorId of ancestorIdsOf(id)) ids.add(ancestorId);
-    return ids;
-  }, [positionMatches]);
-
-  const positionExpandedIds = useMemo(
-    () => new Set([...positionAutoExpandedIds, ...positionManualExpandedIds]),
-    [positionAutoExpandedIds, positionManualExpandedIds]
+  const getModules = useCallback(
+    async (machine: string) =>
+      (machineGroups.find((g) => g.machine === machine)?.subparts ?? []).map((entry) => ({
+        bomId: entry.bomId,
+        sourceFile: entry.source_file,
+      })),
+    [machineGroups]
   );
 
-  function goToPrevMatch() {
-    if (positionMatches.length === 0) return;
-    setPositionActiveIndex((i) => (i - 1 + positionMatches.length) % positionMatches.length);
-  }
+  const [positionTarget, setPositionTarget] = useState<PartPositionTarget | null>(null);
 
-  function goToNextMatch() {
-    if (positionMatches.length === 0) return;
-    setPositionActiveIndex((i) => (i + 1) % positionMatches.length);
+  function openPositionDialog(item: AggregatedItem, machine: string) {
+    setPositionTarget({ partNo: item.part_no, description: item.description, machine });
   }
-
-  // Scroll the active match into view — depends on positionExpandedIds too,
-  // since a freshly-expanded match's row doesn't exist in the DOM until
-  // that state has actually re-rendered.
-  useEffect(() => {
-    if (!positionActiveMatchId) return;
-    const raf = requestAnimationFrame(() => {
-      document
-        .getElementById(`bom-row-${positionActiveMatchId}`)
-        ?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [positionActiveMatchId, positionExpandedIds]);
 
   function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -837,105 +702,15 @@ export default function Home() {
           )}
         </Card>
 
-        <Dialog open={positionTarget !== null} onOpenChange={(open) => !open && setPositionTarget(null)}>
-          <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>{positionTarget?.partNo}</DialogTitle>
-              <DialogDescription>
-                {positionTarget?.description ?? "-"} — machine {positionTarget?.machine}
-              </DialogDescription>
-            </DialogHeader>
-
-            {positionMatches.length > 1 && (
-              <div className="flex shrink-0 items-center gap-2 border-b pb-3 text-sm">
-                <span className="text-muted-foreground">
-                  Match {positionActiveIndex + 1} / {positionMatches.length}
-                </span>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-7 w-7"
-                  onClick={goToPrevMatch}
-                  aria-label="Previous match"
-                >
-                  <ChevronUp className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-7 w-7"
-                  onClick={goToNextMatch}
-                  aria-label="Next match"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
-
-            <div className="min-h-0 overflow-y-auto">
-              {positionLoading ? (
-                <p className="text-muted-foreground text-sm">Loading…</p>
-              ) : positionError ? (
-                <p className="text-destructive text-sm">{positionError}</p>
-              ) : (
-                <div className="grid gap-4">
-                  {positionTarget?.mode === "fullBom" ? (
-                    <div>
-                      <p className="mb-1.5 text-sm font-medium">Full BOM</p>
-                      {positionFullBomView && positionFullBomView.matchIds.length > 0 ? (
-                        <Card>
-                          <CardContent>
-                            {positionFullBomView.roots.map((root) => (
-                              <BomTreeNodeRow
-                                key={root.path}
-                                node={root}
-                                idPrefix="fullbom"
-                                expandedPaths={positionExpandedIds}
-                                onToggle={togglePositionExpanded}
-                                normalizedQuery=""
-                                activeMatchId={positionActiveMatchId}
-                              />
-                            ))}
-                          </CardContent>
-                        </Card>
-                      ) : (
-                        <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
-                      )}
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="mb-1.5 text-sm font-medium">Modules</p>
-                      {positionModuleTrees.length > 0 ? (
-                        <div className="grid gap-3">
-                          {positionModuleTrees.map((m) => (
-                            <Card key={m.bomId}>
-                              <CardContent>
-                                <p className="mb-1.5 text-sm font-medium">{m.sourceFile}</p>
-                                {m.roots.map((root) => (
-                                  <BomTreeNodeRow
-                                    key={root.path}
-                                    node={root}
-                                    idPrefix={String(m.bomId)}
-                                    expandedPaths={positionExpandedIds}
-                                    onToggle={togglePositionExpanded}
-                                    normalizedQuery=""
-                                    activeMatchId={positionActiveMatchId}
-                                  />
-                                ))}
-                              </CardContent>
-                            </Card>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-muted-foreground text-sm italic">Not found in any module</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <PartPositionDialog
+          open={positionTarget !== null}
+          onOpenChange={(open) => !open && setPositionTarget(null)}
+          target={positionTarget}
+          mode={resultCompareMode}
+          getFullBomTree={getFullBomTree}
+          getModules={getModules}
+          getModuleTree={getModuleTree}
+        />
 
         <KeyPartsPanel
           machineA={machineA}

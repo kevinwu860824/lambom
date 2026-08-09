@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx-js-style";
 import { Check, Download, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
@@ -8,12 +8,16 @@ import { createClient } from "@/lib/supabase";
 import {
   chunk,
   fetchAllBomItems,
+  fetchBomTreeItems,
+  fetchFullBomTreeItems,
   fetchMachineBomLookup,
   normalizeDescription,
   type BomItem,
+  type BomTreeItem,
   type MachineBomLookup,
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
+import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -121,6 +125,53 @@ export default function FingerprintPage() {
       cache.set(machineName, promise);
     }
     return promise;
+  }
+
+  // "Where is this part?" dialog — same PartPositionDialog the BOM
+  // Comparison Tool uses for its Only in A/B rows, opened here from a
+  // read-only cell's part number. Each getter is page-lifetime cached the
+  // same way getMachineLookup above is, since Full BOM/module trees are
+  // each a paginated fetch of potentially 20k+ rows.
+  const fullBomTreeCacheRef = useRef<Map<string, Promise<BomTreeItem[]>>>(new Map());
+  const getFullBomTree = useCallback((machine: string) => {
+    let promise = fullBomTreeCacheRef.current.get(machine);
+    if (!promise) {
+      promise = fetchFullBomTreeItems(getSupabase(), machine);
+      fullBomTreeCacheRef.current.set(machine, promise);
+    }
+    return promise;
+  }, []);
+
+  const moduleTreeCacheRef = useRef<Map<number, Promise<BomTreeItem[]>>>(new Map());
+  const getModuleTree = useCallback((bomId: number, sourceFile: string) => {
+    let promise = moduleTreeCacheRef.current.get(bomId);
+    if (!promise) {
+      promise = fetchBomTreeItems(getSupabase(), bomId, sourceFile);
+      moduleTreeCacheRef.current.set(bomId, promise);
+    }
+    return promise;
+  }, []);
+
+  const moduleListCacheRef = useRef<Map<string, Promise<{ bomId: number; sourceFile: string }[]>>>(new Map());
+  const getModules = useCallback(async (machine: string) => {
+    let promise = moduleListCacheRef.current.get(machine);
+    if (!promise) {
+      promise = (async () => {
+        const { data, error } = await getSupabase()
+          .from("bom_machines")
+          .select("id,source_file")
+          .eq("machine_name", machine);
+        if (error) throw new Error(error.message);
+        return (data ?? []).map((r) => ({ bomId: r.id as number, sourceFile: r.source_file as string }));
+      })();
+      moduleListCacheRef.current.set(machine, promise);
+    }
+    return promise;
+  }, []);
+
+  const [positionTarget, setPositionTarget] = useState<PartPositionTarget | null>(null);
+  function openPositionDialog(partNo: string, machine: string) {
+    setPositionTarget({ partNo, description: null, machine });
   }
 
   const [toolTypes, setToolTypes] = useState<string[]>([]);
@@ -1149,6 +1200,9 @@ export default function FingerprintPage() {
                                   mismatch={mismatchesBySlot.get(slot.id)?.has(m) ?? false}
                                   readOnly={!editMode}
                                   foundInModules={cell?.foundInModules}
+                                  onViewPosition={
+                                    cell?.part_no ? () => openPositionDialog(cell.part_no, m) : undefined
+                                  }
                                 />
                               </TableCell>
                             );
@@ -1213,6 +1267,16 @@ export default function FingerprintPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PartPositionDialog
+        open={positionTarget !== null}
+        onOpenChange={(open) => !open && setPositionTarget(null)}
+        target={positionTarget}
+        mode="both"
+        getFullBomTree={getFullBomTree}
+        getModules={getModules}
+        getModuleTree={getModuleTree}
+      />
     </div>
   );
 }
