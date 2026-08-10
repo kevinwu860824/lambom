@@ -64,6 +64,11 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Escape calls .blur() right after resetting draft, but the blur event
+  // fires synchronously — before React has re-rendered with that reset —
+  // so onBlur's commit() would otherwise still see (and save) the
+  // pre-Escape draft. This ref sidesteps the stale-closure race entirely.
+  const isCancellingRef = useRef(false);
 
   useEffect(() => {
     setDraft(value);
@@ -77,6 +82,10 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
   }, [draft]);
 
   async function commit() {
+    if (isCancellingRef.current) {
+      isCancellingRef.current = false;
+      return;
+    }
     const trimmed = draft.trim();
     if (trimmed === (value ?? "")) return;
     setSaving(true);
@@ -101,6 +110,7 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
+            isCancellingRef.current = true;
             setDraft(value);
             e.currentTarget.blur();
           }
@@ -156,6 +166,10 @@ function ProblemStatementCell({
   // double-invoked effects, which would otherwise consume a one-shot flag
   // on the first invocation and let the second run for real.
   const lastPickedValueRef = useRef<string | null>(value);
+  // Same stale-closure guard as EditableTextCell's — Escape's .blur() fires
+  // onBlur synchronously, before React re-renders with the just-reset
+  // draft, so without this commit() would still save the pre-Escape text.
+  const isCancellingRef = useRef(false);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<SimilarProblem | null>(null);
@@ -207,6 +221,10 @@ function ProblemStatementCell({
   }, [draft, toolId]);
 
   async function commit(text: string) {
+    if (isCancellingRef.current) {
+      isCancellingRef.current = false;
+      return;
+    }
     const trimmed = text.trim();
     if (trimmed === (value ?? "")) return;
     setSaving(true);
@@ -259,6 +277,7 @@ function ProblemStatementCell({
             onBlur={() => commit(draft)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
+                isCancellingRef.current = true;
                 setDraft(value);
                 setSuggestOpen(false);
                 e.currentTarget.blur();
@@ -297,6 +316,11 @@ function ProblemStatementCell({
                     </span>
                   )}
                   <span>{s.entryDate}</span>
+                  {s.occurrenceCount > 1 && (
+                    <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                      出現過 {s.occurrenceCount} 次
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-foreground line-clamp-2 whitespace-pre-wrap">{s.problemStatement}</p>
               </button>

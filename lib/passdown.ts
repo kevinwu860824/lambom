@@ -265,6 +265,10 @@ export interface SimilarProblem {
   toolId: string;
   module: string;
   problemStatement: string;
+  /** How many historical entries normalize to the same text as this one
+   * (numbering/punctuation/case-insensitive) — this row represents the
+   * whole group, not just itself. */
+  occurrenceCount: number;
   similarity: number;
 }
 
@@ -293,6 +297,7 @@ export async function fetchSimilarProblems(
       tool_id: string;
       module: string;
       problem_statement: string;
+      occurrence_count: number;
       similarity: number;
     }[]
   ).map((row) => ({
@@ -301,6 +306,7 @@ export async function fetchSimilarProblems(
     toolId: row.tool_id,
     module: row.module,
     problemStatement: row.problem_statement,
+    occurrenceCount: row.occurrence_count,
     similarity: row.similarity,
   }));
 }
@@ -311,10 +317,12 @@ export interface ProblemHistoryNote {
 }
 
 /** All historical shift notes for every entry sharing the same tool+module
- * and exact problem text — captures a whole multi-day "episode" (the same
- * wording tends to get carried forward day to day for as long as an issue
- * stays open, confirmed by real data), used to build the read-only "what
- * was done last time" reference card.
+ * whose problem text normalizes the same (see passdown_normalize_problem in
+ * scripts/passdown-similar-problems-schema.sql — numbering/punctuation/case
+ * stripped) — captures a whole multi-day "episode" even across the numbering
+ * variations real data has (the same underlying wording tends to get
+ * carried forward day to day for as long as an issue stays open), used to
+ * build the read-only "what was done last time" reference card.
  *
  * Sorted by the entry's entry_date, not the note's created_at: every note
  * migrated from the old Excel got the migration run's timestamp, not its
@@ -326,12 +334,11 @@ export async function fetchProblemHistoryNotes(
   opts: { toolId: string; module: string; problemStatement: string }
 ): Promise<ProblemHistoryNote[]> {
   const { data: entries, error } = await withRetry(() =>
-    supabase
-      .from("passdown_entries")
-      .select("id,entry_date")
-      .eq("tool_id", opts.toolId)
-      .eq("module", opts.module)
-      .eq("problem_statement", opts.problemStatement)
+    supabase.rpc("passdown_entries_by_normalized_problem", {
+      p_tool_id: opts.toolId,
+      p_module: opts.module,
+      p_problem_statement: opts.problemStatement,
+    })
   );
   if (error) throw new Error(error.message);
   const entryRows = (entries ?? []) as { id: number; entry_date: string }[];
