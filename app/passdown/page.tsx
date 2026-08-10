@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Plus, Settings } from "lucide-react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase";
 import {
   addUpdate,
@@ -23,6 +24,7 @@ import {
   type PassdownShift,
   type PassdownStatus,
   type PassdownUpdate,
+  type RemoteEditor,
 } from "@/lib/passdown";
 import { PassdownEntryRow } from "@/components/passdown-entry-row";
 import { Button } from "@/components/ui/button";
@@ -44,6 +46,14 @@ type BoardEntry = PassdownEntry & { isPlaceholder?: boolean };
 
 function machineKey(e: { toolId: string; module: string }): string {
   return `${e.toolId}|${e.module}`;
+}
+
+/** Identifies one live-editable cell for Presence/Broadcast — keyed by
+ * machine (stable across a placeholder row's materialization into a real
+ * one, unlike entry.id, which a placeholder borrows from a prior day's row)
+ * rather than entry id. */
+function cellKey(entry: { toolId: string; module: string }, field: "problemStatement" | "remark"): string {
+  return `${machineKey(entry)}:${field}`;
 }
 
 function todayStr(): string {
@@ -319,6 +329,35 @@ export default function PassdownPage() {
   const [shift, setShift] = useState<PassdownShift>("day");
   const [knownMachines, setKnownMachines] = useState<KnownMachine[]>([]);
 
+  // Live co-editing visibility: who's currently focused on which cell
+  // (Presence) and what they're typing there (Broadcast) — see the realtime
+  // effect below. Keyed by cellKey(entry, field), never persisted.
+  const [remoteFocus, setRemoteFocus] = useState<Map<string, RemoteEditor>>(new Map());
+  const [remoteDrafts, setRemoteDrafts] = useState<Map<string, string>>(new Map());
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const meIdRef = useRef(meId);
+  useEffect(() => {
+    meIdRef.current = meId;
+  }, [meId]);
+
+  // Once nobody's tracked as focused on a cell (remoteFocus no longer has
+  // it), drop any leftover draft text for it too — otherwise a stale draft
+  // could flash back up if that cellKey briefly gets a remote editor again
+  // before a real value refresh lands.
+  useEffect(() => {
+    setRemoteDrafts((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const key of next.keys()) {
+        if (!remoteFocus.has(key)) {
+          next.delete(key);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [remoteFocus]);
+
   const [historyFrom, setHistoryFrom] = useState(addDays(todayStr(), -7));
   const [historyTo, setHistoryTo] = useState(todayStr());
   const [historyToolId, setHistoryToolId] = useState("");
@@ -421,6 +460,11 @@ export default function PassdownPage() {
   // the same day, so "did someone already touch this?" is answered by
   // watching the screen instead of hoping nobody collides — refetching the
   // whole (small, ~45-row) day is simpler and safer than patching state.
+  //
+  // The same channel also carries Presence (who's focused on which cell)
+  // and Broadcast (what they're typing there, live) — reads meId/people via
+  // refs rather than this effect's own deps so picking a different "我是"
+  // identity mid-session doesn't tear down and resubscribe the channel.
   useEffect(() => {
     const supabase = getSupabase();
     const channel = supabase
@@ -433,11 +477,77 @@ export default function PassdownPage() {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "passdown_updates" }, () =>
         refreshBoardSilently(date)
       )
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<{ personId: string; personName: string; cellKey: string | null }>();
+        const map = new Map<string, RemoteEditor>();
+        for (const presences of Object.values(state)) {
+          // A single connection's re-tracks can momentarily coexist in this
+          // array (old state + new state) before the old one is pruned, so
+          // only the last entry — the most recently tracked state — is
+          // authoritative. Blindly merging every entry would let a stale
+          // "still focused" meta outlive the blur that cleared it.
+          const latest = presences[presences.length - 1];
+          if (latest && latest.cellKey && latest.personId !== meIdRef.current) {
+            map.set(latest.cellKey, { personId: latest.personId, personName: latest.personName });
+          }
+        }
+        setRemoteFocus(map);
+      })
+      .on("broadcast", { event: "draft" }, ({ payload }) => {
+        const p = payload as { cellKey: string; text: string; personId: string };
+        if (p.personId === meIdRef.current) return;
+        setRemoteDrafts((prev) => new Map(prev).set(p.cellKey, p.text));
+      })
       .subscribe();
+    channelRef.current = channel;
     return () => {
       supabase.removeChannel(channel);
+      channelRef.current = null;
+      setRemoteFocus(new Map());
+      setRemoteDrafts(new Map());
     };
   }, [date, refreshBoardSilently]);
+
+  const reportFocus = useCallback(
+    (key: string) => {
+      const channel = channelRef.current;
+      if (!channel || !meId) return;
+      const personName = people.find((p) => String(p.id) === meId)?.name ?? "?";
+      channel.track({ personId: meId, personName, cellKey: key });
+    },
+    [meId, people]
+  );
+
+  const reportBlur = useCallback(() => {
+    const channel = channelRef.current;
+    if (!channel || !meId) return;
+    const personName = people.find((p) => String(p.id) === meId)?.name ?? "?";
+    channel.track({ personId: meId, personName, cellKey: null });
+  }, [meId, people]);
+
+  // Leading+trailing throttle (~120ms) so fast typing doesn't flood the
+  // channel — sends immediately if enough time has passed since the last
+  // broadcast, otherwise schedules exactly one trailing send.
+  const broadcastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBroadcastAtRef = useRef(0);
+  const broadcastDraft = useCallback(
+    (key: string, text: string) => {
+      const channel = channelRef.current;
+      if (!channel || !meId) return;
+      if (broadcastTimerRef.current) {
+        clearTimeout(broadcastTimerRef.current);
+        broadcastTimerRef.current = null;
+      }
+      const send = () => {
+        lastBroadcastAtRef.current = Date.now();
+        channel.send({ type: "broadcast", event: "draft", payload: { cellKey: key, text, personId: meId } });
+      };
+      const elapsed = Date.now() - lastBroadcastAtRef.current;
+      if (elapsed >= 120) send();
+      else broadcastTimerRef.current = setTimeout(send, 120 - elapsed);
+    },
+    [meId]
+  );
 
   function saveMe(id: string) {
     setMeId(id);
@@ -721,6 +831,13 @@ export default function PassdownPage() {
                           onAddNote={(note) => handleAddNote(entry, note)}
                           onSearchSimilarProblems={handleSearchSimilarProblems}
                           onFetchProblemHistory={handleFetchProblemHistory}
+                          problemStatementCellKey={cellKey(entry, "problemStatement")}
+                          remarkCellKey={cellKey(entry, "remark")}
+                          remoteFocus={remoteFocus}
+                          remoteDrafts={remoteDrafts}
+                          onFocusCell={reportFocus}
+                          onBlurCell={reportBlur}
+                          onDraftChange={broadcastDraft}
                         />
                       ))}
                     </TableBody>

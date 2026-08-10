@@ -18,6 +18,13 @@ export const SHIFT_LABELS: Record<PassdownShift, string> = {
   night: "Night",
 };
 
+/** Who's currently focused on a live-editable cell — from Supabase Realtime
+ * Presence, never persisted. See the realtime effect in app/passdown/page.tsx. */
+export interface RemoteEditor {
+  personId: string;
+  personName: string;
+}
+
 export interface PassdownPerson {
   id: number;
   name: string;

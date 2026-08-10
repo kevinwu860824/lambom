@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Clock, Copy, History, MessageSquarePlus } from "lucide-react";
+import { Clock, Copy, History, MessageSquarePlus, Pencil } from "lucide-react";
 import {
   SHIFT_LABELS,
   STATUS_LABELS,
@@ -9,6 +9,7 @@ import {
   type PassdownStatus,
   type PassdownUpdate,
   type ProblemHistoryNote,
+  type RemoteEditor,
   type SimilarProblem,
 } from "@/lib/passdown";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,55 @@ const STATUS_OPTIONS: PassdownStatus[] = ["up", "down", "monitor", "other"];
 const CELL_BOX = "min-h-[38px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs";
 const CELL_WIDTH = "min-w-56 max-w-80";
 
+// Deterministic per-person color (same hashing idea as fingerprint page's
+// categoryColor) so the "someone's editing this" border/badge stays the
+// same color for the same person across cells/renders, without needing a
+// lookup table anyone has to maintain.
+const PERSON_BORDER_CLASS = [
+  "border-blue-400 dark:border-blue-500",
+  "border-emerald-400 dark:border-emerald-500",
+  "border-amber-400 dark:border-amber-500",
+  "border-violet-400 dark:border-violet-500",
+  "border-rose-400 dark:border-rose-500",
+  "border-cyan-400 dark:border-cyan-500",
+];
+const PERSON_BADGE_CLASS = [
+  "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300",
+  "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+];
+
+function personColorIndex(personId: string): number {
+  let hash = 0;
+  for (let i = 0; i < personId.length; i++) {
+    hash = (hash * 31 + personId.charCodeAt(i)) >>> 0;
+  }
+  return hash % PERSON_BORDER_CLASS.length;
+}
+
+/** Read-only view swapped in for Problem Statement/Remark while Presence
+ * says someone else has that cell focused — shows their live-broadcast
+ * draft text (falling back to the last known saved value before any
+ * broadcast arrives) instead of an editable box, so two people can't type
+ * into the same cell at once. */
+function RemoteEditingCell({ editor, text }: { editor: RemoteEditor; text: string }) {
+  const idx = personColorIndex(editor.personId);
+  return (
+    <div className={cn(CELL_BOX, "h-full border-2", PERSON_BORDER_CLASS[idx])}>
+      <Badge className={cn("mb-1 px-1.5 py-0 text-[10px]", PERSON_BADGE_CLASS[idx])}>
+        <Pencil className="h-2.5 w-2.5" />
+        {editor.personName} 正在編輯
+      </Badge>
+      <p className="whitespace-pre-wrap">
+        {text || <span className="text-muted-foreground italic">...</span>}
+      </p>
+    </div>
+  );
+}
+
 export interface PassdownRowEntry {
   id: number;
   toolId: string;
@@ -59,7 +109,26 @@ export interface PassdownRowEntry {
  * Planning/Remark is tallest in the row — plain HTML table rows already
  * size every cell to the tallest one, this just makes the box fill that
  * height instead of leaving empty space below a shorter box). */
-function EditableTextCell({ value, onSave }: { value: string; onSave: (value: string) => Promise<void> }) {
+function EditableTextCell({
+  value,
+  onSave,
+  remoteEditor,
+  remoteDraftText,
+  onFocusCell,
+  onBlurCell,
+  onDraftChange,
+}: {
+  value: string;
+  onSave: (value: string) => Promise<void>;
+  /** Set when Presence says someone else is focused on this cell — renders
+   * a read-only RemoteEditingCell instead, so only one person can type into
+   * a given cell at a time. */
+  remoteEditor?: RemoteEditor | null;
+  remoteDraftText?: string;
+  onFocusCell?: () => void;
+  onBlurCell?: () => void;
+  onDraftChange?: (text: string) => void;
+}) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +149,10 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
     el.style.minHeight = "0px";
     el.style.minHeight = `${el.scrollHeight}px`;
   }, [draft]);
+
+  if (remoteEditor) {
+    return <RemoteEditingCell editor={remoteEditor} text={remoteDraftText ?? value} />;
+  }
 
   async function commit() {
     if (isCancellingRef.current) {
@@ -106,8 +179,15 @@ function EditableTextCell({ value, onSave }: { value: string; onSave: (value: st
         ref={textareaRef}
         value={draft}
         disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          onDraftChange?.(e.target.value);
+        }}
+        onFocus={onFocusCell}
+        onBlur={() => {
+          onBlurCell?.();
+          commit();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             isCancellingRef.current = true;
@@ -137,6 +217,11 @@ function ProblemStatementCell({
   onSearchSimilar,
   onFetchHistory,
   onCopyToNote,
+  remoteEditor,
+  remoteDraftText,
+  onFocusCell,
+  onBlurCell,
+  onDraftChange,
 }: {
   value: string;
   toolId: string;
@@ -144,6 +229,11 @@ function ProblemStatementCell({
   onSearchSimilar: (searchText: string, toolId: string) => Promise<SimilarProblem[]>;
   onFetchHistory: (target: { toolId: string; module: string; problemStatement: string }) => Promise<ProblemHistoryNote[]>;
   onCopyToNote: (text: string) => void;
+  remoteEditor?: RemoteEditor | null;
+  remoteDraftText?: string;
+  onFocusCell?: () => void;
+  onBlurCell?: () => void;
+  onDraftChange?: (text: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -220,6 +310,10 @@ function ProblemStatementCell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, toolId]);
 
+  if (remoteEditor) {
+    return <RemoteEditingCell editor={remoteEditor} text={remoteDraftText ?? value} />;
+  }
+
   async function commit(text: string) {
     if (isCancellingRef.current) {
       isCancellingRef.current = false;
@@ -273,8 +367,15 @@ function ProblemStatementCell({
             ref={textareaRef}
             value={draft}
             disabled={saving}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => commit(draft)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              onDraftChange?.(e.target.value);
+            }}
+            onFocus={onFocusCell}
+            onBlur={() => {
+              onBlurCell?.();
+              commit(draft);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 isCancellingRef.current = true;
@@ -390,6 +491,13 @@ export function PassdownEntryRow({
   onAddNote,
   onSearchSimilarProblems,
   onFetchProblemHistory,
+  problemStatementCellKey,
+  remarkCellKey,
+  remoteFocus,
+  remoteDrafts,
+  onFocusCell,
+  onBlurCell,
+  onDraftChange,
 }: {
   entry: PassdownRowEntry;
   updates: PassdownUpdate[];
@@ -403,6 +511,14 @@ export function PassdownEntryRow({
     module: string;
     problemStatement: string;
   }) => Promise<ProblemHistoryNote[]>;
+  /** Live co-editing visibility (Presence/Broadcast) — see app/passdown/page.tsx. */
+  problemStatementCellKey: string;
+  remarkCellKey: string;
+  remoteFocus: Map<string, RemoteEditor>;
+  remoteDrafts: Map<string, string>;
+  onFocusCell: (cellKey: string) => void;
+  onBlurCell: () => void;
+  onDraftChange: (cellKey: string, text: string) => void;
 }) {
   const [statusSaving, setStatusSaving] = useState(false);
   const [note, setNote] = useState("");
@@ -470,6 +586,11 @@ export function PassdownEntryRow({
           onSearchSimilar={onSearchSimilarProblems}
           onFetchHistory={onFetchProblemHistory}
           onCopyToNote={copyToNoteDraft}
+          remoteEditor={remoteFocus.get(problemStatementCellKey)}
+          remoteDraftText={remoteDrafts.get(problemStatementCellKey)}
+          onFocusCell={() => onFocusCell(problemStatementCellKey)}
+          onBlurCell={onBlurCell}
+          onDraftChange={(text) => onDraftChange(problemStatementCellKey, text)}
         />
       </TableCell>
       <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
@@ -510,7 +631,15 @@ export function PassdownEntryRow({
         </div>
       </TableCell>
       <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
-        <EditableTextCell value={entry.remark ?? ""} onSave={(v) => onFieldSave("remark", v)} />
+        <EditableTextCell
+          value={entry.remark ?? ""}
+          onSave={(v) => onFieldSave("remark", v)}
+          remoteEditor={remoteFocus.get(remarkCellKey)}
+          remoteDraftText={remoteDrafts.get(remarkCellKey)}
+          onFocusCell={() => onFocusCell(remarkCellKey)}
+          onBlurCell={onBlurCell}
+          onDraftChange={(text) => onDraftChange(remarkCellKey, text)}
+        />
       </TableCell>
       <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
         {entry.isPlaceholder ? <Badge variant="outline">沿用上次</Badge> : entry.updatedByName || "-"}
