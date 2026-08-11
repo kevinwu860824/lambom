@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { fetchZbomMachineNames, fetchZbomOptions, type ZbomSection } from "@/lib/bom";
+import { useEmployeeGroup } from "@/lib/groups";
 import { Card, CardContent } from "@/components/ui/card";
+import { RequireGroupPrompt } from "@/components/require-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -15,6 +17,8 @@ export default function ZbomPage() {
     return supabaseRef.current;
   }
 
+  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+
   const [machineNames, setMachineNames] = useState<string[]>([]);
   const [machine, setMachine] = useState("");
   const [sections, setSections] = useState<ZbomSection[]>([]);
@@ -23,11 +27,12 @@ export default function ZbomPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!allowedMachines) return;
     fetchZbomMachineNames(getSupabase())
-      .then(setMachineNames)
+      .then((names) => setMachineNames(names.filter((name) => allowedMachines.has(name))))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setListLoading(false));
-  }, []);
+  }, [allowedMachines]);
 
   function handleMachineChange(value: string) {
     setMachine(value);
@@ -38,6 +43,15 @@ export default function ZbomPage() {
       .then(setSections)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setSectionsLoading(false));
+  }
+
+  if (groupLoading) return null;
+  if (!allowedMachines) {
+    return (
+      <div className="bg-background min-h-screen">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
   }
 
   return (

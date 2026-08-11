@@ -6,11 +6,13 @@ import { Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
 import { fetchFidsByMachine, fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
+import { useEmployeeGroup } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { EditableField } from "@/components/editable-field";
 import { FidDownloaderPanel } from "@/components/fid-downloader-panel";
+import { RequireGroupPrompt } from "@/components/require-group";
 
 export default function MachinesPage() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -18,6 +20,8 @@ export default function MachinesPage() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
     return supabaseRef.current;
   }
+
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading, refresh: refreshGroup } = useEmployeeGroup();
 
   const [groups, setGroups] = useState<MachineGroup[]>([]);
   const [fidsByMachine, setFidsByMachine] = useState<Map<string, string>>(new Map());
@@ -38,16 +42,17 @@ export default function MachinesPage() {
   }
 
   useEffect(() => {
-    loadData();
+    if (!allowedMachines) return;
+    loadData(allowedMachines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [allowedMachines]);
 
-  async function loadData() {
+  async function loadData(allowed: Set<string>) {
     setLoading(true);
     setError(null);
     try {
       const { machineGroups } = await fetchMachineGroups(getSupabase());
-      setGroups(machineGroups);
+      setGroups(machineGroups.filter((g) => allowed.has(g.machine)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -215,6 +220,15 @@ export default function MachinesPage() {
     }
   }
 
+  if (groupLoading) return null;
+  if (!allowedMachines) {
+    return (
+      <div className="bg-background min-h-screen">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
+  }
+
   return (
     <div className="bg-background min-h-screen">
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
@@ -242,7 +256,11 @@ export default function MachinesPage() {
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
-        <FidDownloaderPanel existingMachines={groups.map((g) => g.machine)} onUploaded={loadData} />
+        <FidDownloaderPanel
+          existingMachines={groups.map((g) => g.machine)}
+          groupId={group?.id ?? null}
+          onUploaded={refreshGroup}
+        />
 
         <Card>
           <CardContent className="grid gap-4">

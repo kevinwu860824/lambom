@@ -2,16 +2,32 @@
 
 import { createClient } from "@/lib/supabase";
 import { fetchFullBomMachineNames, fetchFullBomTreeItems, type BomTreeItem } from "@/lib/bom";
+import { useEmployeeGroup } from "@/lib/groups";
 import { BomStructureViewer, type BomStructureSubpart } from "@/components/bom-structure-viewer";
+import { RequireGroupPrompt } from "@/components/require-group";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
 export default function FullBomPage() {
+  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+
+  if (groupLoading) return null;
+  if (!allowedMachines) {
+    return (
+      <div className="min-h-screen bg-background">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
+  }
+
   return (
     <BomStructureViewer
       title="Full BOM Structure Viewer"
       description="Pick a machine to view its complete BOM hierarchically, expand/collapse as needed."
-      fetchMachineNames={(supabase: SupabaseClient) => fetchFullBomMachineNames(supabase)}
+      fetchMachineNames={async (supabase: SupabaseClient) => {
+        const names = await fetchFullBomMachineNames(supabase);
+        return names.filter((name) => allowedMachines.has(name));
+      }}
       fetchSubparts={async (
         supabase: SupabaseClient,
         machineName: string,

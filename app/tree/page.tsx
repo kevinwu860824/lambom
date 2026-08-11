@@ -2,18 +2,31 @@
 
 import { createClient } from "@/lib/supabase";
 import { fetchBomTreeItems, fetchMachineGroups } from "@/lib/bom";
+import { useEmployeeGroup } from "@/lib/groups";
 import { BomStructureViewer, type BomStructureSubpart } from "@/components/bom-structure-viewer";
+import { RequireGroupPrompt } from "@/components/require-group";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
 export default function TreePage() {
+  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+
+  if (groupLoading) return null;
+  if (!allowedMachines) {
+    return (
+      <div className="min-h-screen bg-background">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
+  }
+
   return (
     <BomStructureViewer
       title="BOM Structure Viewer"
       description="Pick a machine to view its parts hierarchically, expand/collapse as needed."
       fetchMachineNames={async (supabase: SupabaseClient) => {
         const { machineGroups } = await fetchMachineGroups(supabase);
-        return machineGroups.map((g) => g.machine);
+        return machineGroups.map((g) => g.machine).filter((name) => allowedMachines.has(name));
       }}
       fetchSubparts={async (supabase: SupabaseClient, machineName: string): Promise<BomStructureSubpart[]> => {
         const { machineGroups } = await fetchMachineGroups(supabase);

@@ -17,7 +17,9 @@ import {
   type MachineBomLookup,
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
+import { useEmployeeGroup } from "@/lib/groups";
 import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
+import { RequireGroupPrompt } from "@/components/require-group";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -174,6 +176,8 @@ export default function FingerprintPage() {
     setPositionTarget({ partNo, description: null, machine });
   }
 
+  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+
   const [toolTypes, setToolTypes] = useState<string[]>([]);
   const [selectedToolType, setSelectedToolType] = useState("");
   const [newToolType, setNewToolType] = useState("");
@@ -206,22 +210,24 @@ export default function FingerprintPage() {
   const [applyingUpload, setApplyingUpload] = useState(false);
 
   useEffect(() => {
+    if (!allowedMachines) return;
     loadToolTypes();
-    loadAllMachineNames();
+    loadAllMachineNames(allowedMachines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [allowedMachines]);
 
   useEffect(() => {
+    if (!allowedMachines) return;
     setEditMode(false);
     if (selectedToolType) {
-      loadForToolType(selectedToolType);
+      loadForToolType(selectedToolType, allowedMachines);
     } else {
       setSlots([]);
       setMachines([]);
       setCells(new Map());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedToolType]);
+  }, [selectedToolType, allowedMachines]);
 
   async function loadToolTypes() {
     const { data, error } = await getSupabase()
@@ -238,17 +244,19 @@ export default function FingerprintPage() {
     setToolTypes(unique);
   }
 
-  async function loadAllMachineNames() {
+  async function loadAllMachineNames(allowed: Set<string>) {
     const { data, error } = await getSupabase().from("bom_machines").select("machine_name");
     if (error) {
       setError(error.message);
       return;
     }
-    const unique = Array.from(new Set((data ?? []).map((r) => r.machine_name as string))).sort();
+    const unique = Array.from(new Set((data ?? []).map((r) => r.machine_name as string)))
+      .filter((name) => allowed.has(name))
+      .sort();
     setAllMachineNames(unique);
   }
 
-  async function loadForToolType(toolType: string) {
+  async function loadForToolType(toolType: string, allowed: Set<string>) {
     setLoading(true);
     setError(null);
     try {
@@ -267,7 +275,9 @@ export default function FingerprintPage() {
 
       const machineNames = Array.from(
         new Set((machinesRes.data ?? []).map((r) => r.machine_name as string))
-      ).sort();
+      )
+        .filter((name) => allowed.has(name))
+        .sort();
       const slotRows = (slotsRes.data ?? []) as KeyPartSlot[];
 
       setMachines(machineNames);
@@ -564,7 +574,7 @@ export default function FingerprintPage() {
       }
 
       setAddMachineValue("");
-      await loadForToolType(selectedToolType);
+      if (allowedMachines) await loadForToolType(selectedToolType, allowedMachines);
       loadToolTypes();
     } catch (err) {
       setAddMachineError(err instanceof Error ? err.message : String(err));
@@ -745,7 +755,7 @@ export default function FingerprintPage() {
       if (failed?.error) throw new Error(failed.error.message);
     }
 
-    await loadForToolType(selectedToolType);
+    if (allowedMachines) await loadForToolType(selectedToolType, allowedMachines);
     loadToolTypes();
   }
 
@@ -915,6 +925,15 @@ export default function FingerprintPage() {
     } finally {
       setApplyingUpload(false);
     }
+  }
+
+  if (groupLoading) return null;
+  if (!allowedMachines) {
+    return (
+      <div className="bg-background min-h-screen">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
   }
 
   return (

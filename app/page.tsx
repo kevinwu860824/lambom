@@ -1,5 +1,11 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import { Boxes, ClipboardList } from "lucide-react";
+import { Boxes, ClipboardList, Settings } from "lucide-react";
+import { useEmployeeGroup } from "@/lib/groups";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 const apps = [
   {
@@ -18,9 +24,59 @@ const apps = [
   },
 ];
 
+function EmployeeIdBar() {
+  const { employeeId, group, loading, notFound, setEmployeeId } = useEmployeeGroup();
+  const [draft, setDraft] = useState("");
+
+  if (loading) return <div className="h-9" />;
+
+  if (!employeeId) {
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) setEmployeeId(draft.trim());
+          }}
+          placeholder="工號"
+          className="h-9 w-32"
+        />
+        <Button size="sm" disabled={!draft.trim()} onClick={() => setEmployeeId(draft.trim())}>
+          確認
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      {notFound ? (
+        <span className="text-destructive">工號 {employeeId} 尚未加入任何群組,請聯絡管理員在編輯群組加入</span>
+      ) : (
+        <span>
+          {group?.name} · 工號 {employeeId}
+        </span>
+      )}
+      <Button variant="ghost" size="sm" onClick={() => setEmployeeId(null)}>
+        更換
+      </Button>
+    </div>
+  );
+}
+
 export default function Home() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="absolute right-4 top-4 flex items-center gap-3">
+        <EmployeeIdBar />
+        <Button variant="outline" size="icon" asChild>
+          <Link href="/groups" aria-label="編輯群組">
+            <Settings className="h-4 w-4" />
+          </Link>
+        </Button>
+      </div>
+
       <div className="flex flex-col items-center">
         <h1 className="mb-10 text-xl font-medium text-muted-foreground">Internal Tools</h1>
         <div className="grid grid-cols-2 gap-8 sm:gap-12">

@@ -26,8 +26,10 @@ import {
   type MachineGroup,
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
+import { useEmployeeGroup } from "@/lib/groups";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
 import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
+import { RequireGroupPrompt } from "@/components/require-group";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -72,6 +74,8 @@ export default function Home() {
   }
 
   const bomDataRef = useRef<BomEntry[]>([]);
+
+  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machineA, setMachineA] = useState("");
@@ -257,8 +261,10 @@ export default function Home() {
     }
   }
 
-  async function loadData() {
-    const { machineGroups: groups, bomData } = await fetchMachineGroups(getSupabase());
+  async function loadData(allowed: Set<string>) {
+    const { machineGroups: rawGroups, bomData: rawBomData } = await fetchMachineGroups(getSupabase());
+    const groups = rawGroups.filter((g) => allowed.has(g.machine));
+    const bomData = rawBomData.filter((e) => allowed.has(e.machine));
     bomDataRef.current = bomData;
     setMachineGroups(groups);
 
@@ -311,13 +317,14 @@ export default function Home() {
   }
 
   useEffect(() => {
-    loadData().catch((err) => {
+    if (!allowedMachines) return;
+    loadData(allowedMachines).catch((err) => {
       setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
     loadKeyParts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [allowedMachines]);
 
   function handleMachineAChange(machine: string) {
     setMachineA(machine);
@@ -479,6 +486,17 @@ export default function Home() {
       renameInfoB,
       renameRankB,
     });
+  }
+
+  if (groupLoading) {
+    return <div className="min-h-screen bg-background" />;
+  }
+  if (!allowedMachines) {
+    return (
+      <div className="min-h-screen bg-background">
+        <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
+      </div>
+    );
   }
 
   return (

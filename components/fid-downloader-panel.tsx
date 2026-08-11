@@ -13,6 +13,7 @@ import {
   uploadFullBomEntry,
   uploadZbomEntry,
 } from "@/lib/bom";
+import { ensureMachineInGroup } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -76,9 +77,11 @@ class CancelledError extends Error {}
  */
 export function FidDownloaderPanel({
   existingMachines = [],
+  groupId,
   onUploaded,
 }: {
   existingMachines?: string[];
+  groupId: number | null;
   onUploaded?: () => void;
 }) {
   const [available, setAvailable] = useState(false);
@@ -289,6 +292,17 @@ export function FidDownloaderPanel({
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}[Error] Key part auto-matching failed: ${message}\n`);
     }
+
+    // groupId is guaranteed non-null here — processQueue refuses to start
+    // otherwise, since an unattributed machine would be invisible to everyone.
+    if (groupId != null) {
+      try {
+        await ensureMachineInGroup(supabase, groupId, machineName);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setLog((prev) => `${prev}[Error] Failed to record group ownership: ${message}\n`);
+      }
+    }
     onUploaded?.();
 
     await deleteLocalFile(result.resultPath);
@@ -325,6 +339,10 @@ export function FidDownloaderPanel({
 
   async function processQueue() {
     if (processing || queue.length === 0 || !window.fidDownloader) return;
+    if (groupId == null) {
+      setLog((prev) => `${prev}\n請先回首頁輸入工號,系統才知道新機台要歸屬到哪個群組。\n`);
+      return;
+    }
     setProcessing(true);
     cancelRequestedRef.current = false;
     setLog((prev) => `${prev}\nStarting queue, ${queue.length} total...\n`);
@@ -466,8 +484,11 @@ export function FidDownloaderPanel({
           </div>
         )}
 
+        {groupId == null && (
+          <p className="mb-2 text-sm text-destructive">請先回首頁輸入工號,才能下載新機台。</p>
+        )}
         <div className="mb-3 flex items-center gap-2">
-          <Button onClick={processQueue} disabled={processing || queue.length === 0}>
+          <Button onClick={processQueue} disabled={processing || queue.length === 0 || groupId == null}>
             <Download className="h-4 w-4" />
             {processing ? "Downloading…" : `Download (${queue.length})`}
           </Button>
