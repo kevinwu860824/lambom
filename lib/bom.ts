@@ -812,7 +812,6 @@ export async function saveFidEntry(
 
 export interface ZbomOption {
   section: string;
-  nodeKey: string | null;
   optionType: string;
   optionSelection: string | null;
 }
@@ -833,7 +832,6 @@ export async function uploadZbomEntry(
   const rows = options.map((opt) => ({
     machine_name: machineName,
     section: opt.section,
-    node_key: opt.nodeKey,
     option_type: opt.optionType,
     option_selection: opt.optionSelection,
   }));
@@ -859,7 +857,7 @@ export async function fetchZbomMachineNames(supabase: SupabaseClient): Promise<s
 export async function fetchZbomOptions(supabase: SupabaseClient, machineName: string): Promise<ZbomSection[]> {
   const { data, error } = await supabase
     .from("zbom_options")
-    .select("section,node_key,option_type,option_selection")
+    .select("section,option_type,option_selection")
     .eq("machine_name", machineName)
     .order("id", { ascending: true });
   if (error) throw new Error(error.message);
@@ -870,7 +868,6 @@ export async function fetchZbomOptions(supabase: SupabaseClient, machineName: st
     if (!sections.has(section)) sections.set(section, []);
     sections.get(section)!.push({
       section,
-      nodeKey: row.node_key as string | null,
       optionType: row.option_type as string,
       optionSelection: row.option_selection as string | null,
     });

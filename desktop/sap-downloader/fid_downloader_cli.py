@@ -20,8 +20,8 @@ Behavior:
   (intermediate files and raw multi-file output are cleaned up
   automatically): tool mode produces `<FID>.xlsx`; modules mode produces
   `<SO>_modules.xlsx`, split into sheets by module; zbom mode produces
-  `<SO>_zbom.xlsx`, one flat sheet of Section/Node Key/Option Type/Option
-  Selection rows. The last line on success is always
+  `<SO>_zbom.xlsx`, one flat "ZBOM Config" sheet of Section/Option Type/
+  Option Selection rows. The last line on success is always
   `RESULT_PATH:<full path to the output xlsx>`, so the caller can extract
   the result file's location from this marker instead of guessing from
   other output.
@@ -907,13 +907,20 @@ def extract_zbom_sections(session):
             node_text = tree.GetNodeTextByKey(node_key)
         except Exception:
             node_text = node_key
-        # Deliberately does NOT set tree.selectedNode first — a real,
-        # working recording of this same screen (on this same SO, N5750)
-        # only ever calls doubleClickNode directly, never selectedNode. That
-        # removal alone didn't clear the error in real testing though, so
-        # the actual failing call is still unconfirmed — see the added
-        # logging below and inside read_zbom_table, which narrows it down
-        # to one specific line on the next test run.
+        # Setting selectedNode before doubleClickNode matters: decompiling
+        # BOM Manager (a separate, already-working internal tool doing this
+        # same VA03 Configuration extraction — see project memory
+        # reference_bom_manager_sap_automation) shows its real, proven
+        # sequence sets tree.selectedNode = node_key first. An earlier
+        # version of this function deliberately omitted that step based on
+        # a different (unverified) recording, which matches a real symptom
+        # reported in production: every node after the first reads back the
+        # same data as the first node, and the signature-based dedup below
+        # then silently drops all of them as "duplicates" — consistent with
+        # SAP's displayed table not actually having switched context if
+        # selectedNode was never set, even though doubleClickNode still
+        # visually expands/highlights the clicked node.
+        tree.selectedNode = node_key
         tree.doubleClickNode(node_key)
         log(f"ZBOM: double-clicked node {node_key!r}, reading its table...")
         time.sleep(0.3)
@@ -934,13 +941,18 @@ def extract_zbom_sections(session):
 
 
 def write_zbom_xlsx(sections, out_path):
+    # Sheet title and 3-column header match BOM Manager's proven-working
+    # export_zbom_to_xlsx exactly (decompiled and compared directly) — no
+    # Node Key column, since nothing downstream ever reads it; it was only
+    # ever internal bookkeeping (see extract_zbom_sections), never meant to
+    # reach the output file.
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "ZBOM"
-    ws.append(["Section", "Node Key", "Option Type", "Option Selection"])
+    ws.title = "ZBOM Config"
+    ws.append(["Section", "Option Type", "Option Selection"])
     for entry in sections:
         for opt in entry["options"]:
-            ws.append([entry["section"], entry["node_key"], opt["option_type"], opt["option_selection"]])
+            ws.append([entry["section"], opt["option_type"], opt["option_selection"]])
     wb.save(out_path)
 
 

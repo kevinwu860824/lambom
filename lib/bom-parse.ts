@@ -718,16 +718,19 @@ export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; 
 
 export interface ParsedZbomOption {
   section: string;
-  nodeKey: string | null;
   optionType: string;
   optionSelection: string | null;
 }
 
 /**
  * Reads the flat "<SO>_zbom.xlsx" produced by the desktop SAP downloader's
- * write_zbom_xlsx (see desktop/sap-downloader/fid_downloader_cli.py) —
- * a single sheet of Section/Node Key/Option Type/Option Selection rows,
- * one row per configuration option.
+ * write_zbom_xlsx (see desktop/sap-downloader/fid_downloader_cli.py) — a
+ * single "ZBOM Config" sheet of Section/Option Type/Option Selection rows,
+ * one row per configuration option. This 3-column shape matches BOM
+ * Manager's proven-working export exactly (verified by decompiling it) —
+ * don't add columns back without updating both this and write_zbom_xlsx
+ * together, since positional destructuring here would silently misalign
+ * every field rather than error if the two ever drift apart again.
  */
 export function parseZbomWorkbook(buffer: ArrayBuffer): ParsedZbomOption[] {
   const workbook = XLSX.read(buffer, { type: "array" });
@@ -744,11 +747,10 @@ export function parseZbomWorkbook(buffer: ArrayBuffer): ParsedZbomOption[] {
 
   const options: ParsedZbomOption[] = [];
   for (let r = 1; r < rows.length; r++) {
-    const [section, nodeKey, optionType, optionSelection] = rows[r] ?? [];
+    const [section, optionType, optionSelection] = rows[r] ?? [];
     if (!section || !optionType) continue;
     options.push({
       section,
-      nodeKey: nodeKey || null,
       optionType,
       optionSelection: optionSelection || null,
     });
