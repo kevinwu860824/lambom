@@ -731,6 +731,26 @@ export async function uploadFullBomEntry(
   if (flagError) throw new Error(flagError.message);
 }
 
+/**
+ * machine_name -> fid, for display next to machine names (e.g. the Edit
+ * Machine page). fid_machine_map is keyed by fid, not machine_name, so if a
+ * machine was ever downloaded under more than one fid this picks whichever
+ * was saved most recently.
+ */
+export async function fetchFidsByMachine(supabase: SupabaseClient): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("fid_machine_map")
+    .select("machine_name,fid,created_at")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (row.machine_name) map.set(row.machine_name, row.fid);
+  }
+  return map;
+}
+
 export interface FidEntry {
   machineName: string | null;
   so: string | null;

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
-import { fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
+import { fetchFidsByMachine, fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,7 @@ export default function MachinesPage() {
   }
 
   const [groups, setGroups] = useState<MachineGroup[]>([]);
+  const [fidsByMachine, setFidsByMachine] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -51,6 +52,14 @@ export default function MachinesPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+
+    // Best-effort FID annotation next to machine names — not core data, so
+    // a failure here shouldn't block the machine list from loading.
+    try {
+      setFidsByMachine(await fetchFidsByMachine(getSupabase()));
+    } catch {
+      // leave fidsByMachine empty; machine names just render without a FID
     }
   }
 
@@ -256,7 +265,14 @@ export default function MachinesPage() {
                     <ChevronDown
                       className={cn("h-4 w-4 shrink-0 transition-transform", expanded && "rotate-180")}
                     />
-                    <span className="flex-1 text-sm font-medium">{group.machine}</span>
+                    <span className="flex-1 text-sm font-medium">
+                      {group.machine}
+                      {fidsByMachine.get(group.machine) && (
+                        <span className="text-muted-foreground ml-2 font-normal">
+                          {fidsByMachine.get(group.machine)}
+                        </span>
+                      )}
+                    </span>
                     <span className="text-muted-foreground text-xs">
                       {group.subparts.length} subpart(s)
                     </span>
