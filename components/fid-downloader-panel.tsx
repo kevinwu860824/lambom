@@ -337,9 +337,15 @@ export function FidDownloaderPanel({
       setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo} (FID ${item.fid}) ===\n`);
 
       try {
+        // Modules runs before Full BOM: uploadFullBomEntry only UPDATEs
+        // bom_machines.has_full_bom (not upsert), so on a machine's very
+        // first run that row must already exist — created by Modules'
+        // uploadBomEntry insert — or the flag update silently matches zero
+        // rows and Full BOM never shows up in /full-bom despite the data
+        // being uploaded successfully.
         const { so } = await resolveSoPo(item.fid, item.machineNo);
-        await downloadFullBom(item.fid, item.machineNo);
         await downloadModules(item.fid, so, item.machineNo);
+        await downloadFullBom(item.fid, item.machineNo);
         await downloadZbom(so, item.machineNo);
 
         setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done" } : q)));
