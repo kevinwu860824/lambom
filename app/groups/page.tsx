@@ -31,8 +31,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 // lambom's no-auth convention (see project memory
 // project_lambom_machine_groups). Anyone reading the client bundle can see
 // this string; it's only meant to keep casual clicks off the gear icon.
+// Deliberately not persisted anywhere (no localStorage/sessionStorage) -
+// unlocked is plain component state, so leaving this page and coming back
+// always re-prompts, no matter how it was left.
 const ADMIN_PASSWORD = "admin";
-const UNLOCK_STORAGE_KEY = "lambom_groups_admin_unlocked";
 
 function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
   const [password, setPassword] = useState("");
@@ -40,7 +42,6 @@ function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
 
   function submit() {
     if (password === ADMIN_PASSWORD) {
-      sessionStorage.setItem(UNLOCK_STORAGE_KEY, "1");
       onUnlock();
     } else {
       setError(true);
@@ -77,10 +78,6 @@ function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
 
 export default function GroupsPage() {
   const [unlocked, setUnlocked] = useState(false);
-
-  useEffect(() => {
-    if (sessionStorage.getItem(UNLOCK_STORAGE_KEY) === "1") setUnlocked(true);
-  }, []);
 
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
