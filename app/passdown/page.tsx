@@ -12,7 +12,7 @@ import {
   fetchKnownMachines,
   fetchLatestEntryDateBefore,
   fetchPeople,
-  fetchProblemHistoryNotes,
+  fetchProblemHistory,
   fetchSimilarProblems,
   fetchUpdatesForEntries,
   SHIFT_LABELS,
@@ -661,7 +661,7 @@ export default function PassdownPage() {
   }
 
   function handleFetchProblemHistory(target: { toolId: string; module: string; problemStatement: string }) {
-    return fetchProblemHistoryNotes(getSupabase(), target);
+    return fetchProblemHistory(getSupabase(), target);
   }
 
   async function handleCopyEmail() {

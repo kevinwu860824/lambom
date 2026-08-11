@@ -8,7 +8,7 @@ import {
   type PassdownShift,
   type PassdownStatus,
   type PassdownUpdate,
-  type ProblemHistoryNote,
+  type ProblemHistoryResult,
   type RemoteEditor,
   type SimilarProblem,
 } from "@/lib/passdown";
@@ -20,6 +20,7 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/compon
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const STATUS_BADGE_CLASS: Record<PassdownStatus, string> = {
   up: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
@@ -117,6 +118,8 @@ function EditableTextCell({
   onFocusCell,
   onBlurCell,
   onDraftChange,
+  pendingCopyText,
+  pendingCopyNonce,
 }: {
   value: string;
   onSave: (value: string) => Promise<void>;
@@ -128,6 +131,13 @@ function EditableTextCell({
   onFocusCell?: () => void;
   onBlurCell?: () => void;
   onDraftChange?: (text: string) => void;
+  /** Text to drop into the draft from an external source (the "類似問題"
+   * history dialog's "複製到備註" button) — paired with a nonce rather than
+   * keyed on the text itself, so copying the exact same text twice in a row
+   * still re-triggers the effect below. Not auto-saved: same as typing it
+   * by hand, still needs a blur to commit. */
+  pendingCopyText?: string;
+  pendingCopyNonce?: number;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -142,6 +152,20 @@ function EditableTextCell({
   useEffect(() => {
     setDraft(value);
   }, [value]);
+
+  useEffect(() => {
+    // Guards against writing into draft while someone else has this cell
+    // locked (see the remoteEditor early-return below) — this component's
+    // hooks all run before that early return regardless (rules of hooks),
+    // so without this the copied text would sit invisibly in local state
+    // and only appear once the lock clears, right as it could clobber
+    // whatever the other person just saved.
+    if (remoteEditor) return;
+    if (pendingCopyNonce === undefined || pendingCopyText === undefined) return;
+    setDraft(pendingCopyText);
+    textareaRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCopyNonce]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -203,6 +227,146 @@ function EditableTextCell({
   );
 }
 
+/** Shared suggestion-list body — used by Problem Statement's type-ahead
+ * popover and the "類似問題" buttons on Remark/Activities & Planning.
+ * Purely presentational; each caller owns its own Popover open state and
+ * anchor, since Problem Statement anchors to its own textarea
+ * (PopoverAnchor) while the other two anchor to a plain icon button
+ * (PopoverTrigger) — different enough mechanics that forcing one shared
+ * Popover wrapper here would be artificial. */
+function SimilarProblemsList({
+  results,
+  loading,
+  toolId,
+  onPick,
+}: {
+  results: SimilarProblem[];
+  loading: boolean;
+  toolId: string;
+  onPick: (s: SimilarProblem) => void;
+}) {
+  return (
+    <>
+      <p className="text-muted-foreground mb-1.5 px-1 text-xs font-medium">
+        {loading ? "搜尋中..." : "過去可能發生過的類似問題"}
+      </p>
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {results.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onPick(s)}
+            className="hover:bg-accent w-full rounded-md p-2 text-left text-xs"
+          >
+            <div className="text-muted-foreground mb-0.5 flex items-center gap-1.5">
+              {s.toolId === toolId ? (
+                <Badge variant="secondary" className="px-1 py-0 text-[10px]">
+                  同機台
+                </Badge>
+              ) : (
+                <span>
+                  {s.toolId} / {s.module}
+                </span>
+              )}
+              <span>{s.entryDate}</span>
+              {s.occurrenceCount > 1 && (
+                <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                  出現過 {s.occurrenceCount} 次
+                </Badge>
+              )}
+            </div>
+            <p className="text-foreground line-clamp-2 whitespace-pre-wrap">{s.problemStatement}</p>
+            {s.remark && (
+              <p className="text-muted-foreground mt-0.5 line-clamp-1 whitespace-pre-wrap">Remark: {s.remark}</p>
+            )}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Icon button + its own popover, wrapping SimilarProblemsList — the entry
+ * point Remark and Activities & Planning use to browse historical entries
+ * with a similar Problem Statement (Problem Statement itself already has
+ * its own always-on type-ahead version of this, built directly into
+ * ProblemStatementCell). Fetches on open rather than as-you-type, since
+ * there's no text input driving it here — just a click. */
+function SimilarProblemsButton({
+  problemStatement,
+  toolId,
+  excludeEntryId,
+  onSearchSimilar,
+  onPick,
+}: {
+  problemStatement: string;
+  toolId: string;
+  /** The current row's own entry id — excluded from results so this
+   * row's own just-saved Problem Statement doesn't show up as a "match"
+   * pointing at itself (which, being from today, has no remark/notes yet
+   * and just opens an empty history dialog). Not a text-based exclusion
+   * like ProblemStatementCell's own suggestion list uses: this button's
+   * whole point is finding *other* entries with the same wording (e.g. a
+   * recurring "SPM" problem type), so identical text from a different day
+   * must still show up — only this exact row is excluded. */
+  excludeEntryId?: number;
+  onSearchSimilar: (searchText: string, toolId: string) => Promise<SimilarProblem[]>;
+  onPick: (s: SimilarProblem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<SimilarProblem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const seqRef = useRef(0);
+  const disabled = !problemStatement.trim();
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next || disabled) return;
+    const seq = ++seqRef.current;
+    setLoading(true);
+    onSearchSimilar(problemStatement, toolId)
+      .then((r) => {
+        if (seq === seqRef.current) setResults(r.filter((s) => s.id !== excludeEntryId));
+      })
+      .catch(() => {
+        // Best-effort — a lookup failure just leaves the list empty.
+      })
+      .finally(() => {
+        if (seq === seqRef.current) setLoading(false);
+      });
+  }
+
+  // Picking a suggestion opens the (separate, row-level) history dialog —
+  // this popover needs to close itself too, or it's left open in state
+  // underneath the dialog, and Radix's focus management on the dialog's
+  // eventual close can land focus back on whatever's still "open" here.
+  function handlePick(s: SimilarProblem) {
+    setOpen(false);
+    onPick(s);
+  }
+
+  return (
+    <Tooltip>
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <TooltipTrigger asChild>
+          <span tabIndex={disabled ? 0 : -1}>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="xs" className="text-muted-foreground -ml-2" disabled={disabled}>
+                <History className="h-3.5 w-3.5" />
+                類似問題
+              </Button>
+            </PopoverTrigger>
+          </span>
+        </TooltipTrigger>
+        <PopoverContent className="w-80 p-2" align="start">
+          <SimilarProblemsList results={results} loading={loading} toolId={toolId} onPick={handlePick} />
+        </PopoverContent>
+      </Popover>
+      {disabled && <TooltipContent>請先填寫 Problem Statement</TooltipContent>}
+    </Tooltip>
+  );
+}
+
 /** Problem Statement cell — same auto-grow/save-on-blur behavior as
  * EditableTextCell, plus a fuzzy-search-as-you-type suggestion list drawn
  * from every past occurrence of a similar problem. Picking one fills the
@@ -215,8 +379,7 @@ function ProblemStatementCell({
   toolId,
   onSave,
   onSearchSimilar,
-  onFetchHistory,
-  onCopyToNote,
+  onOpenHistory,
   remoteEditor,
   remoteDraftText,
   onFocusCell,
@@ -227,8 +390,7 @@ function ProblemStatementCell({
   toolId: string;
   onSave: (value: string) => Promise<void>;
   onSearchSimilar: (searchText: string, toolId: string) => Promise<SimilarProblem[]>;
-  onFetchHistory: (target: { toolId: string; module: string; problemStatement: string }) => Promise<ProblemHistoryNote[]>;
-  onCopyToNote: (text: string) => void;
+  onOpenHistory: (target: SimilarProblem) => void;
   remoteEditor?: RemoteEditor | null;
   remoteDraftText?: string;
   onFocusCell?: () => void;
@@ -260,12 +422,6 @@ function ProblemStatementCell({
   // onBlur synchronously, before React re-renders with the just-reset
   // draft, so without this commit() would still save the pre-Escape text.
   const isCancellingRef = useRef(false);
-
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyTarget, setHistoryTarget] = useState<SimilarProblem | null>(null);
-  const [historyNotes, setHistoryNotes] = useState<ProblemHistoryNote[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(value);
@@ -339,24 +495,7 @@ function ProblemStatementCell({
     lastPickedValueRef.current = s.problemStatement;
     setDraft(s.problemStatement);
     await commit(s.problemStatement);
-
-    setHistoryTarget(s);
-    setHistoryOpen(true);
-    setHistoryLoading(true);
-    setHistoryError(null);
-    setHistoryNotes(null);
-    try {
-      const notes = await onFetchHistory({
-        toolId: s.toolId,
-        module: s.module,
-        problemStatement: s.problemStatement,
-      });
-      setHistoryNotes(notes);
-    } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setHistoryLoading(false);
-    }
+    onOpenHistory(s);
   }
 
   return (
@@ -395,90 +534,123 @@ function ProblemStatementCell({
           // suggestion list stealing it when it opens.
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <p className="text-muted-foreground mb-1.5 px-1 text-xs font-medium">
-            {suggestLoading ? "搜尋中..." : "過去可能發生過的類似問題"}
-          </p>
-          <div className="max-h-72 space-y-1 overflow-y-auto">
-            {suggestions.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => pickSuggestion(s)}
-                className="hover:bg-accent w-full rounded-md p-2 text-left text-xs"
-              >
-                <div className="text-muted-foreground mb-0.5 flex items-center gap-1.5">
-                  {s.toolId === toolId ? (
-                    <Badge variant="secondary" className="px-1 py-0 text-[10px]">
-                      同機台
-                    </Badge>
-                  ) : (
-                    <span>
-                      {s.toolId} / {s.module}
-                    </span>
-                  )}
-                  <span>{s.entryDate}</span>
-                  {s.occurrenceCount > 1 && (
-                    <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                      出現過 {s.occurrenceCount} 次
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-foreground line-clamp-2 whitespace-pre-wrap">{s.problemStatement}</p>
-              </button>
-            ))}
-          </div>
+          <SimilarProblemsList results={suggestions} loading={suggestLoading} toolId={toolId} onPick={pickSuggestion} />
         </PopoverContent>
       </Popover>
       {error && <p className="text-destructive mt-1 text-xs">{error}</p>}
+    </div>
+  );
+}
 
-      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="h-4 w-4" />
-              上次怎麼處理
-            </DialogTitle>
-            <DialogDescription>
-              {historyTarget?.toolId} / {historyTarget?.module} — {historyTarget?.problemStatement}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 overflow-y-auto">
-            {historyLoading ? (
-              <p className="text-muted-foreground text-sm">載入中...</p>
-            ) : historyError ? (
-              <p className="text-destructive text-sm">{historyError}</p>
-            ) : !historyNotes || historyNotes.length === 0 ? (
-              <p className="text-muted-foreground text-sm italic">這個問題沒有留下交接留言紀錄。</p>
-            ) : (
-              <ul className="space-y-2">
-                {historyNotes.map(({ note, entryDate }) => (
-                  <li key={note.id} className="bg-muted/50 rounded-md p-2.5 text-sm">
-                    <div className="text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5">
-                        <Clock className="h-3 w-3" />
-                        {entryDate}
-                        <span className="font-medium text-foreground">{note.personName ?? "未知"}</span>
-                        {note.shift && <Badge variant="outline">{SHIFT_LABELS[note.shift]}</Badge>}
-                      </span>
+/** The "上次怎麼處理" reference dialog — reused by all three entry points
+ * (Problem Statement's suggestion-pick flow, and the "類似問題" buttons on
+ * Remark and Activities & Planning), lifted to PassdownEntryRow since
+ * Remark/Activities & Planning are siblings of ProblemStatementCell, not
+ * descendants, so a shared dialog instance has to live in their common
+ * parent. Shows remark and that day's notes together, unconditionally,
+ * regardless of which entry point opened it — seeing both together is
+ * useful either way (e.g. a maintenance day's measurements alongside which
+ * part got swapped). Purely presentational; grouping notes by entryDate
+ * happens here rather than in the fetch layer, so presentation-only
+ * decisions (like hiding a day with neither remark nor notes) stay easy to
+ * change without touching data fetching. */
+function ProblemHistoryDialog({
+  open,
+  onOpenChange,
+  target,
+  result,
+  loading,
+  error,
+  onCopyNote,
+  onCopyRemark,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  target: SimilarProblem | null;
+  result: ProblemHistoryResult | null;
+  loading: boolean;
+  error: string | null;
+  onCopyNote: (text: string) => void;
+  onCopyRemark: (text: string) => void;
+}) {
+  const notesByEntryDate = new Map<string, ProblemHistoryResult["notes"]>();
+  for (const n of result?.notes ?? []) {
+    const list = notesByEntryDate.get(n.entryDate) ?? [];
+    list.push(n);
+    notesByEntryDate.set(n.entryDate, list);
+  }
+  const days = (result?.entries ?? []).filter(
+    (e) => e.remark?.trim() || (notesByEntryDate.get(e.entryDate)?.length ?? 0) > 0
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <History className="h-4 w-4" />
+            上次怎麼處理
+          </DialogTitle>
+          <DialogDescription>
+            {target?.toolId} / {target?.module} — {target?.problemStatement}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 overflow-y-auto">
+          {loading ? (
+            <p className="text-muted-foreground text-sm">載入中...</p>
+          ) : error ? (
+            <p className="text-destructive text-sm">{error}</p>
+          ) : days.length === 0 ? (
+            <p className="text-muted-foreground text-sm italic">這個問題沒有留下 Remark 或交接留言紀錄。</p>
+          ) : (
+            <ul className="space-y-3">
+              {days.map((day) => (
+                <li key={day.entryId} className="bg-muted/50 rounded-md p-2.5 text-sm">
+                  <div className="text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                    <Clock className="h-3 w-3" />
+                    {day.entryDate}
+                  </div>
+                  {day.remark?.trim() && (
+                    <div className="mb-2 flex items-start justify-between gap-2 rounded bg-background/60 p-1.5">
+                      <p className="whitespace-pre-wrap">{day.remark}</p>
                       <Button
                         variant="ghost"
                         size="xs"
                         className="text-muted-foreground shrink-0"
-                        onClick={() => onCopyToNote(note.note)}
+                        onClick={() => onCopyRemark(day.remark ?? "")}
                       >
                         <Copy className="h-3 w-3" />
-                        複製進今天留言
+                        複製到備註
                       </Button>
                     </div>
-                    <p className="whitespace-pre-wrap">{note.note}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+                  )}
+                  {(notesByEntryDate.get(day.entryDate) ?? []).map(({ note }) => (
+                    <div key={note.id} className="mb-1 last:mb-0">
+                      <div className="text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5">
+                          <span className="font-medium text-foreground">{note.personName ?? "未知"}</span>
+                          {note.shift && <Badge variant="outline">{SHIFT_LABELS[note.shift]}</Badge>}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-muted-foreground shrink-0"
+                          onClick={() => onCopyNote(note.note)}
+                        >
+                          <Copy className="h-3 w-3" />
+                          複製進今天留言
+                        </Button>
+                      </div>
+                      <p className="whitespace-pre-wrap">{note.note}</p>
+                    </div>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -510,7 +682,7 @@ export function PassdownEntryRow({
     toolId: string;
     module: string;
     problemStatement: string;
-  }) => Promise<ProblemHistoryNote[]>;
+  }) => Promise<ProblemHistoryResult>;
   /** Live co-editing visibility (Presence/Broadcast) — see app/passdown/page.tsx. */
   problemStatementCellKey: string;
   remarkCellKey: string;
@@ -525,6 +697,45 @@ export function PassdownEntryRow({
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
   const [notePopoverOpen, setNotePopoverOpen] = useState(false);
+
+  // "上次怎麼處理" dialog — lifted here (rather than living inside
+  // ProblemStatementCell) since it's now a shared entry point for Remark
+  // and Activities & Planning too, both siblings of ProblemStatementCell.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<SimilarProblem | null>(null);
+  const [historyResult, setHistoryResult] = useState<ProblemHistoryResult | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  async function openHistory(target: SimilarProblem) {
+    setHistoryTarget(target);
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistoryResult(null);
+    try {
+      setHistoryResult(await onFetchProblemHistory(target));
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  // "複製到備註" hands historical Remark text to EditableTextCell via a
+  // nonce-keyed prop rather than writing straight to entry.remark — same
+  // "never auto-save, just pre-fill" rule as copyToNoteDraft below. Nonce
+  // starts at undefined, not 0 — EditableTextCell's effect guards on
+  // `pendingCopyNonce === undefined` to skip firing on mount, and 0 is a
+  // real, distinct value that guard wouldn't catch, which silently focused
+  // every row's Remark textarea (and reported it via Presence) on every
+  // mount/remount before this was caught.
+  const [remarkCopyText, setRemarkCopyText] = useState("");
+  const [remarkCopyNonce, setRemarkCopyNonce] = useState<number | undefined>(undefined);
+  function copyToRemarkDraft(text: string) {
+    setRemarkCopyText(text);
+    setRemarkCopyNonce((n) => (n ?? 0) + 1);
+  }
 
   async function handleStatusChange(value: string) {
     setStatusSaving(true);
@@ -584,13 +795,22 @@ export function PassdownEntryRow({
           toolId={entry.toolId}
           onSave={(v) => onFieldSave("problemStatement", v)}
           onSearchSimilar={onSearchSimilarProblems}
-          onFetchHistory={onFetchProblemHistory}
-          onCopyToNote={copyToNoteDraft}
+          onOpenHistory={openHistory}
           remoteEditor={remoteFocus.get(problemStatementCellKey)}
           remoteDraftText={remoteDrafts.get(problemStatementCellKey)}
           onFocusCell={() => onFocusCell(problemStatementCellKey)}
           onBlurCell={onBlurCell}
           onDraftChange={(text) => onDraftChange(problemStatementCellKey, text)}
+        />
+        <ProblemHistoryDialog
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          target={historyTarget}
+          result={historyResult}
+          loading={historyLoading}
+          error={historyError}
+          onCopyNote={copyToNoteDraft}
+          onCopyRemark={copyToRemarkDraft}
         />
       </TableCell>
       <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
@@ -604,33 +824,51 @@ export function PassdownEntryRow({
               <p className="whitespace-pre-wrap">{u.note}</p>
             </div>
           ))}
-          <Popover open={notePopoverOpen} onOpenChange={setNotePopoverOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="xs" className="text-muted-foreground -ml-2">
-                <MessageSquarePlus className="h-3.5 w-3.5" />
-                留言
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72">
-              <Textarea
-                placeholder={`新增交接留言(${SHIFT_LABELS[currentShift]})...`}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                disabled={noteSaving}
-                className="min-h-[70px] text-sm"
-                autoFocus
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <Button size="sm" onClick={handleAddNote} disabled={noteSaving || !note.trim()}>
-                  送出
+          <div className="-ml-2 flex items-center">
+            <Popover open={notePopoverOpen} onOpenChange={setNotePopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="xs" className="text-muted-foreground">
+                  <MessageSquarePlus className="h-3.5 w-3.5" />
+                  留言
                 </Button>
-                {noteError && <span className="text-destructive text-xs">{noteError}</span>}
-              </div>
-            </PopoverContent>
-          </Popover>
+              </PopoverTrigger>
+              <PopoverContent className="w-72">
+                <Textarea
+                  placeholder={`新增交接留言(${SHIFT_LABELS[currentShift]})...`}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  disabled={noteSaving}
+                  className="min-h-[70px] text-sm"
+                  autoFocus
+                />
+                <div className="mt-2 flex items-center gap-2">
+                  <Button size="sm" onClick={handleAddNote} disabled={noteSaving || !note.trim()}>
+                    送出
+                  </Button>
+                  {noteError && <span className="text-destructive text-xs">{noteError}</span>}
+                </div>
+              </PopoverContent>
+            </Popover>
+            <SimilarProblemsButton
+              problemStatement={entry.problemStatement ?? ""}
+              toolId={entry.toolId}
+              excludeEntryId={entry.id}
+              onSearchSimilar={onSearchSimilarProblems}
+              onPick={openHistory}
+            />
+          </div>
         </div>
       </TableCell>
       <TableCell className={cn(CELL_WIDTH, "align-top whitespace-normal")}>
+        <div className="mb-1 -ml-2">
+          <SimilarProblemsButton
+            problemStatement={entry.problemStatement ?? ""}
+            toolId={entry.toolId}
+            excludeEntryId={entry.id}
+            onSearchSimilar={onSearchSimilarProblems}
+            onPick={openHistory}
+          />
+        </div>
         <EditableTextCell
           value={entry.remark ?? ""}
           onSave={(v) => onFieldSave("remark", v)}
@@ -639,6 +877,8 @@ export function PassdownEntryRow({
           onFocusCell={() => onFocusCell(remarkCellKey)}
           onBlurCell={onBlurCell}
           onDraftChange={(text) => onDraftChange(remarkCellKey, text)}
+          pendingCopyText={remarkCopyText}
+          pendingCopyNonce={remarkCopyNonce}
         />
       </TableCell>
       <TableCell className="text-muted-foreground text-xs whitespace-nowrap">

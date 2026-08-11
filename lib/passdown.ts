@@ -272,6 +272,9 @@ export interface SimilarProblem {
   toolId: string;
   module: string;
   problemStatement: string;
+  /** What Remark was recorded on this representative entry — shown as a
+   * quick preview in the suggestion list, alongside the problem text. */
+  remark: string | null;
   /** How many historical entries normalize to the same text as this one
    * (numbering/punctuation/case-insensitive) — this row represents the
    * whole group, not just itself. */
@@ -304,6 +307,7 @@ export async function fetchSimilarProblems(
       tool_id: string;
       module: string;
       problem_statement: string;
+      remark: string | null;
       occurrence_count: number;
       similarity: number;
     }[]
@@ -313,6 +317,7 @@ export async function fetchSimilarProblems(
     toolId: row.tool_id,
     module: row.module,
     problemStatement: row.problem_statement,
+    remark: row.remark,
     occurrenceCount: row.occurrence_count,
     similarity: row.similarity,
   }));
@@ -323,23 +328,41 @@ export interface ProblemHistoryNote {
   note: PassdownUpdate;
 }
 
-/** All historical shift notes for every entry sharing the same tool+module
+/** One historical day's entry in a "same problem" episode — remark is
+ * whatever was recorded on that specific day (there's at most one entry per
+ * (entry_date, tool_id, module), so this is unambiguous). */
+export interface ProblemHistoryEntry {
+  entryId: number;
+  entryDate: string;
+  remark: string | null;
+}
+
+export interface ProblemHistoryResult {
+  entries: ProblemHistoryEntry[];
+  notes: ProblemHistoryNote[];
+}
+
+/** Every historical entry (with its Remark) and every shift note for that
+ * whole "same problem" episode — every entry sharing the same tool+module
  * whose problem text normalizes the same (see passdown_normalize_problem in
  * scripts/passdown-similar-problems-schema.sql — numbering/punctuation/case
- * stripped) — captures a whole multi-day "episode" even across the numbering
+ * stripped), captures a whole multi-day episode even across the numbering
  * variations real data has (the same underlying wording tends to get
  * carried forward day to day for as long as an issue stays open), used to
- * build the read-only "what was done last time" reference card.
+ * build the read-only "what was done last time" reference card — shown
+ * alongside Remark so a reader sees both what was recorded and what was
+ * done on the same historical day, not just the notes.
  *
- * Sorted by the entry's entry_date, not the note's created_at: every note
- * migrated from the old Excel got the migration run's timestamp, not its
- * real original date, so created_at order would scramble a historical
- * episode's actual chronology (new, directly-authored notes do have a
- * meaningful created_at, but entry_date+id sorts those correctly too). */
-export async function fetchProblemHistoryNotes(
+ * notes is sorted by the entry's entry_date, not the note's created_at:
+ * every note migrated from the old Excel got the migration run's
+ * timestamp, not its real original date, so created_at order would
+ * scramble a historical episode's actual chronology (new,
+ * directly-authored notes do have a meaningful created_at, but
+ * entry_date+id sorts those correctly too). */
+export async function fetchProblemHistory(
   supabase: SupabaseClient,
   opts: { toolId: string; module: string; problemStatement: string }
-): Promise<ProblemHistoryNote[]> {
+): Promise<ProblemHistoryResult> {
   const { data: entries, error } = await withRetry(() =>
     supabase.rpc("passdown_entries_by_normalized_problem", {
       p_tool_id: opts.toolId,
@@ -348,15 +371,20 @@ export async function fetchProblemHistoryNotes(
     })
   );
   if (error) throw new Error(error.message);
-  const entryRows = (entries ?? []) as { id: number; entry_date: string }[];
+  const entryRows = (entries ?? []) as { id: number; entry_date: string; remark: string | null }[];
   const dateByEntryId = new Map(entryRows.map((r) => [r.id, r.entry_date]));
   const notes = await fetchUpdatesForEntries(
     supabase,
     entryRows.map((r) => r.id)
   );
-  return notes
-    .map((note) => ({ note, entryDate: dateByEntryId.get(note.entryId) ?? "" }))
-    .sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.note.id - b.note.id);
+  return {
+    entries: entryRows
+      .map((r) => ({ entryId: r.id, entryDate: r.entry_date, remark: r.remark }))
+      .sort((a, b) => a.entryDate.localeCompare(b.entryDate)),
+    notes: notes
+      .map((note) => ({ note, entryDate: dateByEntryId.get(note.entryId) ?? "" }))
+      .sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.note.id - b.note.id),
+  };
 }
 
 /** Appends one shift-handover note as a new row — never edits or removes
