@@ -5,22 +5,27 @@ import Link from "next/link";
 import { ChevronDown, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
+import { fetchMachineGroups } from "@/lib/bom";
 import {
   addGroup,
   deleteGroup,
+  ensureMachineInGroup,
   fetchGroupMachineNames,
   fetchGroupMembers,
   fetchGroups,
   removeGroupMember,
   removeMachineFromGroup,
+  renameGroupMember,
   upsertGroupMember,
   type Group,
   type GroupMember,
 } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EditableField } from "@/components/editable-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Internal-tool-grade gate, not real security — matches the rest of
 // lambom's no-auth convention (see project memory
@@ -95,6 +100,20 @@ export default function GroupsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [newEmployeeId, setNewEmployeeId] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [addMachineValue, setAddMachineValue] = useState("");
+
+  const [allMachineNames, setAllMachineNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchMachineGroups(getSupabase())
+      .then(({ machineGroups }) => setAllMachineNames(machineGroups.map((g) => g.machine)))
+      .catch(() => {
+        // Best-effort — only feeds the "add machine" dropdown, doesn't
+        // block the rest of the page if it fails.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlocked]);
 
   async function loadGroups() {
     setLoading(true);
@@ -136,6 +155,7 @@ export default function GroupsPage() {
     setExpanded(group.id);
     setNewEmployeeId("");
     setNewDisplayName("");
+    setAddMachineValue("");
     loadDetail(group.id);
   }
 
@@ -187,6 +207,28 @@ export default function GroupsPage() {
     setError(null);
     try {
       await removeGroupMember(getSupabase(), employeeId);
+      await loadDetail(groupId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRenameMemberId(groupId: number, oldEmployeeId: string, newEmployeeId: string) {
+    await renameGroupMember(getSupabase(), oldEmployeeId, newEmployeeId);
+    await loadDetail(groupId);
+  }
+
+  async function handleUpdateDisplayName(groupId: number, employeeId: string, displayName: string) {
+    await upsertGroupMember(getSupabase(), employeeId, groupId, displayName);
+    await loadDetail(groupId);
+  }
+
+  async function handleAddMachine(groupId: number) {
+    if (!addMachineValue) return;
+    setError(null);
+    try {
+      await ensureMachineInGroup(getSupabase(), groupId, addMachineValue);
+      setAddMachineValue("");
       await loadDetail(groupId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -292,16 +334,24 @@ export default function GroupsPage() {
                                 新增
                               </Button>
                             </div>
-                            <div className="mb-4 grid gap-1">
+                            <div className="mb-4 grid gap-1.5">
                               {members.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">尚無成員</p>
                               ) : (
                                 members.map((m) => (
-                                  <div key={m.employeeId} className="flex items-center justify-between rounded-md border px-2 py-1.5">
-                                    <span className="text-sm">
-                                      {m.employeeId}
-                                      {m.displayName && <span className="text-muted-foreground"> · {m.displayName}</span>}
-                                    </span>
+                                  <div key={m.employeeId} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
+                                    <div className="w-28 shrink-0">
+                                      <EditableField
+                                        value={m.employeeId}
+                                        onSave={(newId) => handleRenameMemberId(group.id, m.employeeId, newId)}
+                                      />
+                                    </div>
+                                    <div className="flex-1">
+                                      <EditableField
+                                        value={m.displayName ?? ""}
+                                        onSave={(newName) => handleUpdateDisplayName(group.id, m.employeeId, newName)}
+                                      />
+                                    </div>
                                     <Button
                                       size="icon-sm"
                                       variant="ghost"
@@ -316,9 +366,28 @@ export default function GroupsPage() {
                             </div>
 
                             <Label className="mb-1.5 block">機台</Label>
+                            <div className="mb-2 flex gap-2">
+                              <Select value={addMachineValue} onValueChange={setAddMachineValue}>
+                                <SelectTrigger className="flex-1">
+                                  <SelectValue placeholder="選擇機台加入這個群組" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {allMachineNames
+                                    .filter((name) => !machineNames.includes(name))
+                                    .map((name) => (
+                                      <SelectItem key={name} value={name}>
+                                        {name}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                              <Button size="sm" onClick={() => handleAddMachine(group.id)} disabled={!addMachineValue}>
+                                新增
+                              </Button>
+                            </div>
                             <div className="grid gap-1">
                               {machineNames.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">尚無機台,請成員自行透過 SAP 下載自動加入。</p>
+                                <p className="text-sm text-muted-foreground">尚無機台,可由上方新增,或由成員透過 SAP 下載自動加入。</p>
                               ) : (
                                 machineNames.map((name) => (
                                   <div key={name} className="flex items-center justify-between rounded-md border px-2 py-1.5">

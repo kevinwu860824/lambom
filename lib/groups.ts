@@ -116,6 +116,20 @@ export async function removeGroupMember(supabase: SupabaseClient, employeeId: st
   if (error) throw new Error(error.message);
 }
 
+/** Changes a member's employee_id itself (a plain UPDATE on the primary
+ * key) — separate from upsertGroupMember, which only ever adds/moves by an
+ * already-known employee_id and can't rename one in place. */
+export async function renameGroupMember(
+  supabase: SupabaseClient,
+  oldEmployeeId: string,
+  newEmployeeId: string
+): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("group_members").update({ employee_id: newEmployeeId }).eq("employee_id", oldEmployeeId)
+  );
+  if (error) throw new Error(error.message);
+}
+
 export async function fetchGroupMachineNames(supabase: SupabaseClient, groupId: number): Promise<string[]> {
   const { data, error } = await withRetry(() =>
     supabase.from("group_machines").select("machine_name").eq("group_id", groupId).order("machine_name")
