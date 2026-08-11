@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Boxes, ClipboardList, Settings } from "lucide-react";
-import { useEmployeeGroup } from "@/lib/groups";
+import { useEmployeeGroup, type Group } from "@/lib/groups";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -24,8 +24,19 @@ const apps = [
   },
 ];
 
-function EmployeeIdBar() {
-  const { employeeId, group, loading, notFound, setEmployeeId } = useEmployeeGroup();
+function EmployeeIdBar({
+  employeeId,
+  group,
+  loading,
+  notFound,
+  setEmployeeId,
+}: {
+  employeeId: string | null;
+  group: Group | null;
+  loading: boolean;
+  notFound: boolean;
+  setEmployeeId: (id: string | null) => void;
+}) {
   const [draft, setDraft] = useState("");
 
   if (loading) return <div className="h-9" />;
@@ -66,10 +77,19 @@ function EmployeeIdBar() {
 }
 
 export default function Home() {
+  const { employeeId, group, loading, notFound, setEmployeeId } = useEmployeeGroup();
+  const locked = !loading && !employeeId;
+
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
       <div className="absolute right-4 top-4 flex items-center gap-3">
-        <EmployeeIdBar />
+        <EmployeeIdBar
+          employeeId={employeeId}
+          group={group}
+          loading={loading}
+          notFound={notFound}
+          setEmployeeId={setEmployeeId}
+        />
         <Button variant="outline" size="icon" asChild>
           <Link href="/groups" aria-label="編輯群組">
             <Settings className="h-4 w-4" />
@@ -79,24 +99,47 @@ export default function Home() {
 
       <div className="flex flex-col items-center">
         <h1 className="mb-10 text-xl font-medium text-muted-foreground">Internal Tools</h1>
+        {locked && (
+          <p className="mb-4 text-sm text-muted-foreground">請先在右上角輸入工號,才能進入以下工具</p>
+        )}
         <div className="grid grid-cols-2 gap-8 sm:gap-12">
-          {apps.map(({ href, label, description, icon: Icon, gradient }) => (
-            <Link
-              key={href}
-              href={href}
-              className="group flex flex-col items-center gap-3 rounded-2xl p-2 transition-transform duration-150 ease-out hover:scale-105 focus-visible:scale-105 focus-visible:outline-none"
-            >
-              <div
-                className={`flex h-24 w-24 items-center justify-center rounded-[22px] bg-gradient-to-br sm:h-28 sm:w-28 ${gradient} shadow-lg shadow-black/10 transition-shadow duration-150 group-hover:shadow-xl group-hover:shadow-black/20`}
+          {apps.map(({ href, label, description, icon: Icon, gradient }) => {
+            const tile = (
+              <>
+                <div
+                  className={`flex h-24 w-24 items-center justify-center rounded-[22px] bg-gradient-to-br sm:h-28 sm:w-28 ${gradient} shadow-lg shadow-black/10 transition-shadow duration-150 ${locked ? "" : "group-hover:shadow-xl group-hover:shadow-black/20"}`}
+                >
+                  <Icon className="h-11 w-11 text-white sm:h-12 sm:w-12" strokeWidth={1.75} />
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-semibold text-foreground">{label}</div>
+                  <div className="text-xs text-muted-foreground">{description}</div>
+                </div>
+              </>
+            );
+
+            if (locked) {
+              return (
+                <div
+                  key={href}
+                  className="group flex cursor-not-allowed flex-col items-center gap-3 rounded-2xl p-2 opacity-40"
+                  title="請先輸入工號"
+                >
+                  {tile}
+                </div>
+              );
+            }
+
+            return (
+              <Link
+                key={href}
+                href={href}
+                className="group flex flex-col items-center gap-3 rounded-2xl p-2 transition-transform duration-150 ease-out hover:scale-105 focus-visible:scale-105 focus-visible:outline-none"
               >
-                <Icon className="h-11 w-11 text-white sm:h-12 sm:w-12" strokeWidth={1.75} />
-              </div>
-              <div className="text-center">
-                <div className="text-sm font-semibold text-foreground">{label}</div>
-                <div className="text-xs text-muted-foreground">{description}</div>
-              </div>
-            </Link>
-          ))}
+                {tile}
+              </Link>
+            );
+          })}
         </div>
       </div>
     </div>

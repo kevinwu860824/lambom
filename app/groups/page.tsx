@@ -22,7 +22,61 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// Internal-tool-grade gate, not real security — matches the rest of
+// lambom's no-auth convention (see project memory
+// project_lambom_machine_groups). Anyone reading the client bundle can see
+// this string; it's only meant to keep casual clicks off the gear icon.
+const ADMIN_PASSWORD = "admin";
+const UNLOCK_STORAGE_KEY = "lambom_groups_admin_unlocked";
+
+function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(false);
+
+  function submit() {
+    if (password === ADMIN_PASSWORD) {
+      sessionStorage.setItem(UNLOCK_STORAGE_KEY, "1");
+      onUnlock();
+    } else {
+      setError(true);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-xs">
+        <CardContent className="grid gap-3 pt-6">
+          <Label>管理員密碼</Label>
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(false);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            autoFocus
+          />
+          {error && <p className="text-sm text-destructive">密碼錯誤</p>}
+          <Button onClick={submit} disabled={!password}>
+            確認
+          </Button>
+          <Button variant="outline" asChild>
+            <Link href="/">回首頁</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function GroupsPage() {
+  const [unlocked, setUnlocked] = useState(false);
+
+  useEffect(() => {
+    if (sessionStorage.getItem(UNLOCK_STORAGE_KEY) === "1") setUnlocked(true);
+  }, []);
+
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
@@ -55,8 +109,8 @@ export default function GroupsPage() {
   }
 
   useEffect(() => {
-    loadGroups();
-  }, []);
+    if (unlocked) loadGroups();
+  }, [unlocked]);
 
   async function loadDetail(groupId: number) {
     setDetailLoading(true);
@@ -147,6 +201,10 @@ export default function GroupsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  if (!unlocked) {
+    return <AdminPasswordGate onUnlock={() => setUnlocked(true)} />;
   }
 
   return (
