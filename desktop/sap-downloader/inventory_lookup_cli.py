@@ -186,13 +186,23 @@ def wait_for_element(session, element_id, timeout=15, interval=0.5):
 def open_inventory_for_part(session, part_no):
     """
     Navigates to the stock overview screen and queries one material number.
-    Based on a real recorded session (double-click the favorites-tree node
-    "0000000125", type the material number, Enter, then F8/Execute) — the
-    "/n" at the top is NOT from that recording, it's added here so this
-    works reliably on repeat lookups: the favorites tree only exists on the
-    SAP Easy Access initial screen, and without returning there first, a
-    second lookup while SAP is still sitting on the previous query's result
-    screen would fail to find the tree node at all.
+
+    The original recording reached this screen by double-clicking a node in
+    the user's own SAP Easy Access favorites tree — that's inherently tied
+    to their personal favorites layout and, per real testing, to window
+    size/"picture mode" state too (Easy Access hides its favorites-tree
+    area on a narrow window, so a freshly-launched SAP window can fail to
+    even have that control to click). fid_downloader_cli.py's proven,
+    already-working transactions (IB53/VA03/ZOOBOM_CE_FMT) never navigate
+    through Easy Access at all — they jump straight to the transaction via
+    the command field in one step. Doing the same here: MS_MATNR-LOW (the
+    field the recording actually typed the material number into) is a
+    field name specific to MMBE (Stock Overview)'s selection screen, so
+    this navigates there directly instead of replaying the fragile
+    favorites-tree click. If MMBE turns out to be the wrong transaction,
+    the field below simply won't exist and this will fail fast with a
+    clear "control not found on wnd[0]/usr/ctxtMS_MATNR-LOW" — tell me the
+    real transaction code and this one line changes.
 
     Each step is wrapped separately so a failure's error message says
     exactly which step it happened on and what SAP was actually showing at
@@ -200,33 +210,12 @@ def open_inventory_for_part(session, part_no):
     alone doesn't say which findById call raised it.
     """
     try:
-        log("Returning to the SAP Easy Access screen...")
-        session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
+        log("Opening MMBE (Stock Overview)...")
+        session.findById("wnd[0]/tbar[0]/okcd").text = "/nMMBE"
         session.findById("wnd[0]").sendVKey(0)
+        time.sleep(1)
     except Exception as e:
-        raise RuntimeError(f"Failed returning to Easy Access (/n): {e} {current_screen_info(session)}") from e
-
-    try:
-        # From the first (pre-value-entry) recording, dropped by mistake in
-        # an earlier version of this script — Easy Access auto-hides its
-        # picture/favorites-tree area (the whole cntlIMAGE_CONTAINER
-        # control) and falls back to a plain text menu if the window is
-        # too narrow. A real test timed out waiting for that control to
-        # exist at all on a freshly-launched window, which this explains:
-        # without forcing the working pane wide enough, a fresh SAP Logon
-        # window may open too narrow for the picture layout to render.
-        session.findById("wnd[0]").resizeWorkingPane(142, 26, False)
-    except Exception as e:
-        raise RuntimeError(f"Failed resizing the working pane: {e} {current_screen_info(session)}") from e
-
-    try:
-        log("Navigating to the stock overview screen...")
-        tree = wait_for_element(session, "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell")
-        tree.doubleClickNode("0000000125")
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed navigating to the stock overview screen (double-click favorites node): {e} {current_screen_info(session)}"
-        ) from e
+        raise RuntimeError(f"Failed opening MMBE: {e} {current_screen_info(session)}") from e
 
     try:
         log(f"Entering material number {part_no}...")
