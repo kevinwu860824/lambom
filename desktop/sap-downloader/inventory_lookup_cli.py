@@ -179,7 +179,11 @@ def open_inventory_for_part(session, part_no):
         log("Returning to the SAP Easy Access screen...")
         session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
         session.findById("wnd[0]").sendVKey(0)
-        time.sleep(1)
+        # Even when already sitting on Easy Access, "/n" can trigger a brief
+        # screen refresh — the favorites tree control needs a moment to
+        # rebuild before it's reliably findable again. 1s wasn't enough in
+        # a real test (failed here, on an already-Easy-Access session).
+        time.sleep(2.5)
     except Exception as e:
         raise RuntimeError(f"Failed returning to Easy Access (/n): {e} {current_screen_info(session)}") from e
 
@@ -188,7 +192,7 @@ def open_inventory_for_part(session, part_no):
         session.findById(
             "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell"
         ).doubleClickNode("0000000125")
-        time.sleep(1)
+        time.sleep(1.5)
     except Exception as e:
         raise RuntimeError(
             f"Failed navigating to the stock overview screen (double-click favorites node): {e} {current_screen_info(session)}"
