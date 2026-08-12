@@ -157,7 +157,7 @@ export default function ZbomPage() {
         {!sectionsLoading && sectionOrder.length > 0 && (
           <div className="flex flex-col gap-6 md:flex-row md:items-start">
             <nav className="bg-background top-8 shrink-0 self-start md:sticky md:w-56">
-              <ul className="grid gap-0.5">
+              <ul className="space-y-0.5">
                 {sectionOrder.map((name, index) => (
                   <li key={index}>
                     <button
