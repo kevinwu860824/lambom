@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Layers } from "lucide-react";
+import { ExternalLink, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openKmMatrix } from "@/lib/km-matrix";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -83,7 +85,7 @@ export function FingerprintCell({
             type="button"
             onClick={onViewPosition}
             className={cn(
-              "w-full truncate rounded px-1.5 py-1 text-left text-sm underline-offset-2 outline-none",
+              "min-w-0 flex-1 truncate rounded px-1.5 py-1 text-left text-sm underline-offset-2 outline-none",
               "hover:bg-accent hover:underline",
               mismatch && "text-red-600 font-semibold"
             )}
@@ -102,7 +104,7 @@ export function FingerprintCell({
               if (e.key === "Escape") setDraft(value);
             }}
             className={cn(
-              "w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
+              "min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 py-1 text-sm outline-none",
               !readOnly &&
                 "hover:border-input focus:border-ring focus:ring-ring/30 focus:bg-background focus:ring-2",
               saving && "opacity-50",
@@ -110,6 +112,18 @@ export function FingerprintCell({
               mismatch && "text-red-600 font-semibold"
             )}
           />
+        )}
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground shrink-0"
+            aria-label="Open in KM Matrix"
+            onClick={() => openKmMatrix(value)}
+          >
+            <ExternalLink className="h-3 w-3" />
+          </Button>
         )}
       </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}

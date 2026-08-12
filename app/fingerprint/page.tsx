@@ -9,6 +9,7 @@ import {
   chunk,
   fetchAllBomItems,
   fetchBomTreeItems,
+  fetchFullBomItems,
   fetchFullBomTreeItems,
   fetchMachineBomLookup,
   normalizeDescription,
@@ -523,10 +524,18 @@ export default function FingerprintPage() {
       .eq("machine_name", machineName);
     if (machineErr) throw new Error(machineErr.message);
 
+    // Modules first, then Full BOM appended after — a part matched via
+    // Modules keeps priority for "first BOM match wins per slot" below
+    // (preserves prior behavior for anything that already worked), Full
+    // BOM only fills in parts Modules didn't have. Checking Modules alone
+    // missed any part that only exists in the new machine's Full BOM (or a
+    // machine with no Modules uploaded at all), leaving its cell blank
+    // even though the part is genuinely present.
     const allItems: BomItem[] = [];
     for (const m of machineRows ?? []) {
       allItems.push(...(await fetchAllBomItems(supabase, m.id as number, m.source_file as string)));
     }
+    allItems.push(...(await fetchFullBomItems(supabase, machineName)));
 
     const filledSlotIds = new Set<number>();
     const toInsert: { part_no: string; custom_name: string; machine_name: string; slot_id: number }[] = [];

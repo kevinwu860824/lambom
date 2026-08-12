@@ -571,10 +571,17 @@ export async function autoMatchKeyParts(
     .eq("machine_name", machineName);
   if (machineError) throw new Error(machineError.message);
 
+  // Modules first, then Full BOM appended after — a part matched via
+  // Modules keeps taking priority (preserves prior behavior for anything
+  // that already worked), Full BOM only fills in parts Modules didn't
+  // have. Checking Modules alone missed any part that only exists in a
+  // machine's Full BOM (or a machine with no Modules uploaded at all),
+  // leaving it unclassified even though it's genuinely present.
   const allItems: BomItem[] = [];
   for (const m of machineRows ?? []) {
     allItems.push(...(await fetchAllBomItems(supabase, m.id as number, m.source_file as string)));
   }
+  allItems.push(...(await fetchFullBomItems(supabase, machineName)));
   const aggregated = aggregateByPartNo(allItems);
 
   const toInsert: {
