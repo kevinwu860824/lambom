@@ -439,45 +439,16 @@ export async function fetchMachineBomLookup(supabase: SupabaseClient, machineNam
   return { fullBomPartNos, modulePartNoSources };
 }
 
-/**
- * Distinct machine_name values in `table`, via an index-assisted "skip
- * scan": repeatedly ask for the single smallest machine_name greater than
- * the last one seen. A plain "select machine_name" over every row hits the
- * Supabase project's server-side rows-per-request cap before ever reaching
- * a second machine once one machine has enough rows (full_bom_items can
- * have tens of thousands for a single machine alone) — silently returning
- * an incomplete list — and paginating through every row to dedupe
- * client-side is correct but scales with total row count, which for a
- * table like that can mean many tens of requests just to list machines.
- * This instead costs exactly one request per distinct machine (each
- * cheap, since `order + gt + limit(1)` lets Postgres use the machine_name
- * index to jump straight to the next value), regardless of how many rows
- * any one machine has — both full_bom_items and zbom_options already have
- * a machine_name index.
- */
-async function fetchDistinctMachineNames(supabase: SupabaseClient, table: string): Promise<string[]> {
-  const names: string[] = [];
-  let last: string | null = null;
-  for (;;) {
-    let query = supabase.from(table).select("machine_name").order("machine_name", { ascending: true }).limit(1);
-    if (last !== null) query = query.gt("machine_name", last);
-    const { data, error } = await withRetry(() => query);
-    if (error) throw new Error(error.message);
-    if (!data || data.length === 0) break;
-    last = data[0].machine_name as string;
-    names.push(last);
-  }
-  return names;
-}
-
 /** Names of every machine that has a stored Full BOM, for populating a
  * machine picker without fetching all the item rows first. Reads
  * bom_machines.has_full_bom (set by uploadFullBomEntry) rather than
  * scanning full_bom_items directly — full_bom_items can run to tens of
- * thousands of rows per machine, and even the index-assisted
- * fetchDistinctMachineNames skip-scan above still costs one request per
- * distinct machine there; bom_machines is small, so this is a single fast
- * indexed-boolean query instead. */
+ * thousands of rows per machine, so a plain distinct-machine-name select
+ * over it would either hit Supabase's server-side rows-per-request cap
+ * (silently missing machines after however many rows one machine's worth
+ * fills the cap) or cost one request per row to paginate around it;
+ * bom_machines is small, so this is a single fast indexed-boolean query
+ * instead. */
 export async function fetchFullBomMachineNames(supabase: SupabaseClient): Promise<string[]> {
   const { data, error } = await supabase
     .from("bom_machines")
@@ -841,38 +812,64 @@ export async function uploadZbomEntry(
   }
 }
 
-export interface ZbomSection {
-  section: string;
-  options: ZbomOption[];
-}
-
 /** Names of every machine that has at least one stored ZBOM option, for
- * populating a machine picker without fetching all the option rows first. */
+ * populating a machine picker without fetching all the option rows first.
+ * Calls the zbom_distinct_machine_names() RPC (scripts/zbom-distinct-
+ * machines-schema.sql) rather than a plain `select("machine_name")` —
+ * zbom_options can have hundreds of rows for a single machine, so a plain
+ * select risks filling Supabase's server-side rows-per-request cap with
+ * just one machine's rows and silently never reaching any other machine.
+ * Doing the DISTINCT in Postgres keeps the response to one row per
+ * machine regardless of how many option rows it has. */
 export async function fetchZbomMachineNames(supabase: SupabaseClient): Promise<string[]> {
-  return fetchDistinctMachineNames(supabase, "zbom_options");
+  const { data, error } = await withRetry(() => supabase.rpc("zbom_distinct_machine_names"));
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: { machine_name: string }) => row.machine_name);
 }
 
-/** One machine's ZBOM options, grouped by section in the order they were
- * stored (insertion order via `id`). */
-export async function fetchZbomOptions(supabase: SupabaseClient, machineName: string): Promise<ZbomSection[]> {
-  const { data, error } = await supabase
-    .from("zbom_options")
-    .select("section,option_type,option_selection")
-    .eq("machine_name", machineName)
-    .order("id", { ascending: true });
+/** Names of every section stored for one machine's ZBOM, in the order they
+ * first appear (insertion order via `id`) — a small, single-query "index"
+ * used to render the section list/nav immediately, before fetching any
+ * section's actual option rows. */
+export async function fetchZbomSectionNames(supabase: SupabaseClient, machineName: string): Promise<string[]> {
+  const { data, error } = await withRetry(() =>
+    supabase.from("zbom_options").select("section").eq("machine_name", machineName).order("id", { ascending: true })
+  );
   if (error) throw new Error(error.message);
 
-  const sections = new Map<string, ZbomOption[]>();
+  const seen = new Set<string>();
+  const names: string[] = [];
   for (const row of data ?? []) {
     const section = row.section as string;
-    if (!sections.has(section)) sections.set(section, []);
-    sections.get(section)!.push({
-      section,
-      optionType: row.option_type as string,
-      optionSelection: row.option_selection as string | null,
-    });
+    if (!seen.has(section)) {
+      seen.add(section);
+      names.push(section);
+    }
   }
-  return Array.from(sections.entries()).map(([section, options]) => ({ section, options }));
+  return names;
+}
+
+/** One machine/section's ZBOM options, in stored order — fetched only when
+ * that section is actually expanded. */
+export async function fetchZbomSectionOptions(
+  supabase: SupabaseClient,
+  machineName: string,
+  section: string
+): Promise<ZbomOption[]> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("zbom_options")
+      .select("option_type,option_selection")
+      .eq("machine_name", machineName)
+      .eq("section", section)
+      .order("id", { ascending: true })
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    section,
+    optionType: row.option_type as string,
+    optionSelection: row.option_selection as string | null,
+  }));
 }
 
 export interface DocumentPartPrefix {

@@ -28,17 +28,24 @@ export default function TreePage() {
         const { machineGroups } = await fetchMachineGroups(supabase);
         return machineGroups.map((g) => g.machine).filter((name) => allowedMachines.has(name));
       }}
-      fetchSubparts={async (supabase: SupabaseClient, machineName: string): Promise<BomStructureSubpart[]> => {
+      fetchSubparts={async (
+        supabase: SupabaseClient,
+        machineName: string,
+        onProgress: (partial: BomStructureSubpart[]) => void
+      ): Promise<BomStructureSubpart[]> => {
         const { machineGroups } = await fetchMachineGroups(supabase);
         const group = machineGroups.find((g) => g.machine === machineName);
         if (!group) return [];
-        return Promise.all(
-          group.subparts.map(async (entry) => ({
+        const results: BomStructureSubpart[] = [];
+        for (const entry of group.subparts) {
+          results.push({
             bomId: entry.bomId,
             sourceFile: entry.source_file,
             items: await fetchBomTreeItems(supabase, entry.bomId, entry.source_file),
-          }))
-        );
+          });
+          onProgress(results.slice());
+        }
+        return results;
       }}
     />
   );
