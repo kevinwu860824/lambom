@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useEmployeeGroup } from "@/lib/groups";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
+import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
 import { RequireGroupPrompt } from "@/components/require-group";
 import { Button } from "@/components/ui/button";
@@ -927,6 +928,7 @@ function PartTable({
                         <ExternalLink className="h-3 w-3" />
                         KM
                       </Button>
+                      <InventoryLookupButton partNo={item.part_no} />
                     </div>
                   </TableCell>
                   <TableCell>{item.description}</TableCell>

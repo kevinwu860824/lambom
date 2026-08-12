@@ -20,6 +20,10 @@
       {
         "from": "../sap-downloader/dist/fid_downloader_cli.exe",
         "to": "fid_downloader_cli.exe"
+      },
+      {
+        "from": "../sap-downloader/dist/inventory_lookup_cli.exe",
+        "to": "inventory_lookup_cli.exe"
       }
     ],
     "win": {

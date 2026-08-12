@@ -71,6 +71,13 @@ function getDownloaderExePath() {
   return path.join(__dirname, "..", "sap-downloader", "dist", "fid_downloader_cli.exe");
 }
 
+function getInventoryLookupExePath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "inventory_lookup_cli.exe");
+  }
+  return path.join(__dirname, "..", "sap-downloader", "dist", "inventory_lookup_cli.exe");
+}
+
 function getScratchDir() {
   // Deliberately NOT the user's visible Downloads folder — SAP export still
   // has to write a real file somewhere before we can read it, but once it's
@@ -165,6 +172,43 @@ ipcMain.handle("fid-download:delete-file", async (_event, targetPath) => {
   } catch {
     // Best-effort cleanup only — a failure here shouldn't surface as an app error.
   }
+});
+
+// A single quick action (open SAP's stock overview for one part number, no
+// file output) — unlike fid-download:start above, there's no queue/cancel
+// machinery or live log streaming to the renderer, just collect
+// stdout/stderr and resolve once the process exits.
+ipcMain.handle("inventory:lookup", async (_event, { partNo }) => {
+  const exePath = getInventoryLookupExePath();
+
+  if (!fs.existsSync(exePath)) {
+    return { ok: false, error: `Inventory lookup tool not found: ${exePath} (build it first per desktop/sap-downloader/README)` };
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn(exePath, [partNo]);
+    let output = "";
+
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString("utf-8");
+    });
+    child.stderr.on("data", (chunk) => {
+      output += `[stderr] ${chunk.toString("utf-8")}`;
+    });
+
+    child.on("error", (err) => {
+      resolve({ ok: false, error: `Failed to start the inventory lookup tool: ${err.message}` });
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      const errorLine = output.split(/\r?\n/).find((line) => line.startsWith("[Error]"));
+      resolve({ ok: false, error: errorLine ?? output.trim() ?? `Exited with code ${code}` });
+    });
+  });
 });
 
 app.whenReady().then(createMainWindow);

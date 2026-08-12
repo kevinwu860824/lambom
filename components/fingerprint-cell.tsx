@@ -5,6 +5,7 @@ import { ExternalLink, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
 import { Button } from "@/components/ui/button";
+import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -75,6 +76,7 @@ export function FingerprintCell({
             <ExternalLink className="h-3 w-3" />
           </Button>
         )}
+        {value && <InventoryLookupButton partNo={value} />}
         {foundInModules && foundInModules.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>

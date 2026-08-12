@@ -15,3 +15,7 @@ contextBridge.exposeInMainWorld("fidDownloader", {
   deleteFile: (filePath) => ipcRenderer.invoke("fid-download:delete-file", filePath),
   cancel: () => ipcRenderer.invoke("fid-download:cancel"),
 });
+
+contextBridge.exposeInMainWorld("inventoryLookup", {
+  lookup: (partNo) => ipcRenderer.invoke("inventory:lookup", { partNo }),
+});

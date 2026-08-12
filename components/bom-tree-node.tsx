@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
 import type { BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
+import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 
 export function normalizeSearchText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "");
@@ -127,12 +128,13 @@ export function BomTreeNodeRow({
         <Button
           variant="ghost"
           size="xs"
-          className="text-muted-foreground mr-2 shrink-0"
+          className="text-muted-foreground shrink-0"
           onClick={() => openKmMatrix(node.item.part_no)}
         >
           <ExternalLink className="h-3 w-3" />
           KM
         </Button>
+        <InventoryLookupButton partNo={node.item.part_no} className="text-muted-foreground mr-2 shrink-0" />
       </div>
       {expanded && hasChildren && (
         <div>
