@@ -63,6 +63,18 @@ export function FingerprintCell({
   return (
     <div className="min-w-[140px]">
       <div className="flex items-center gap-1">
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground shrink-0"
+            aria-label="Open in KM Matrix"
+            onClick={() => openKmMatrix(value)}
+          >
+            <ExternalLink className="h-3 w-3" />
+          </Button>
+        )}
         {foundInModules && foundInModules.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -112,18 +124,6 @@ export function FingerprintCell({
               mismatch && "text-red-600 font-semibold"
             )}
           />
-        )}
-        {value && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground shrink-0"
-            aria-label="Open in KM Matrix"
-            onClick={() => openKmMatrix(value)}
-          >
-            <ExternalLink className="h-3 w-3" />
-          </Button>
         )}
       </div>
       {error && <p className="text-destructive px-1.5 text-xs">{error}</p>}

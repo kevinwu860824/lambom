@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx-js-style";
-import { Check, Download, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
+import { Check, Download, Loader2, Pencil, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
   chunk,
@@ -199,6 +199,7 @@ export default function FingerprintPage() {
 
   const [addMachineValue, setAddMachineValue] = useState("");
   const [addMachineError, setAddMachineError] = useState<string | null>(null);
+  const [addingMachine, setAddingMachine] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -483,14 +484,16 @@ export default function FingerprintPage() {
   /**
    * When a machine is added to a tool type, auto-fill any of its cells we
    * can confidently infer from what other machines in this SAME tool type
-   * already have recorded: build a part_no/description -> slot lookup from
-   * every other machine's existing key_parts rows in this tool type's
-   * slots (skipping a key if different machines disagree on which slot it
-   * belongs to), then check the new machine's own BOM for matches. Scoped
-   * to this tool type's slots specifically (not lib/bom.ts's
-   * autoMatchKeyParts, which matches system-wide by custom_name and could
-   * pull in a slot_id from a different tool type that would never show up
-   * in this table).
+   * already have recorded: build a part_no/description -> slot-ids lookup
+   * from every other machine's existing key_parts rows in this tool type's
+   * slots (a part_no can map to more than one slot — e.g. PodLoader#1-4
+   * routinely share the same physical part number — so every slot it's
+   * ever been recorded under is a candidate, not just a single "or give
+   * up if inconsistent" value), then check the new machine's own BOM for
+   * matches and fill every candidate slot. Scoped to this tool type's
+   * slots specifically (not lib/bom.ts's autoMatchKeyParts, which matches
+   * system-wide by custom_name and could pull in a slot_id from a
+   * different tool type that would never show up in this table).
    */
   async function autoMatchNewMachine(machineName: string): Promise<number> {
     const supabase = getSupabase();
@@ -503,17 +506,47 @@ export default function FingerprintPage() {
       .in("slot_id", slotIds);
     if (existingErr) throw new Error(existingErr.message);
 
-    const AMBIGUOUS = "ambiguous" as const;
-    const byPartNo = new Map<string, number | typeof AMBIGUOUS>();
-    const byDescription = new Map<string, number | typeof AMBIGUOUS>();
-    function record(map: Map<string, number | typeof AMBIGUOUS>, key: string, slotId: number) {
+    // Tracks every slot_id a part_no/description has ever been recorded
+    // under across other machines — a Set, not a single "or ambiguous"
+    // value, because the same part legitimately gets assigned to more than
+    // one slot in real data (e.g. PodLoader#1-4 are routinely the exact
+    // same physical part number on every machine that has them). Treating
+    // that as "ambiguous, don't guess" used to mean a part number known to
+    // belong to 4 specific slots would never auto-fill any of them for a
+    // newly added machine, even when every other machine that had it
+    // consistently used the same 4 slots. Below, every slot_id ever seen
+    // for a matched key gets filled (skipping ones already filled by an
+    // earlier, more specific item) — worst case for a genuinely
+    // machine-specific part that coincidentally shares a part_no/
+    // description with something unrelated, this fills an extra slot that
+    // the user can just correct inline, versus the previous guaranteed-blank.
+    const byPartNo = new Map<string, Set<number>>();
+    const byDescription = new Map<string, Set<number>>();
+    function record(map: Map<string, Set<number>>, key: string, slotId: number) {
       if (!key) return;
-      const existing = map.get(key);
-      if (existing === undefined) map.set(key, slotId);
-      else if (existing !== AMBIGUOUS && existing !== slotId) map.set(key, AMBIGUOUS);
+      let set = map.get(key);
+      if (!set) {
+        set = new Set();
+        map.set(key, set);
+      }
+      set.add(slotId);
     }
+    // Slots this machine already has a key_parts row for — from an earlier
+    // run of this same function, a manual edit, or lib/bom.ts's system-wide
+    // autoMatchKeyParts (which runs automatically after every machine's SAP
+    // Modules download, regardless of tool type, and can already have
+    // written rows here before this machine was ever added to this tool
+    // type's table). Seeds filledSlotIds below so this function never
+    // inserts a second row for a slot that's already filled — without
+    // this, re-adding a machine (or a slot this function's own multi-slot
+    // matching above newly reaches) could create duplicate key_parts rows
+    // for the same (machine, slot) pair.
+    const alreadyFilledSlotIds = new Set<number>();
     for (const row of existingRows ?? []) {
-      if (row.machine_name === machineName) continue;
+      if (row.machine_name === machineName) {
+        if (row.slot_id != null) alreadyFilledSlotIds.add(row.slot_id as number);
+        continue;
+      }
       record(byPartNo, row.part_no as string, row.slot_id as number);
       record(byDescription, normalizeDescription(row.description as string | null), row.slot_id as number);
     }
@@ -537,19 +570,21 @@ export default function FingerprintPage() {
     }
     allItems.push(...(await fetchFullBomItems(supabase, machineName)));
 
-    const filledSlotIds = new Set<number>();
+    const filledSlotIds = new Set<number>(alreadyFilledSlotIds);
     const toInsert: { part_no: string; custom_name: string; machine_name: string; slot_id: number }[] = [];
     for (const item of allItems) {
-      let slotId = byPartNo.get(item.part_no);
-      if (slotId === undefined || slotId === AMBIGUOUS) {
-        slotId = byDescription.get(normalizeDescription(item.description));
+      let slotIds = byPartNo.get(item.part_no);
+      if (!slotIds || slotIds.size === 0) {
+        slotIds = byDescription.get(normalizeDescription(item.description));
       }
-      if (slotId === undefined || slotId === AMBIGUOUS) continue;
-      if (filledSlotIds.has(slotId)) continue; // first BOM match wins per slot
-      const slot = slots.find((s) => s.id === slotId);
-      if (!slot) continue;
-      filledSlotIds.add(slotId);
-      toInsert.push({ part_no: item.part_no, custom_name: slot.custom_name, machine_name: machineName, slot_id: slotId });
+      if (!slotIds || slotIds.size === 0) continue;
+      for (const slotId of slotIds) {
+        if (filledSlotIds.has(slotId)) continue; // first BOM match wins per slot
+        const slot = slots.find((s) => s.id === slotId);
+        if (!slot) continue;
+        filledSlotIds.add(slotId);
+        toInsert.push({ part_no: item.part_no, custom_name: slot.custom_name, machine_name: machineName, slot_id: slotId });
+      }
     }
 
     if (toInsert.length === 0) return 0;
@@ -559,6 +594,7 @@ export default function FingerprintPage() {
   }
 
   async function addMachine() {
+    if (addingMachine) return;
     const name = addMachineValue.trim();
     if (!name) return;
     if (machines.includes(name)) {
@@ -567,6 +603,7 @@ export default function FingerprintPage() {
     }
 
     setAddMachineError(null);
+    setAddingMachine(true);
     try {
       const { error } = await getSupabase()
         .from("bom_machines")
@@ -587,6 +624,8 @@ export default function FingerprintPage() {
       loadToolTypes();
     } catch (err) {
       setAddMachineError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddingMachine(false);
     }
   }
 
@@ -1026,9 +1065,9 @@ export default function FingerprintPage() {
                       <option key={m} value={m} />
                     ))}
                 </datalist>
-                <Button size="sm" variant="outline" onClick={addMachine}>
-                  <Plus className="h-4 w-4" />
-                  Add Machine
+                <Button size="sm" variant="outline" disabled={addingMachine} onClick={addMachine}>
+                  {addingMachine ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {addingMachine ? "Adding…" : "Add Machine"}
                 </Button>
                 <Button size="sm" variant="outline" onClick={downloadTemplate}>
                   <Download className="h-4 w-4" />
