@@ -57,6 +57,15 @@ function createMainWindow() {
   ]);
   Menu.setApplicationMenu(menu);
 
+  // Without this, window.open() calls from the page (e.g. the KM Matrix
+  // link) fall through to Electron's default behavior — opening another
+  // Electron BrowserWindow instead of the user's actual default browser.
+  // Hand it off to the OS instead and don't open a window here at all.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+
   mainWindow.loadURL(LAMBOM_URL);
 
   mainWindow.on("closed", () => {
