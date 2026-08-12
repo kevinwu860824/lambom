@@ -416,6 +416,19 @@ function applyEnterAutoNumber(text: string, cursor: number): { text: string; cur
   return { text: newBefore + insertion + after, cursor: newBefore.length + insertion.length };
 }
 
+/** The single line the cursor is on (numbering included) — used to scope
+ * the similar-problem search to just the issue currently being typed,
+ * not the whole multi-line draft (which would otherwise search for e.g.
+ * "1. SPM\n2. leak" as one blob instead of just "leak"). */
+function currentLineText(text: string, cursor: number): string {
+  const before = text.slice(0, cursor);
+  const after = text.slice(cursor);
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const nextNewlineInAfter = after.indexOf("\n");
+  const lineEnd = cursor + (nextNewlineInAfter === -1 ? after.length : nextNewlineInAfter);
+  return text.slice(lineStart, lineEnd);
+}
+
 /** Problem Statement cell — same auto-grow/save-on-blur behavior as
  * EditableTextCell, plus a fuzzy-search-as-you-type suggestion list drawn
  * from every past occurrence of a similar problem. Picking one fills the
@@ -428,7 +441,6 @@ function ProblemStatementCell({
   toolId,
   onSave,
   onSearchSimilar,
-  onOpenHistory,
   remoteEditor,
   remoteDraftText,
   onFocusCell,
@@ -439,7 +451,6 @@ function ProblemStatementCell({
   toolId: string;
   onSave: (value: string) => Promise<void>;
   onSearchSimilar: (searchText: string, toolId: string) => Promise<SimilarProblem[]>;
-  onOpenHistory: (target: SimilarProblem) => void;
   remoteEditor?: RemoteEditor | null;
   remoteDraftText?: string;
   onFocusCell?: () => void;
@@ -497,7 +508,8 @@ function ProblemStatementCell({
     if (draft === lastPickedValueRef.current) {
       return;
     }
-    const trimmed = draft.trim();
+    const cursor = textareaRef.current?.selectionStart ?? draft.length;
+    const trimmed = currentLineText(draft, cursor).trim();
     if (trimmed.length < 2) {
       setSuggestions([]);
       setSuggestOpen(false);
@@ -547,13 +559,29 @@ function ProblemStatementCell({
     }
   }
 
+  // Replaces just the line the cursor is on (keeping any lines already
+  // composed above it, and an already-typed number prefix on that line)
+  // with the picked suggestion — not the whole draft. Multi-issue entries
+  // are composed one line at a time now (type/pick, Enter for the next
+  // auto-numbered line, type/pick again); replacing the entire field on
+  // every pick would wipe out every earlier line as soon as a later one
+  // was picked.
   async function pickSuggestion(s: SimilarProblem) {
     setSuggestOpen(false);
     setSuggestions([]);
-    lastPickedValueRef.current = s.problemStatement;
-    setDraft(s.problemStatement);
-    await commit(s.problemStatement);
-    onOpenHistory(s);
+    const el = textareaRef.current;
+    const cursor = el ? el.selectionStart : draft.length;
+    const before = draft.slice(0, cursor);
+    const after = draft.slice(cursor);
+    const lastNewline = before.lastIndexOf("\n");
+    const linePrefix = before.slice(0, lastNewline + 1);
+    const currentLineBeforeCursor = before.slice(lastNewline + 1);
+    const numberPrefix = currentLineBeforeCursor.match(LINE_NUMBER_PATTERN)?.[0] ?? "";
+    const newDraft = linePrefix + numberPrefix + s.problemStatement + after;
+
+    lastPickedValueRef.current = newDraft;
+    setDraft(newDraft);
+    await commit(newDraft);
   }
 
   return (
@@ -859,7 +887,6 @@ export function PassdownEntryRow({
           toolId={entry.toolId}
           onSave={(v) => onFieldSave("problemStatement", v)}
           onSearchSimilar={onSearchSimilarProblems}
-          onOpenHistory={openHistory}
           remoteEditor={remoteFocus.get(problemStatementCellKey)}
           remoteDraftText={remoteDrafts.get(problemStatementCellKey)}
           onFocusCell={() => onFocusCell(problemStatementCellKey)}
