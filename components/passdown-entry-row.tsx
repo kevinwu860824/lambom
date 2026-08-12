@@ -5,6 +5,7 @@ import { Clock, Copy, History, MessageSquarePlus, Pencil } from "lucide-react";
 import {
   SHIFT_LABELS,
   STATUS_LABELS,
+  STATUS_OPTIONS,
   type PassdownShift,
   type PassdownStatus,
   type PassdownUpdate,
@@ -26,10 +27,11 @@ const STATUS_BADGE_CLASS: Record<PassdownStatus, string> = {
   up: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   down: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
   monitor: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  t0: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  t1: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  t2: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
   other: "bg-secondary text-secondary-foreground",
 };
-
-const STATUS_OPTIONS: PassdownStatus[] = ["up", "down", "monitor", "other"];
 
 // Shared box treatment (border/radius/padding/shadow) so Problem Statement,
 // Activities & Planning, and Remark all read as the same kind of cell,

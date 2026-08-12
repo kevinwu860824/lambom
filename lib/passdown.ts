@@ -3,15 +3,23 @@ import { withRetry } from "@/lib/bom";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
-export type PassdownStatus = "up" | "down" | "monitor" | "other";
+export type PassdownStatus = "up" | "down" | "monitor" | "t0" | "t1" | "t2" | "other";
 export type PassdownShift = "day" | "night";
 
 export const STATUS_LABELS: Record<PassdownStatus, string> = {
   up: "Up",
   down: "Down",
   monitor: "Monitor",
+  t0: "T0",
+  t1: "T1",
+  t2: "T2",
   other: "Other",
 };
+
+/** Every status, in the order shown in Status pickers — up/down/monitor
+ * first (day-to-day production states), then the install stages, then the
+ * catch-all. */
+export const STATUS_OPTIONS: PassdownStatus[] = ["up", "down", "monitor", "t0", "t1", "t2", "other"];
 
 export const SHIFT_LABELS: Record<PassdownShift, string> = {
   day: "Day",

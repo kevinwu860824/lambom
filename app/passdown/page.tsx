@@ -17,6 +17,7 @@ import {
   fetchUpdatesForEntries,
   SHIFT_LABELS,
   STATUS_LABELS,
+  STATUS_OPTIONS,
   upsertEntry,
   type KnownMachine,
   type PassdownEntry,
@@ -278,7 +279,7 @@ function NewEntryDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(["up", "down", "monitor", "other"] as PassdownStatus[]).map((s) => (
+                    {STATUS_OPTIONS.map((s) => (
                       <SelectItem key={s} value={s}>
                         {STATUS_LABELS[s]}
                       </SelectItem>
