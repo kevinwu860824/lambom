@@ -207,6 +207,19 @@ def open_inventory_for_part(session, part_no):
         raise RuntimeError(f"Failed returning to Easy Access (/n): {e} {current_screen_info(session)}") from e
 
     try:
+        # From the first (pre-value-entry) recording, dropped by mistake in
+        # an earlier version of this script — Easy Access auto-hides its
+        # picture/favorites-tree area (the whole cntlIMAGE_CONTAINER
+        # control) and falls back to a plain text menu if the window is
+        # too narrow. A real test timed out waiting for that control to
+        # exist at all on a freshly-launched window, which this explains:
+        # without forcing the working pane wide enough, a fresh SAP Logon
+        # window may open too narrow for the picture layout to render.
+        session.findById("wnd[0]").resizeWorkingPane(142, 26, False)
+    except Exception as e:
+        raise RuntimeError(f"Failed resizing the working pane: {e} {current_screen_info(session)}") from e
+
+    try:
         log("Navigating to the stock overview screen...")
         tree = wait_for_element(session, "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell")
         tree.doubleClickNode("0000000125")
