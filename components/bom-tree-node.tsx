@@ -92,43 +92,48 @@ export function BomTreeNodeRow({
   const isActiveMatch = id === activeMatchId;
 
   return (
-    <div className="flex items-center">
-      <button
-        id={`bom-row-${id}`}
-        type="button"
-        className={cn(
-          "hover:bg-accent flex min-w-0 flex-1 items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-sm",
-          isActiveMatch && "ring-2 ring-orange-500"
-        )}
-        style={{ paddingLeft: `${node.item.level * 1.25 + 0.25}rem` }}
-        onClick={() => hasChildren && onToggle(id)}
-      >
-        {hasChildren ? (
-          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-90")} />
-        ) : (
-          <span className="w-3.5 shrink-0" />
-        )}
-        <span className="shrink-0 font-mono text-xs">
-          <HighlightedText text={node.item.part_no} normalizedQuery={normalizedQuery} />
-        </span>
-        <span className="text-muted-foreground truncate">
-          <HighlightedText text={node.item.description ?? ""} normalizedQuery={normalizedQuery} />
-        </span>
-        <span className="text-muted-foreground ml-auto shrink-0 pl-2 text-xs whitespace-nowrap">
-          {node.item.qty ?? "-"} {node.item.uom ?? ""}
-        </span>
-      </button>
-      {/* Sibling of the button above, not nested inside it — a real <button>
-       * can't contain another <button> (invalid HTML, breaks hydration). */}
-      <Button
-        variant="ghost"
-        size="xs"
-        className="text-muted-foreground mr-2 shrink-0"
-        onClick={() => openKmMatrix(node.item.part_no)}
-      >
-        <ExternalLink className="h-3 w-3" />
-        KM
-      </Button>
+    <div>
+      <div className="flex items-center">
+        <button
+          id={`bom-row-${id}`}
+          type="button"
+          className={cn(
+            "hover:bg-accent flex min-w-0 flex-1 items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-sm",
+            isActiveMatch && "ring-2 ring-orange-500"
+          )}
+          style={{ paddingLeft: `${node.item.level * 1.25 + 0.25}rem` }}
+          onClick={() => hasChildren && onToggle(id)}
+        >
+          {hasChildren ? (
+            <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-90")} />
+          ) : (
+            <span className="w-3.5 shrink-0" />
+          )}
+          <span className="shrink-0 font-mono text-xs">
+            <HighlightedText text={node.item.part_no} normalizedQuery={normalizedQuery} />
+          </span>
+          <span className="text-muted-foreground truncate">
+            <HighlightedText text={node.item.description ?? ""} normalizedQuery={normalizedQuery} />
+          </span>
+          <span className="text-muted-foreground ml-auto shrink-0 pl-2 text-xs whitespace-nowrap">
+            {node.item.qty ?? "-"} {node.item.uom ?? ""}
+          </span>
+        </button>
+        {/* Sibling of the button above, not nested inside it — a real
+         * <button> can't contain another <button> (invalid HTML, breaks
+         * hydration). Scoped to its own row here (not the outer div) so
+         * it lays out next to the row's own button without also pulling
+         * the children container below into the same flex row. */}
+        <Button
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground mr-2 shrink-0"
+          onClick={() => openKmMatrix(node.item.part_no)}
+        >
+          <ExternalLink className="h-3 w-3" />
+          KM
+        </Button>
+      </div>
       {expanded && hasChildren && (
         <div>
           {node.children.map((child) => (
