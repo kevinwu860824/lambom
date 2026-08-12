@@ -147,6 +147,18 @@ def ensure_sap_connected(max_wait_seconds=120):
 
 # ---------- Inventory lookup ----------
 
+def current_screen_info(session):
+    """Best-effort snapshot of what SAP is actually showing right now —
+    appended to error messages below so a "control not found" failure says
+    not just which step but what screen SAP was really on at that moment,
+    instead of leaving that to be guessed at from the raw COM exception
+    alone."""
+    try:
+        return f"(current transaction: {session.Info.Transaction!r}, window title: {session.findById('wnd[0]').text!r})"
+    except Exception:
+        return "(couldn't read current screen info either)"
+
+
 def open_inventory_for_part(session, part_no):
     """
     Navigates to the stock overview screen and queries one material number.
@@ -157,25 +169,45 @@ def open_inventory_for_part(session, part_no):
     SAP Easy Access initial screen, and without returning there first, a
     second lookup while SAP is still sitting on the previous query's result
     screen would fail to find the tree node at all.
+
+    Each step is wrapped separately so a failure's error message says
+    exactly which step it happened on and what SAP was actually showing at
+    the time — the raw COM "control could not be found by id" exception
+    alone doesn't say which findById call raised it.
     """
-    log("Returning to the SAP Easy Access screen...")
-    session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
-    session.findById("wnd[0]").sendVKey(0)
-    time.sleep(1)
+    try:
+        log("Returning to the SAP Easy Access screen...")
+        session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
+        session.findById("wnd[0]").sendVKey(0)
+        time.sleep(1)
+    except Exception as e:
+        raise RuntimeError(f"Failed returning to Easy Access (/n): {e} {current_screen_info(session)}") from e
 
-    log("Navigating to the stock overview screen...")
-    session.findById(
-        "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell"
-    ).doubleClickNode("0000000125")
-    time.sleep(1)
+    try:
+        log("Navigating to the stock overview screen...")
+        session.findById(
+            "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell"
+        ).doubleClickNode("0000000125")
+        time.sleep(1)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed navigating to the stock overview screen (double-click favorites node): {e} {current_screen_info(session)}"
+        ) from e
 
-    log(f"Entering material number {part_no}...")
-    session.findById("wnd[0]/usr/ctxtMS_MATNR-LOW").text = part_no
-    session.findById("wnd[0]").sendVKey(0)
-    time.sleep(1)
+    try:
+        log(f"Entering material number {part_no}...")
+        session.findById("wnd[0]/usr/ctxtMS_MATNR-LOW").text = part_no
+        session.findById("wnd[0]").sendVKey(0)
+        time.sleep(1)
+    except Exception as e:
+        raise RuntimeError(f"Failed entering the material number: {e} {current_screen_info(session)}") from e
 
-    log("Executing...")
-    session.findById("wnd[0]/tbar[1]/btn[8]").press()
+    try:
+        log("Executing...")
+        session.findById("wnd[0]/tbar[1]/btn[8]").press()
+    except Exception as e:
+        raise RuntimeError(f"Failed pressing Execute (F8): {e} {current_screen_info(session)}") from e
+
     log("Done.")
 
 
