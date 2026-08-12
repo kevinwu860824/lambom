@@ -155,3 +155,151 @@ create or replace function passdown_entries_by_normalized_problem(
     and passdown_normalize_problem(problem_statement) = passdown_normalize_problem(p_problem_statement)
   order by entry_date asc;
 $$;
+
+-- v4: switched from whole-entry-text matching to per-LINE matching/grouping.
+-- Real data showed many Problem Statement entries pack multiple distinct
+-- issues into one cell as a numbered list (e.g. "1. SPM\n2. P/V leak") —
+-- whole-text normalization (still stripped numbering, see v2) treated that
+-- combined pair as one single event, different from either "SPM" alone or
+-- "P/V leak" alone recorded on some other day. That meant the same
+-- underlying problem never got recognized as the same event just because
+-- of how it happened to be bundled with other issues that day —
+-- undercutting exactly the kind of per-problem frequency tracking this is
+-- meant to build toward eventually. Now problem_statement is exploded into
+-- one row per line (regexp_split_to_table) before normalizing/matching/
+-- grouping, so each numbered (or un-numbered) line is its own independent
+-- unit. The suggestion list and "上次怎麼處理" history dialog now show/
+-- match just the one matched line's text (numbering stripped, original
+-- casing kept) instead of the whole multi-issue original text.
+--
+-- passdown_normalize_problem (whole-text) and its GIN index are superseded
+-- and removed here — nothing else references them.
+drop index if exists passdown_entries_problem_norm_trgm_idx;
+drop function if exists passdown_normalize_problem(text);
+
+-- Strips a leading list-numbering prefix ("1.", "2)", "1-1.", "a.", "b)",
+-- "-"/"•" bullets) from ONE line, keeping original casing/spacing
+-- otherwise — used for DISPLAY (the suggestion list, history dialog
+-- header) so a picked line reads naturally rather than all-lowercase.
+create or replace function passdown_strip_line_prefix(line text) returns text
+language sql immutable as $$
+  select trim(
+    regexp_replace(
+      regexp_replace(
+        regexp_replace(
+          coalesce(line, ''),
+          '^[ \t]*\d+(-\d+)*[.):][ \t]*', ''
+        ),
+        '^[ \t]*[A-Za-z][.)][ \t]*', ''
+      ),
+      '^[ \t]*[-•][ \t]*', ''
+    )
+  );
+$$;
+
+-- Lowercased/whitespace-collapsed version of the above, for
+-- matching/grouping (case/spacing/trailing punctuation shouldn't split two
+-- lines that are otherwise the same event — "SPM" and "SPM." need to group
+-- together same as the old whole-text version did). Empty after stripping
+-- (a blank line, or a line that was pure numbering) normalizes to NULL so
+-- it's filtered out rather than counted as a phantom event.
+create or replace function passdown_normalize_problem_line(line text) returns text
+language sql immutable as $$
+  select nullif(
+    trim(
+      regexp_replace(
+        regexp_replace(lower(passdown_strip_line_prefix(line)), '[.:]?\s+', ' ', 'g'),
+        '[.:;,]+$', ''
+      )
+    ),
+    ''
+  );
+$$;
+
+-- No functional index here (unlike the old whole-text version) — a plain
+-- expression index is one row in, one value out, but exploding
+-- problem_statement into lines is one row in, many rows out, which a
+-- normal expression index can't represent. Already sequential-scanning
+-- passdown_entries per search even before this change (see the v3 note
+-- above on word_similarity()), so the added per-row unnest here doesn't
+-- newly regress anything at the table's current size.
+drop function if exists passdown_search_similar_problems(text, text, integer);
+
+create or replace function passdown_search_similar_problems(
+  search_text text,
+  p_tool_id text default null,
+  p_limit int default 6
+) returns table (
+  id bigint,
+  problem_statement text,
+  remark text,
+  occurrence_count int,
+  entry_date date,
+  tool_id text,
+  module text,
+  similarity real
+) language sql stable as $$
+  with lines as (
+    select
+      e.id,
+      e.remark,
+      e.entry_date,
+      e.tool_id,
+      e.module,
+      line as raw_line,
+      passdown_normalize_problem_line(line) as norm
+    from passdown_entries e,
+      lateral regexp_split_to_table(e.problem_statement, E'\r?\n') as line
+    where e.problem_statement is not null
+  ),
+  matched as (
+    select
+      lines.*,
+      word_similarity(passdown_normalize_problem_line(search_text), norm) as sim
+    from lines
+    where norm is not null
+      and (
+        word_similarity(passdown_normalize_problem_line(search_text), norm) >= 0.4
+        or norm ilike ('%' || passdown_normalize_problem_line(search_text) || '%')
+      )
+  ),
+  ranked as (
+    select
+      matched.*,
+      row_number() over (
+        partition by norm
+        order by (tool_id = p_tool_id) desc, entry_date desc
+      ) as rn,
+      count(*) over (partition by norm) as cnt
+    from matched
+  )
+  select id, passdown_strip_line_prefix(raw_line) as problem_statement, remark, cnt::int as occurrence_count, entry_date, tool_id, module, sim as similarity
+  from ranked
+  where rn = 1
+  order by (tool_id = p_tool_id) desc, similarity desc, entry_date desc
+  limit p_limit;
+$$;
+
+-- Same per-line explosion as above — p_problem_statement is now expected
+-- to be a single line's text, exactly what passdown_search_similar_problems
+-- returns as problem_statement above (which is what every caller already
+-- passes straight through, see lib/passdown.ts's fetchProblemHistory).
+drop function if exists passdown_entries_by_normalized_problem(text, text, text);
+
+create or replace function passdown_entries_by_normalized_problem(
+  p_tool_id text,
+  p_module text,
+  p_problem_statement text
+) returns table (
+  id bigint,
+  entry_date date,
+  remark text
+) language sql stable as $$
+  select distinct e.id, e.entry_date, e.remark
+  from passdown_entries e,
+    lateral regexp_split_to_table(e.problem_statement, E'\r?\n') as line
+  where e.tool_id = p_tool_id
+    and e.module = p_module
+    and passdown_normalize_problem_line(line) = passdown_normalize_problem_line(p_problem_statement)
+  order by e.entry_date asc;
+$$;
