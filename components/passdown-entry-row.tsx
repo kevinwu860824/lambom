@@ -369,6 +369,53 @@ function SimilarProblemsButton({
   );
 }
 
+const LINE_NUMBER_PATTERN = /^\s*(\d+)[.)]\s*/;
+
+/**
+ * Pressing Enter in the Problem Statement box auto-numbers, so multi-issue
+ * entries end up in the "1. .../2. ..." format the per-line similar-problem
+ * matching (passdown_search_similar_problems) relies on, instead of relying
+ * on everyone remembering to type numbering by hand themselves. If nothing
+ * before the cursor is numbered yet, this retroactively numbers every
+ * existing non-blank line from 1 before inserting the next number —
+ * otherwise it just continues from the highest number already used.
+ * Deliberately does NOT renumber anything after the cursor or react to
+ * edits/deletions elsewhere in the text — only Enter triggers it, kept
+ * simple on purpose.
+ */
+function applyEnterAutoNumber(text: string, cursor: number): { text: string; cursor: number } {
+  const before = text.slice(0, cursor);
+  const after = text.slice(cursor);
+  const beforeLines = before.split("\n");
+
+  const hasContent = beforeLines.some((line) => line.trim() !== "");
+  const allNumbered = beforeLines.every((line) => LINE_NUMBER_PATTERN.test(line) || line.trim() === "");
+
+  let newBefore: string;
+  let nextNumber: number;
+  if (hasContent && allNumbered) {
+    const numbers = beforeLines.map((line) => {
+      const m = line.match(LINE_NUMBER_PATTERN);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    nextNumber = Math.max(...numbers) + 1;
+    newBefore = before;
+  } else {
+    let n = 1;
+    newBefore = beforeLines
+      .map((line) => {
+        if (line.trim() === "") return line;
+        const stripped = line.replace(LINE_NUMBER_PATTERN, "");
+        return `${n++}. ${stripped}`;
+      })
+      .join("\n");
+    nextNumber = n;
+  }
+
+  const insertion = newBefore.length > 0 ? `\n${nextNumber}. ` : `${nextNumber}. `;
+  return { text: newBefore + insertion + after, cursor: newBefore.length + insertion.length };
+}
+
 /** Problem Statement cell — same auto-grow/save-on-blur behavior as
  * EditableTextCell, plus a fuzzy-search-as-you-type suggestion list drawn
  * from every past occurrence of a similar problem. Picking one fills the
@@ -403,6 +450,11 @@ function ProblemStatementCell({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Set by the Enter-to-auto-number handler right before setDraft — consumed
+  // by the height-resize effect below once the DOM has the new value, since
+  // setting selectionStart/End before then would just get overwritten by
+  // the controlled <textarea> re-rendering with the old value.
+  const pendingCursorRef = useRef<number | null>(null);
 
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<SimilarProblem[]>([]);
@@ -434,6 +486,10 @@ function ProblemStatementCell({
     if (!el) return;
     el.style.minHeight = "0px";
     el.style.minHeight = `${el.scrollHeight}px`;
+    if (pendingCursorRef.current !== null) {
+      el.selectionStart = el.selectionEnd = pendingCursorRef.current;
+      pendingCursorRef.current = null;
+    }
   }, [draft]);
 
   useEffect(() => {
@@ -523,6 +579,12 @@ function ProblemStatementCell({
                 setDraft(value);
                 setSuggestOpen(false);
                 e.currentTarget.blur();
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const { text, cursor } = applyEnterAutoNumber(draft, e.currentTarget.selectionStart);
+                pendingCursorRef.current = cursor;
+                setDraft(text);
+                onDraftChange?.(text);
               }
             }}
             rows={1}
