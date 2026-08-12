@@ -159,6 +159,30 @@ def current_screen_info(session):
         return "(couldn't read current screen info either)"
 
 
+def wait_for_element(session, element_id, timeout=15, interval=0.5):
+    """
+    Polls findById until the element becomes available, instead of a fixed
+    sleep. A real test showed a fixed sleep after a screen transition is
+    just a guess that can be wrong: the failure happened on a *freshly
+    logged-in* session (relaunched seconds earlier after the previous SAP
+    process couldn't be attached to) — the Easy Access screen was already
+    showing (transaction S000) but its favorites tree apparently wasn't
+    fully populated yet, and a warm/already-open session likely settles
+    faster than a fresh login does, so no single fixed delay covers both.
+    SAP GUI Scripting has no built-in "wait until ready" call, so this
+    substitutes a short retry loop.
+    """
+    deadline = time.time() + timeout
+    last_error = None
+    while time.time() < deadline:
+        try:
+            return session.findById(element_id)
+        except Exception as e:
+            last_error = e
+            time.sleep(interval)
+    raise RuntimeError(f"Timed out after {timeout}s waiting for {element_id!r}: {last_error}")
+
+
 def open_inventory_for_part(session, part_no):
     """
     Navigates to the stock overview screen and queries one material number.
@@ -179,20 +203,13 @@ def open_inventory_for_part(session, part_no):
         log("Returning to the SAP Easy Access screen...")
         session.findById("wnd[0]/tbar[0]/okcd").text = "/n"
         session.findById("wnd[0]").sendVKey(0)
-        # Even when already sitting on Easy Access, "/n" can trigger a brief
-        # screen refresh — the favorites tree control needs a moment to
-        # rebuild before it's reliably findable again. 1s wasn't enough in
-        # a real test (failed here, on an already-Easy-Access session).
-        time.sleep(2.5)
     except Exception as e:
         raise RuntimeError(f"Failed returning to Easy Access (/n): {e} {current_screen_info(session)}") from e
 
     try:
         log("Navigating to the stock overview screen...")
-        session.findById(
-            "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell"
-        ).doubleClickNode("0000000125")
-        time.sleep(1.5)
+        tree = wait_for_element(session, "wnd[0]/usr/cntlIMAGE_CONTAINER/shellcont/shell/shellcont[0]/shell")
+        tree.doubleClickNode("0000000125")
     except Exception as e:
         raise RuntimeError(
             f"Failed navigating to the stock overview screen (double-click favorites node): {e} {current_screen_info(session)}"
@@ -200,9 +217,9 @@ def open_inventory_for_part(session, part_no):
 
     try:
         log(f"Entering material number {part_no}...")
-        session.findById("wnd[0]/usr/ctxtMS_MATNR-LOW").text = part_no
+        field = wait_for_element(session, "wnd[0]/usr/ctxtMS_MATNR-LOW")
+        field.text = part_no
         session.findById("wnd[0]").sendVKey(0)
-        time.sleep(1)
     except Exception as e:
         raise RuntimeError(f"Failed entering the material number: {e} {current_screen_info(session)}") from e
 
