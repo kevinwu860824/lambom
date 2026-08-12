@@ -221,9 +221,27 @@ def open_inventory_for_part(session, part_no):
         log(f"Entering material number {part_no}...")
         field = wait_for_element(session, "wnd[0]/usr/ctxtMS_MATNR-LOW")
         field.text = part_no
-        session.findById("wnd[0]").sendVKey(0)
     except Exception as e:
         raise RuntimeError(f"Failed entering the material number: {e} {current_screen_info(session)}") from e
+
+    try:
+        # Plant otherwise defaults to whatever SAP remembers from the
+        # user's last manual MMBE run (e.g. "1000") — filled with "*" here
+        # so every lookup covers all plants regardless of that history.
+        # ID is a guess based on the Material field's real ID
+        # (ctxtMS_MATNR-LOW) following the same MS_<FIELD>-LOW pattern —
+        # the field's real ABAP name (confirmed via F1 -> Technical
+        # Information) is WERKS, not independently confirmed as
+        # MS_WERKS-LOW. If this raises, the error names this exact ID.
+        log("Setting Plant to * (all plants)...")
+        session.findById("wnd[0]/usr/ctxtMS_WERKS-LOW").text = "*"
+    except Exception as e:
+        raise RuntimeError(f"Failed setting Plant to *: {e} {current_screen_info(session)}") from e
+
+    try:
+        session.findById("wnd[0]").sendVKey(0)
+    except Exception as e:
+        raise RuntimeError(f"Failed confirming the selection screen (Enter): {e} {current_screen_info(session)}") from e
 
     try:
         log("Executing...")
