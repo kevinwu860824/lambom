@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Download, Home as HomeIcon, Settings } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, Home as HomeIcon, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { openKmMatrix } from "@/lib/km-matrix";
 import {
   aggregateByPartNo,
   buildKeyPartDisplayRows,
@@ -911,7 +912,23 @@ function PartTable({
                     renameText && "text-red-600 dark:text-red-400"
                   )}
                 >
-                  <TableCell>{item.part_no}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <span>{item.part_no}</span>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="text-muted-foreground shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openKmMatrix(item.part_no);
+                        }}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        KM
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell>{item.description}</TableCell>
                   <TableCell>{item.qty ?? "-"}</TableCell>
                   <TableCell>{item.uom ?? ""}</TableCell>

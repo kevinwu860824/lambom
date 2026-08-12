@@ -1,8 +1,10 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openKmMatrix } from "@/lib/km-matrix";
 import type { BomTreeNode } from "@/lib/bom";
+import { Button } from "@/components/ui/button";
 
 export function normalizeSearchText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "");
@@ -90,12 +92,12 @@ export function BomTreeNodeRow({
   const isActiveMatch = id === activeMatchId;
 
   return (
-    <div>
+    <div className="flex items-center">
       <button
         id={`bom-row-${id}`}
         type="button"
         className={cn(
-          "hover:bg-accent flex w-full items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-sm",
+          "hover:bg-accent flex min-w-0 flex-1 items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-sm",
           isActiveMatch && "ring-2 ring-orange-500"
         )}
         style={{ paddingLeft: `${node.item.level * 1.25 + 0.25}rem` }}
@@ -116,6 +118,17 @@ export function BomTreeNodeRow({
           {node.item.qty ?? "-"} {node.item.uom ?? ""}
         </span>
       </button>
+      {/* Sibling of the button above, not nested inside it — a real <button>
+       * can't contain another <button> (invalid HTML, breaks hydration). */}
+      <Button
+        variant="ghost"
+        size="xs"
+        className="text-muted-foreground mr-2 shrink-0"
+        onClick={() => openKmMatrix(node.item.part_no)}
+      >
+        <ExternalLink className="h-3 w-3" />
+        KM
+      </Button>
       {expanded && hasChildren && (
         <div>
           {node.children.map((child) => (
