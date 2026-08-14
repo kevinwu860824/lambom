@@ -994,10 +994,9 @@ export default function FingerprintPage() {
               View/edit each machine&apos;s key part numbers by tool type — reads and writes directly to key_parts.
             </p>
           </div>
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
             <Link href="/lambom">
               <ArrowLeft className="h-4 w-4" />
-              Back to Comparison Tool
             </Link>
           </Button>
         </div>
@@ -1162,8 +1161,8 @@ export default function FingerprintPage() {
                 <Table containerClassName="max-h-[70vh] overflow-y-auto">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="bg-card sticky top-0 left-0 z-20 w-10" />
-                      <TableHead className="bg-card sticky top-0 left-10 z-20 min-w-[180px]">Slot</TableHead>
+                      <TableHead className="bg-card sticky top-0 z-10 w-10" />
+                      <TableHead className="bg-card sticky top-0 left-0 z-20 min-w-[180px]">Slot</TableHead>
                       {machines.map((m) => (
                         <TableHead key={m} className="bg-card sticky top-0 z-10 min-w-[160px]">
                           <div className="flex items-center justify-between gap-1">
@@ -1192,11 +1191,19 @@ export default function FingerprintPage() {
                     {groups.map((group) =>
                       group.rows.map((slot, i) => (
                         <TableRow key={slot.id}>
+                          {/* Deliberately not sticky, unlike the Slot column
+                           * below — this cell has rowSpan, and
+                           * position:sticky on a row-spanning <td> doesn't
+                           * reliably clip/stack against sibling cells across
+                           * every row it spans (confirmed: caused other
+                           * columns' scrolled-away content to bleed through
+                           * visually). Only Slot needs to stay fixed while
+                           * scrolling per the actual request. */}
                           {i === 0 && (
                             <TableCell
                               rowSpan={group.rows.length}
                               className={cn(
-                                "sticky left-0 z-10 w-10 p-1 text-center align-middle",
+                                "w-10 p-1 text-center align-middle",
                                 !group.color && categoryColor(group.category)
                               )}
                               style={group.color ? { backgroundColor: group.color } : undefined}
@@ -1229,7 +1236,7 @@ export default function FingerprintPage() {
                               </div>
                             </TableCell>
                           )}
-                          <TableCell className="bg-card sticky left-10 z-10 font-medium whitespace-normal">
+                          <TableCell className="bg-card sticky left-0 z-10 font-medium whitespace-normal">
                             <div className="flex items-center gap-1">
                               <div className="min-w-0 flex-1">
                                 {editMode ? (
