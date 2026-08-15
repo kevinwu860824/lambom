@@ -1161,8 +1161,8 @@ export default function FingerprintPage() {
                 <Table containerClassName="max-h-[70vh] overflow-y-auto">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="bg-card sticky top-0 z-10 w-10" />
-                      <TableHead className="bg-card sticky top-0 left-0 z-20 min-w-[180px]">Slot</TableHead>
+                      <TableHead className="bg-card sticky top-0 left-0 z-20 w-10 min-w-[40px] max-w-[40px]" />
+                      <TableHead className="bg-card sticky top-0 left-10 z-20 min-w-[180px]">Slot</TableHead>
                       {machines.map((m) => (
                         <TableHead key={m} className="bg-card sticky top-0 z-10 min-w-[160px]">
                           <div className="flex items-center justify-between gap-1">
@@ -1191,28 +1191,29 @@ export default function FingerprintPage() {
                     {groups.map((group) =>
                       group.rows.map((slot, i) => (
                         <TableRow key={slot.id}>
-                          {/* Deliberately not sticky, unlike the Slot column
-                           * below — this cell has rowSpan, and
+                          {/* Repeated on every row (not rowSpan) so it can be
+                           * sticky like the Slot column next to it —
                            * position:sticky on a row-spanning <td> doesn't
                            * reliably clip/stack against sibling cells across
                            * every row it spans (confirmed: caused other
                            * columns' scrolled-away content to bleed through
-                           * visually). Only Slot needs to stay fixed while
-                           * scrolling per the actual request. */}
-                          {i === 0 && (
-                            <TableCell
-                              rowSpan={group.rows.length}
-                              className={cn(
-                                "w-10 p-1 text-center align-middle",
-                                !group.color && categoryColor(group.category)
-                              )}
-                              style={group.color ? { backgroundColor: group.color } : undefined}
-                            >
-                              {/* Category cell backgrounds are always a light
-                               * pastel shade regardless of light/dark mode, so
-                               * the text/icon color is pinned to black here —
-                               * dark mode's default light text was unreadable
-                               * against them. */}
+                           * visually when this used rowSpan). Only the first
+                           * row of each category shows the label/edit
+                           * button; the rest just carry the same color
+                           * along, reading as one continuous block. */}
+                          <TableCell
+                            className={cn(
+                              "sticky left-0 z-20 isolate w-10 min-w-[40px] max-w-[40px] p-1 text-center align-middle",
+                              !group.color && categoryColor(group.category)
+                            )}
+                            style={group.color ? { backgroundColor: group.color } : undefined}
+                          >
+                            {i === 0 && (
+                              // Category cell backgrounds are always a light
+                              // pastel shade regardless of light/dark mode,
+                              // so the text/icon color is pinned to black
+                              // here — dark mode's default light text was
+                              // unreadable against them.
                               <div className="flex flex-col items-center gap-1 text-black">
                                 {editMode && (
                                   <CategoryEditPopover
@@ -1234,9 +1235,9 @@ export default function FingerprintPage() {
                                   {group.category}
                                 </span>
                               </div>
-                            </TableCell>
-                          )}
-                          <TableCell className="bg-card sticky left-0 z-10 font-medium whitespace-normal">
+                            )}
+                          </TableCell>
+                          <TableCell className="bg-card sticky left-10 z-20 isolate font-medium whitespace-normal">
                             <div className="flex items-center gap-1">
                               <div className="min-w-0 flex-1">
                                 {editMode ? (
