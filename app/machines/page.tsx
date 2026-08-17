@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
 import { fetchFidsByMachine, fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
@@ -248,9 +248,11 @@ export default function MachinesPage() {
             >
               {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
             </Button>
-            <Link href="/lambom" className="text-sm underline underline-offset-4">
-              Back to Comparison Tool
-            </Link>
+            <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
+              <Link href="/lambom">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
           </div>
         </div>
 

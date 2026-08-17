@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Check, X as XIcon } from "lucide-react";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+const zh: Record<string, string> = {
+  Saved: "已儲存",
+};
 
 export function EditableField({
   value,
@@ -16,6 +21,7 @@ export function EditableField({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const t = useTranslate(zh);
 
   useEffect(() => {
     setDraft(value);
@@ -65,7 +71,7 @@ export function EditableField({
             <XIcon className="h-4 w-4" />
           </Button>
         )}
-        {saved && <span className="text-xs text-emerald-600">Saved</span>}
+        {saved && <span className="text-xs text-emerald-600">{t("Saved")}</span>}
       </div>
       {error && <p className="text-destructive mt-1 text-xs">{error}</p>}
     </div>
