@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { fetchZbomMachineNames, fetchZbomSectionNames, fetchZbomSectionOptions, type ZbomOption } from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RequireGroupPrompt } from "@/components/require-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -118,9 +119,11 @@ export default function ZbomPage() {
               View a machine&apos;s stored SAP Variant Configuration options.
             </p>
           </div>
-          <Link href="/lambom" className="text-sm underline underline-offset-4">
-            Back to Comparison Tool
-          </Link>
+          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
+            <Link href="/lambom">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}

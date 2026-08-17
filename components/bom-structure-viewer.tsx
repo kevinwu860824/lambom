@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
@@ -333,9 +333,11 @@ export function BomStructureViewer({
             <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
             <p className="text-muted-foreground mt-1 text-sm">{description}</p>
           </div>
-          <Link href="/lambom" className="text-sm underline underline-offset-4">
-            Back to Comparison Tool
-          </Link>
+          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
+            <Link href="/lambom">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
