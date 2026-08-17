@@ -19,8 +19,10 @@ import {
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { useEmployeeGroup } from "@/lib/groups";
+import { useTranslate } from "@/lib/i18n";
 import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
 import { RequireGroupPrompt } from "@/components/require-group";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -107,6 +109,69 @@ function cellKey(slotId: number, machineName: string): string {
   return `${slotId}::${machineName}`;
 }
 
+const zh: Record<string, string> = {
+  "Back to Comparison Tool": "返回比對工具",
+  "Key Parts Fingerprint": "關鍵零件指紋",
+  "View/edit each machine's key part numbers by tool type — reads and writes directly to key_parts.":
+    "依刀具類型檢視/編輯各機台的關鍵零件料號 — 直接讀寫 key_parts。",
+  "Select Tool Type": "選擇刀具類型",
+  "Tool Type": "刀具類型",
+  "Select tool type": "選擇刀具類型",
+  "Or add a new tool type": "或新增刀具類型",
+  "e.g. Core-Buffing OX": "例如：Core-Buffing OX",
+  Add: "新增",
+  "Select or add a tool type first.": "請先選擇或新增刀具類型。",
+  "Add a machine column (e.g. ACOXN1)": "新增機台欄位（例如：ACOXN1）",
+  "Adding…": "新增中…",
+  "Add Machine": "新增機台",
+  "Download Template": "下載範本",
+  "Uploading…": "上傳中…",
+  "Upload Template": "上傳範本",
+  Done: "完成",
+  "Edit Table": "編輯表格",
+  "Template upload failed:": "範本上傳失敗：",
+  Category: "分類",
+  "e.g. Front End": "例如：Front End",
+  "Slot Name": "插槽名稱",
+  "e.g. PodLoader#1": "例如：PodLoader#1",
+  Color: "顏色",
+  "Add Row": "新增列",
+  "Color only applies to a brand-new category; if the category already exists, its existing color is kept (you can change it via the category color swatch in the table below).":
+    "顏色只套用於全新分類；若分類已存在，會保留其原有顏色（可透過下方表格中的分類顏色色塊變更）。",
+  "Loading…": "載入中…",
+  "This tool type has no rows yet — add one above.": "此刀具類型尚無資料列 — 請於上方新增。",
+  Slot: "插槽",
+  "No machines yet — add one above": "尚無機台 — 請於上方新增",
+  "Remove machine {machine}": "移除機台 {machine}",
+  "Delete this row": "刪除此列",
+  "Edit category \"{category}\"": "編輯分類「{category}」",
+  "Some part numbers weren't found": "部分料號未找到",
+  "{notFoundCount} part number(s) in this file don't appear in the target machine's Full BOM or Modules data at all — possibly a typo. {foundCount} other cell(s) were verified fine and aren't affected by this choice.":
+    "此檔案中有 {notFoundCount} 筆料號完全不存在於目標機台的完整 BOM 或模組資料中 — 可能是打字錯誤。另外 {foundCount} 筆已驗證無誤，不受此選擇影響。",
+  Machine: "機台",
+  "Part No.": "料號",
+  "Cancel Upload": "取消上傳",
+  "Working…": "處理中…",
+  "Skip These, Add the Rest": "略過這些，新增其餘",
+  "Add All Anyway": "仍要全部新增",
+  "Both category and slot name are required": "分類和插槽名稱皆為必填",
+  "There's already a slot with this name under this category": "此分類下已有相同名稱的插槽",
+  "This machine is already in this tool type": "此機台已經在這個刀具類型中",
+  "Delete the row \"{name}\"? (Already-filled part numbers won't be deleted)":
+    "刪除列「{name}」？（已填寫的料號不會被刪除）",
+  "Remove \"{name}\" from this tool type's table? (The machine itself and its uploaded BOM won't be deleted)":
+    "從此刀具類型的表格中移除「{name}」？（機台本身及其已上傳的 BOM 不會被刪除）",
+  "\"{value}\" wasn't found in {machine}'s Full BOM or Modules data — it may be a typo. Save it anyway?":
+    "在 {machine} 的完整 BOM 或模組資料中找不到「{value}」— 可能是打字錯誤。仍要儲存嗎？",
+  "This file has no data rows besides the header": "此檔案除了標題列外沒有資料列",
+  "Required columns not found (\"Category\" / \"Slot Name\") — check the file format":
+    "找不到必要欄位（\"Category\" / \"Slot Name\"）— 請檢查檔案格式",
+  "No matching machine columns found — column headers must exactly match an existing machine name":
+    "找不到符合的機台欄位 — 欄位名稱必須與現有機台名稱完全一致",
+  "Failed to add machine(s) to this tool type:": "新增機台至此刀具類型失敗：",
+  "Failed to create row \"{row}\":": "建立列「{row}」失敗：",
+};
+
 export default function FingerprintPage() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
@@ -178,6 +243,7 @@ export default function FingerprintPage() {
   }
 
   const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const t = useTranslate(zh);
 
   const [toolTypes, setToolTypes] = useState<string[]>([]);
   const [selectedToolType, setSelectedToolType] = useState("");
@@ -369,7 +435,7 @@ export default function FingerprintPage() {
         (s) => s.id !== slot.id && s.category === slot.category && s.custom_name === newCustomName
       )
     ) {
-      throw new Error("There's already a slot with this name under this category");
+      throw new Error(t("There's already a slot with this name under this category"));
     }
 
     const supabase = getSupabase();
@@ -430,11 +496,11 @@ export default function FingerprintPage() {
     const category = newRowCategory.trim();
     const customName = newRowName.trim();
     if (!category || !customName) {
-      setAddRowError("Both category and slot name are required");
+      setAddRowError(t("Both category and slot name are required"));
       return;
     }
     if (slots.some((s) => s.category === category && s.custom_name === customName)) {
-      setAddRowError("There's already a slot with this name under this category");
+      setAddRowError(t("There's already a slot with this name under this category"));
       return;
     }
 
@@ -468,7 +534,12 @@ export default function FingerprintPage() {
 
   async function deleteSlot(slot: KeyPartSlot) {
     if (
-      !window.confirm(`Delete the row "${slot.custom_name}"? (Already-filled part numbers won't be deleted)`)
+      !window.confirm(
+        t("Delete the row \"{name}\"? (Already-filled part numbers won't be deleted)").replace(
+          "{name}",
+          slot.custom_name
+        )
+      )
     )
       return;
 
@@ -598,7 +669,7 @@ export default function FingerprintPage() {
     const name = addMachineValue.trim();
     if (!name) return;
     if (machines.includes(name)) {
-      setAddMachineError("This machine is already in this tool type");
+      setAddMachineError(t("This machine is already in this tool type"));
       return;
     }
 
@@ -632,7 +703,9 @@ export default function FingerprintPage() {
   async function removeMachine(name: string) {
     if (
       !window.confirm(
-        `Remove "${name}" from this tool type's table? (The machine itself and its uploaded BOM won't be deleted)`
+        t(
+          "Remove \"{name}\" from this tool type's table? (The machine itself and its uploaded BOM won't be deleted)"
+        ).replace("{name}", name)
       )
     )
       return;
@@ -679,8 +752,15 @@ export default function FingerprintPage() {
       foundInModules = moduleSources && moduleSources.length > 0 ? moduleSources : null;
       if (!inFullBom && !foundInModules) {
         const proceed = window.confirm(
-          `"${newValue}" wasn't found in ${machineName}'s Full BOM or Modules data — it may be a typo. Save it anyway?`
+          t(
+            "\"{value}\" wasn't found in {machine}'s Full BOM or Modules data — it may be a typo. Save it anyway?"
+          )
+            .replace("{value}", newValue)
+            .replace("{machine}", machineName)
         );
+        // Kept in English regardless of locale — the catch block below
+        // matches this exact prefix via startsWith("Cancelled") to
+        // distinguish a user's decline from an unrelated lookup failure.
         if (!proceed) throw new Error("Cancelled — not found in Full BOM or Modules");
       }
     } catch (err) {
@@ -837,13 +917,13 @@ export default function FingerprintPage() {
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
-      if (rows.length < 2) throw new Error("This file has no data rows besides the header");
+      if (rows.length < 2) throw new Error(t("This file has no data rows besides the header"));
 
       const header = rows[0].map((h) => (h ?? "").toString().trim());
       const categoryIdx = header.findIndex((h) => h.toLowerCase() === "category");
       const slotNameIdx = header.findIndex((h) => h.toLowerCase() === "slot name");
       if (categoryIdx === -1 || slotNameIdx === -1) {
-        throw new Error('Required columns not found ("Category" / "Slot Name") — check the file format');
+        throw new Error(t("Required columns not found (\"Category\" / \"Slot Name\") — check the file format"));
       }
 
       const machineCols = header
@@ -851,7 +931,7 @@ export default function FingerprintPage() {
         .filter(({ h, idx }) => idx !== categoryIdx && idx !== slotNameIdx && allMachineNames.includes(h));
       if (machineCols.length === 0) {
         throw new Error(
-          "No matching machine columns found — column headers must exactly match an existing machine name"
+          t("No matching machine columns found — column headers must exactly match an existing machine name")
         );
       }
 
@@ -867,7 +947,8 @@ export default function FingerprintPage() {
           .from("bom_machines")
           .update({ tool_type: selectedToolType })
           .in("machine_name", newMachineNames);
-        if (addMachinesErr) throw new Error(`Failed to add machine(s) to this tool type: ${addMachinesErr.message}`);
+        if (addMachinesErr)
+          throw new Error(`${t("Failed to add machine(s) to this tool type:")} ${addMachinesErr.message}`);
       }
 
       // Pass 1: ensure every (category, slot name) row exists, creating any that don't (same as "Add Row").
@@ -894,7 +975,10 @@ export default function FingerprintPage() {
           })
           .select("id,tool_type,category,custom_name,sort_order,color")
           .single();
-        if (error) throw new Error(`Failed to create row "${category} / ${customName}": ${error.message}`);
+        if (error)
+          throw new Error(
+            `${t("Failed to create row \"{row}\":").replace("{row}", `${category} / ${customName}`)} ${error.message}`
+          );
         nextSortOrder += 10;
         slotByKey.set(key, data as KeyPartSlot);
       }
@@ -989,28 +1073,31 @@ export default function FingerprintPage() {
       <div className="mx-auto max-w-[1800px] px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Key Parts Fingerprint</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("Key Parts Fingerprint")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              View/edit each machine&apos;s key part numbers by tool type — reads and writes directly to key_parts.
+              {t("View/edit each machine's key part numbers by tool type — reads and writes directly to key_parts.")}
             </p>
           </div>
-          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
-            <Link href="/lambom">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher />
+            <Button variant="outline" size="icon" asChild aria-label={t("Back to Comparison Tool")}>
+              <Link href="/lambom">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
         </div>
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Select Tool Type</CardTitle>
+            <CardTitle>{t("Select Tool Type")}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-3">
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">Tool Type</label>
+              <label className="text-sm font-medium">{t("Tool Type")}</label>
               <Select value={selectedToolType} onValueChange={setSelectedToolType}>
                 <SelectTrigger className="w-56">
-                  <SelectValue placeholder="Select tool type" />
+                  <SelectValue placeholder={t("Select tool type")} />
                 </SelectTrigger>
                 <SelectContent>
                   {toolTypes.map((t) => (
@@ -1022,19 +1109,19 @@ export default function FingerprintPage() {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">Or add a new tool type</label>
+              <label className="text-sm font-medium">{t("Or add a new tool type")}</label>
               <div className="flex gap-2">
                 <Input
                   value={newToolType}
                   onChange={(e) => setNewToolType(e.target.value)}
-                  placeholder="e.g. Core-Buffing OX"
+                  placeholder={t("e.g. Core-Buffing OX")}
                   className="w-56"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateToolType();
                   }}
                 />
                 <Button variant="outline" onClick={handleCreateToolType}>
-                  Add
+                  {t("Add")}
                 </Button>
               </div>
             </div>
@@ -1044,7 +1131,7 @@ export default function FingerprintPage() {
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
         {!selectedToolType ? (
-          <p className="text-muted-foreground text-sm italic">Select or add a tool type first.</p>
+          <p className="text-muted-foreground text-sm italic">{t("Select or add a tool type first.")}</p>
         ) : (
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
@@ -1054,7 +1141,7 @@ export default function FingerprintPage() {
                   list="fingerprint-all-machines"
                   value={addMachineValue}
                   onChange={(e) => setAddMachineValue(e.target.value)}
-                  placeholder="Add a machine column (e.g. ACOXN1)"
+                  placeholder={t("Add a machine column (e.g. ACOXN1)")}
                   className="w-52"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") addMachine();
@@ -1069,11 +1156,11 @@ export default function FingerprintPage() {
                 </datalist>
                 <Button size="sm" variant="outline" disabled={addingMachine} onClick={addMachine}>
                   {addingMachine ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  {addingMachine ? "Adding…" : "Add Machine"}
+                  {addingMachine ? t("Adding…") : t("Add Machine")}
                 </Button>
                 <Button size="sm" variant="outline" onClick={downloadTemplate}>
                   <Download className="h-4 w-4" />
-                  Download Template
+                  {t("Download Template")}
                 </Button>
                 <Button
                   size="sm"
@@ -1082,7 +1169,7 @@ export default function FingerprintPage() {
                   onClick={() => templateFileInputRef.current?.click()}
                 >
                   <Upload className="h-4 w-4" />
-                  {uploading ? "Uploading…" : "Upload Template"}
+                  {uploading ? t("Uploading…") : t("Upload Template")}
                 </Button>
                 <input
                   ref={templateFileInputRef}
@@ -1097,22 +1184,26 @@ export default function FingerprintPage() {
                 />
                 <Button size="sm" variant="outline" onClick={() => setEditMode((v) => !v)}>
                   {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
-                  {editMode ? "Done" : "Edit Table"}
+                  {editMode ? t("Done") : t("Edit Table")}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               {addMachineError && <p className="text-destructive mb-3 text-sm">{addMachineError}</p>}
-              {uploadError && <p className="text-destructive mb-3 text-sm">Template upload failed: {uploadError}</p>}
+              {uploadError && (
+                <p className="text-destructive mb-3 text-sm">
+                  {t("Template upload failed:")} {uploadError}
+                </p>
+              )}
 
               <div className="mb-4 flex flex-wrap items-end gap-2 rounded-md border p-3">
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">Category</label>
+                  <label className="text-xs font-medium">{t("Category")}</label>
                   <Input
                     list="fingerprint-categories"
                     value={newRowCategory}
                     onChange={(e) => setNewRowCategory(e.target.value)}
-                    placeholder="e.g. Front End"
+                    placeholder={t("e.g. Front End")}
                     className="w-40"
                   />
                   <datalist id="fingerprint-categories">
@@ -1122,11 +1213,11 @@ export default function FingerprintPage() {
                   </datalist>
                 </div>
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">Slot Name</label>
+                  <label className="text-xs font-medium">{t("Slot Name")}</label>
                   <Input
                     value={newRowName}
                     onChange={(e) => setNewRowName(e.target.value)}
-                    placeholder="e.g. PodLoader#1"
+                    placeholder={t("e.g. PodLoader#1")}
                     className="w-48"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") addSlot();
@@ -1134,35 +1225,35 @@ export default function FingerprintPage() {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <label className="text-xs font-medium">Color</label>
+                  <label className="text-xs font-medium">{t("Color")}</label>
                   <ColorPickerPopover value={newRowColor} onChange={(c) => setNewRowColor(c)}>
                     <ColorSwatchTrigger color={newRowColor} />
                   </ColorPickerPopover>
                 </div>
                 <Button size="sm" onClick={addSlot}>
                   <Plus className="h-4 w-4" />
-                  Add Row
+                  {t("Add Row")}
                 </Button>
                 {addRowError && <p className="text-destructive text-xs">{addRowError}</p>}
                 <p className="text-muted-foreground w-full text-xs">
-                  Color only applies to a brand-new category; if the category already exists, its
-                  existing color is kept (you can change it via the category color swatch in the
-                  table below).
+                  {t(
+                    "Color only applies to a brand-new category; if the category already exists, its existing color is kept (you can change it via the category color swatch in the table below)."
+                  )}
                 </p>
               </div>
 
               {loading ? (
-                <p className="text-muted-foreground text-sm">Loading…</p>
+                <p className="text-muted-foreground text-sm">{t("Loading…")}</p>
               ) : slots.length === 0 ? (
                 <p className="text-muted-foreground text-sm italic">
-                  This tool type has no rows yet — add one above.
+                  {t("This tool type has no rows yet — add one above.")}
                 </p>
               ) : (
                 <Table containerClassName="max-h-[70vh] overflow-y-auto">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="bg-card sticky top-0 left-0 z-20 w-10 min-w-[40px] max-w-[40px]" />
-                      <TableHead className="bg-card sticky top-0 left-10 z-20 min-w-[180px]">Slot</TableHead>
+                      <TableHead className="bg-card sticky top-0 left-10 z-20 min-w-[180px]">{t("Slot")}</TableHead>
                       {machines.map((m) => (
                         <TableHead key={m} className="bg-card sticky top-0 z-10 min-w-[160px]">
                           <div className="flex items-center justify-between gap-1">
@@ -1171,7 +1262,7 @@ export default function FingerprintPage() {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
-                                aria-label={`Remove machine ${m}`}
+                                aria-label={t("Remove machine {machine}").replace("{machine}", m)}
                                 onClick={() => removeMachine(m)}
                               >
                                 <XIcon className="h-3 w-3" />
@@ -1182,7 +1273,7 @@ export default function FingerprintPage() {
                       ))}
                       {machines.length === 0 && (
                         <TableHead className="bg-card sticky top-0 z-10 text-muted-foreground font-normal">
-                          No machines yet — add one above
+                          {t("No machines yet — add one above")}
                         </TableHead>
                       )}
                     </TableRow>
@@ -1226,7 +1317,10 @@ export default function FingerprintPage() {
                                   >
                                     <button
                                       type="button"
-                                      aria-label={`Edit category "${group.category}"`}
+                                      aria-label={t('Edit category "{category}"').replace(
+                                        "{category}",
+                                        group.category
+                                      )}
                                       className="shrink-0 rounded p-0.5 hover:bg-black/10"
                                     >
                                       <Pencil className="h-3 w-3" />
@@ -1255,7 +1349,7 @@ export default function FingerprintPage() {
                                 <Button
                                   size="icon-sm"
                                   variant="ghost"
-                                  aria-label="Delete this row"
+                                  aria-label={t("Delete this row")}
                                   onClick={() => deleteSlot(slot)}
                                 >
                                   <Trash2 className="text-destructive h-3.5 w-3.5" />
@@ -1294,11 +1388,13 @@ export default function FingerprintPage() {
       <Dialog open={pendingUpload !== null} onOpenChange={(open) => !open && !applyingUpload && setPendingUpload(null)}>
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Some part numbers weren&apos;t found</DialogTitle>
+            <DialogTitle>{t("Some part numbers weren't found")}</DialogTitle>
             <DialogDescription>
-              {pendingUpload?.notFoundCells.length} part number(s) in this file don&apos;t appear in the target
-              machine&apos;s Full BOM or Modules data at all — possibly a typo. {pendingUpload?.foundCells.length}{" "}
-              other cell(s) were verified fine and aren&apos;t affected by this choice.
+              {t(
+                "{notFoundCount} part number(s) in this file don't appear in the target machine's Full BOM or Modules data at all — possibly a typo. {foundCount} other cell(s) were verified fine and aren't affected by this choice."
+              )
+                .replace("{notFoundCount}", String(pendingUpload?.notFoundCells.length ?? 0))
+                .replace("{foundCount}", String(pendingUpload?.foundCells.length ?? 0))}
             </DialogDescription>
           </DialogHeader>
 
@@ -1306,10 +1402,10 @@ export default function FingerprintPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Machine</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Slot</TableHead>
-                  <TableHead>Part No.</TableHead>
+                  <TableHead>{t("Machine")}</TableHead>
+                  <TableHead>{t("Category")}</TableHead>
+                  <TableHead>{t("Slot")}</TableHead>
+                  <TableHead>{t("Part No.")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1329,13 +1425,13 @@ export default function FingerprintPage() {
 
           <DialogFooter>
             <Button variant="outline" disabled={applyingUpload} onClick={() => setPendingUpload(null)}>
-              Cancel Upload
+              {t("Cancel Upload")}
             </Button>
             <Button variant="outline" disabled={applyingUpload} onClick={() => confirmPendingUpload(false)}>
-              {applyingUpload ? "Working…" : "Skip These, Add the Rest"}
+              {applyingUpload ? t("Working…") : t("Skip These, Add the Rest")}
             </Button>
             <Button disabled={applyingUpload} onClick={() => confirmPendingUpload(true)}>
-              {applyingUpload ? "Working…" : "Add All Anyway"}
+              {applyingUpload ? t("Working…") : t("Add All Anyway")}
             </Button>
           </DialogFooter>
         </DialogContent>

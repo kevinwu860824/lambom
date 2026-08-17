@@ -6,16 +6,33 @@ import { ArrowLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { fetchZbomMachineNames, fetchZbomSectionNames, fetchZbomSectionOptions, type ZbomOption } from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
+import { useTranslate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RequireGroupPrompt } from "@/components/require-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 type SectionState = "loading" | "error" | ZbomOption[];
 
+const zh: Record<string, string> = {
+  "ZBOM Configuration Viewer": "ZBOM 配置檢視器",
+  "View a machine's stored SAP Variant Configuration options.": "檢視機台已儲存的 SAP Variant Configuration 選項。",
+  "Back to Comparison Tool": "返回比對工具",
+  Machine: "機台",
+  "Loading…": "載入中…",
+  "Select machine": "選擇機台",
+  "No ZBOM data stored yet.": "尚未儲存任何 ZBOM 資料。",
+  "No ZBOM options stored for this machine.": "此機台尚未儲存任何 ZBOM 選項。",
+  "Failed to load this section.": "此區段載入失敗。",
+  "Option Type": "選項類型",
+  "Option Selection": "選項內容",
+};
+
 export default function ZbomPage() {
+  const t = useTranslate(zh);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
@@ -114,16 +131,19 @@ export default function ZbomPage() {
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">ZBOM Configuration Viewer</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("ZBOM Configuration Viewer")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              View a machine&apos;s stored SAP Variant Configuration options.
+              {t("View a machine's stored SAP Variant Configuration options.")}
             </p>
           </div>
-          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
-            <Link href="/lambom">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <Button variant="outline" size="icon" asChild aria-label={t("Back to Comparison Tool")}>
+              <Link href="/lambom">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
@@ -131,10 +151,10 @@ export default function ZbomPage() {
         <Card className="mb-6">
           <CardContent>
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">Machine</label>
+              <label className="text-sm font-medium">{t("Machine")}</label>
               <Select value={machine} onValueChange={handleMachineChange} disabled={listLoading}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={listLoading ? "Loading…" : "Select machine"} />
+                  <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
                 </SelectTrigger>
                 <SelectContent>
                   {machineNames.map((name) => (
@@ -145,16 +165,16 @@ export default function ZbomPage() {
                 </SelectContent>
               </Select>
               {!listLoading && machineNames.length === 0 && (
-                <p className="text-muted-foreground mt-1 text-sm">No ZBOM data stored yet.</p>
+                <p className="text-muted-foreground mt-1 text-sm">{t("No ZBOM data stored yet.")}</p>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {sectionsLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+        {sectionsLoading && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
 
         {!sectionsLoading && machine && sectionOrder.length === 0 && !error && (
-          <p className="text-muted-foreground text-sm">No ZBOM options stored for this machine.</p>
+          <p className="text-muted-foreground text-sm">{t("No ZBOM options stored for this machine.")}</p>
         )}
 
         {!sectionsLoading && sectionOrder.length > 0 && (
@@ -194,14 +214,16 @@ export default function ZbomPage() {
 
                       {expanded && (
                         <div className="mt-3">
-                          {data === "loading" && <p className="text-muted-foreground text-sm">Loading…</p>}
-                          {data === "error" && <p className="text-destructive text-sm">Failed to load this section.</p>}
+                          {data === "loading" && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
+                          {data === "error" && (
+                            <p className="text-destructive text-sm">{t("Failed to load this section.")}</p>
+                          )}
                           {data && data !== "loading" && data !== "error" && (
                             <Table>
                               <TableHeader>
                                 <TableRow>
-                                  <TableHead>Option Type</TableHead>
-                                  <TableHead>Option Selection</TableHead>
+                                  <TableHead>{t("Option Type")}</TableHead>
+                                  <TableHead>{t("Option Selection")}</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>

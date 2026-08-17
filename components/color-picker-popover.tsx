@@ -2,9 +2,24 @@
 
 import { useState } from "react";
 import { Palette } from "lucide-react";
+import { useTranslate } from "@/lib/i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const zh: Record<string, string> = {
+  Blue: "藍色",
+  Amber: "琥珀色",
+  Emerald: "祖母綠",
+  Violet: "紫羅蘭色",
+  Rose: "玫瑰色",
+  Cyan: "青色",
+  Lime: "萊姆色",
+  Orange: "橘色",
+  "Select Color": "選擇顏色",
+  "Custom Color": "自訂顏色",
+  "Restore Automatic Color": "恢復自動顏色",
+};
 
 export const PRESET_COLORS = [
   { label: "Blue", value: "#dbeafe" },
@@ -53,6 +68,7 @@ export function ColorPickerPopover({
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useTranslate(zh);
 
   async function pick(color: string | null) {
     setSaving(true);
@@ -77,13 +93,13 @@ export function ColorPickerPopover({
     >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-56">
-        <p className="mb-2 text-xs font-medium">Select Color</p>
+        <p className="mb-2 text-xs font-medium">{t("Select Color")}</p>
         <div className="mb-3 grid grid-cols-4 gap-2">
           {PRESET_COLORS.map((c) => (
             <button
               key={c.value}
               type="button"
-              title={c.label}
+              title={t(c.label)}
               disabled={saving}
               onClick={() => pick(c.value)}
               className={cn(
@@ -102,7 +118,7 @@ export function ColorPickerPopover({
             onChange={(e) => pick(e.target.value)}
             className="h-7 w-10 cursor-pointer rounded border"
           />
-          <span className="text-muted-foreground text-xs">Custom Color</span>
+          <span className="text-muted-foreground text-xs">{t("Custom Color")}</span>
         </div>
         <Button
           size="sm"
@@ -111,7 +127,7 @@ export function ColorPickerPopover({
           disabled={saving}
           onClick={() => pick(null)}
         >
-          Restore Automatic Color
+          {t("Restore Automatic Color")}
         </Button>
         {error && <p className="text-destructive mt-2 text-xs">{error}</p>}
       </PopoverContent>

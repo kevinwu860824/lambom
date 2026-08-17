@@ -14,10 +14,32 @@ import {
   uploadZbomEntry,
 } from "@/lib/bom";
 import { ensureMachineInGroup } from "@/lib/groups";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+const zh: Record<string, string> = {
+  "SAP Download": "SAP 下載",
+  "Machine No.": "機台編號",
+  "e.g. ACOXN1": "例如 ACOXN1",
+  "e.g. 264059": "例如 264059",
+  Add: "新增",
+  "Excel Template": "Excel 範本",
+  "Import Excel": "匯入 Excel",
+  "Running…": "執行中…",
+  Done: "完成",
+  Failed: "失敗",
+  Cancelled: "已取消",
+  "Please enter your employee ID on the home page first before downloading a new machine.":
+    "請先回首頁輸入工號,才能下載新機台。",
+  "Please enter your employee ID on the home page first, so the system knows which group to attribute the new machine to.":
+    "請先回首頁輸入工號,系統才知道新機台要歸屬到哪個群組。",
+  "Downloading…": "下載中…",
+  "Download ({count})": "下載 ({count})",
+  Cancel: "取消",
+};
 
 type FidDownloadMode = "tool" | "modules" | "zbom" | "resolve";
 
@@ -84,6 +106,7 @@ export function FidDownloaderPanel({
   groupId: number | null;
   onUploaded?: () => void;
 }) {
+  const t = useTranslate(zh);
   const [available, setAvailable] = useState(false);
   const [machineNo, setMachineNo] = useState("");
   const [fid, setFid] = useState("");
@@ -340,7 +363,12 @@ export function FidDownloaderPanel({
   async function processQueue() {
     if (processing || queue.length === 0 || !window.fidDownloader) return;
     if (groupId == null) {
-      setLog((prev) => `${prev}\n請先回首頁輸入工號,系統才知道新機台要歸屬到哪個群組。\n`);
+      setLog(
+        (prev) =>
+          `${prev}\n${t(
+            "Please enter your employee ID on the home page first, so the system knows which group to attribute the new machine to."
+          )}\n`
+      );
       return;
     }
     setProcessing(true);
@@ -390,17 +418,17 @@ export function FidDownloaderPanel({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>SAP Download</CardTitle>
+        <CardTitle>{t("SAP Download")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="mb-3 flex items-end gap-2 overflow-x-auto">
           <div className="grid shrink-0 gap-1.5">
-            <Label className="text-xs">Machine No.</Label>
+            <Label className="text-xs">{t("Machine No.")}</Label>
             <Input
               list="fid-downloader-existing-machines"
               value={machineNo}
               onChange={(e) => setMachineNo(e.target.value)}
-              placeholder="e.g. ACOXN1"
+              placeholder={t("e.g. ACOXN1")}
               disabled={processing}
               className="w-32"
               onKeyDown={(e) => {
@@ -419,7 +447,7 @@ export function FidDownloaderPanel({
               value={fid}
               onChange={(e) => setFid(e.target.value)}
               onBlur={handleFidBlur}
-              placeholder="e.g. 264059"
+              placeholder={t("e.g. 264059")}
               disabled={processing}
               className="w-32"
               onKeyDown={(e) => {
@@ -429,11 +457,11 @@ export function FidDownloaderPanel({
           </div>
           <Button className="shrink-0" onClick={addToQueue} disabled={processing || !machineNo.trim() || !fid.trim()}>
             <Plus className="h-4 w-4" />
-            Add
+            {t("Add")}
           </Button>
           <Button className="shrink-0" variant="outline" onClick={downloadTemplate} disabled={processing}>
             <FileSpreadsheet className="h-4 w-4" />
-            Excel Template
+            {t("Excel Template")}
           </Button>
           <Button
             className="shrink-0"
@@ -442,7 +470,7 @@ export function FidDownloaderPanel({
             disabled={processing}
           >
             <Upload className="h-4 w-4" />
-            Import Excel
+            {t("Import Excel")}
           </Button>
           <input
             ref={fileInputRef}
@@ -466,14 +494,16 @@ export function FidDownloaderPanel({
                   {item.machineNo}
                   <span className="text-muted-foreground"> — FID {item.fid}</span>
                 </span>
-                {item.status === "running" && <span className="text-xs text-blue-600">Running…</span>}
-                {item.status === "done" && <span className="text-xs text-emerald-600">Done</span>}
+                {item.status === "running" && <span className="text-xs text-blue-600">{t("Running…")}</span>}
+                {item.status === "done" && <span className="text-xs text-emerald-600">{t("Done")}</span>}
                 {item.status === "error" && (
                   <span className="text-destructive text-xs" title={item.error}>
-                    Failed
+                    {t("Failed")}
                   </span>
                 )}
-                {item.status === "cancelled" && <span className="text-muted-foreground text-xs">Cancelled</span>}
+                {item.status === "cancelled" && (
+                  <span className="text-muted-foreground text-xs">{t("Cancelled")}</span>
+                )}
                 {item.status === "queued" && !processing && (
                   <Button size="icon-xs" variant="ghost" onClick={() => removeFromQueue(item.id)}>
                     <XIcon className="h-3.5 w-3.5" />
@@ -485,17 +515,19 @@ export function FidDownloaderPanel({
         )}
 
         {groupId == null && (
-          <p className="mb-2 text-sm text-destructive">請先回首頁輸入工號,才能下載新機台。</p>
+          <p className="mb-2 text-sm text-destructive">
+            {t("Please enter your employee ID on the home page first before downloading a new machine.")}
+          </p>
         )}
         <div className="mb-3 flex items-center gap-2">
           <Button onClick={processQueue} disabled={processing || queue.length === 0 || groupId == null}>
             <Download className="h-4 w-4" />
-            {processing ? "Downloading…" : `Download (${queue.length})`}
+            {processing ? t("Downloading…") : t("Download ({count})").replace("{count}", String(queue.length))}
           </Button>
           {processing && (
             <Button variant="destructive" onClick={cancelQueue}>
               <Square className="h-4 w-4" />
-              Cancel
+              {t("Cancel")}
             </Button>
           )}
         </div>

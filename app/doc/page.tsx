@@ -3,12 +3,31 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { UploadCloud } from "lucide-react";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 const BUCKET = "doc";
+
+const zh: Record<string, string> = {
+  "File Replace": "檔案取代",
+  "The left side shows the currently stored file — click to download; select a new file on the right to upload and replace it.":
+    "左側顯示目前儲存的檔案,點擊即可下載;請在右側選擇新檔案上傳以取代它。",
+  "Failed to load:": "載入失敗:",
+  "Upload failed:": "上傳失敗:",
+  "Current File": "目前檔案",
+  "Loading…": "載入中…",
+  "No file yet": "尚無檔案",
+  "Upload New File": "上傳新檔案",
+  "Drag a file here": "將檔案拖曳至此",
+  "or click to select a file": "或點擊以選擇檔案",
+  "Uploading…": "上傳中…",
+  Replace: "取代",
+  Updated: "已更新",
+};
 
 function uploadFileWithProgress(
   bucket: string,
@@ -69,6 +88,7 @@ function formatBytes(bytes: number | null) {
 }
 
 export default function DocPage() {
+  const t = useTranslate(zh);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) {
@@ -116,7 +136,7 @@ export default function DocPage() {
     refreshCurrentFile()
       .catch((err) => {
         if (cancelled) return;
-        setInitError(`Failed to load: ${err instanceof Error ? err.message : String(err)}`);
+        setInitError(`${t("Failed to load:")} ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
         if (!cancelled) setInitLoading(false);
@@ -164,12 +184,16 @@ export default function DocPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">File Replace</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            The left side shows the currently stored file — click to download; select a new file
-            on the right to upload and replace it.
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("File Replace")}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t(
+                "The left side shows the currently stored file — click to download; select a new file on the right to upload and replace it."
+              )}
+            </p>
+          </div>
+          <LanguageSwitcher />
         </div>
 
         {initError && (
@@ -180,18 +204,20 @@ export default function DocPage() {
 
         {uploadError && (
           <Card className="mb-6 border-destructive/50">
-            <CardContent className="text-destructive text-sm">Upload failed: {uploadError}</CardContent>
+            <CardContent className="text-destructive text-sm">
+              {t("Upload failed:")} {uploadError}
+            </CardContent>
           </Card>
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Current File</CardTitle>
+              <CardTitle>{t("Current File")}</CardTitle>
             </CardHeader>
             <CardContent>
               {initLoading ? (
-                <p className="text-muted-foreground text-sm">Loading…</p>
+                <p className="text-muted-foreground text-sm">{t("Loading…")}</p>
               ) : currentFile ? (
                 <div className="flex flex-col gap-2">
                   <a
@@ -206,14 +232,14 @@ export default function DocPage() {
                   )}
                 </div>
               ) : (
-                <p className="text-muted-foreground text-sm italic">No file yet</p>
+                <p className="text-muted-foreground text-sm italic">{t("No file yet")}</p>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Upload New File</CardTitle>
+              <CardTitle>{t("Upload New File")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3">
@@ -242,8 +268,8 @@ export default function DocPage() {
                     <p className="text-sm font-medium">{selectedFile.name}</p>
                   ) : (
                     <>
-                      <p className="text-sm font-medium">Drag a file here</p>
-                      <p className="text-muted-foreground text-xs">or click to select a file</p>
+                      <p className="text-sm font-medium">{t("Drag a file here")}</p>
+                      <p className="text-muted-foreground text-xs">{t("or click to select a file")}</p>
                     </>
                   )}
                   <input
@@ -257,9 +283,9 @@ export default function DocPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Button onClick={handleReplace} disabled={!selectedFile || uploading}>
-                    {uploading ? "Uploading…" : "Replace"}
+                    {uploading ? t("Uploading…") : t("Replace")}
                   </Button>
-                  {uploadSuccess && <span className="text-sm text-emerald-600">Updated</span>}
+                  {uploadSuccess && <span className="text-sm text-emerald-600">{t("Updated")}</span>}
                 </div>
                 {uploading && (
                   <div className="flex items-center gap-3">

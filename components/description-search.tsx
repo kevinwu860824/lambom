@@ -5,6 +5,7 @@ import { Star, Check, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { fetchMachineGroups, type MachineGroup } from "@/lib/bom";
 import { cn } from "@/lib/utils";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,6 +41,37 @@ interface SearchResultRow {
 
 const RESULT_LIMIT = 200;
 
+const zh: Record<string, string> = {
+  "Part No. / Description Search": "料號 / 說明搜尋",
+  "Enter keywords to search part numbers or descriptions across all machines — separate multiple keywords with spaces (all must match)":
+    "輸入關鍵字搜尋所有機台的料號或說明 — 可用空格分隔多個關鍵字(需全部符合)",
+  "Filter Machines / Subparts": "篩選機台 / 子件",
+  "Clear filter": "清除篩選",
+  "All machines": "全部機台",
+  "Subparts (all included by default, uncheck individually to exclude)":
+    "子件(預設全部包含,取消勾選可個別排除)",
+  "(all)": "(全部)",
+  "Searching…": "搜尋中…",
+  "Search failed:": "搜尋失敗:",
+  "No matching results": "查無符合結果",
+  "{n} result(s)": "{n} 筆結果",
+  " (showing only the first {n})": "(僅顯示前 {n} 筆)",
+  Machine: "機台",
+  Subpart: "子件",
+  "Part No.": "料號",
+  Description: "說明",
+  Qty: "數量",
+  Unit: "單位",
+  Action: "操作",
+  "Add key part": "新增關鍵零件",
+  "Add Key Part": "新增關鍵零件",
+  "Give this part a memorable custom name.": "為這個零件取一個容易記憶的自訂名稱。",
+  "Custom Name": "自訂名稱",
+  "e.g. Main Power Switch": "例如:主電源開關",
+  "Saving…": "儲存中…",
+  Save: "儲存",
+};
+
 export function DescriptionSearch({
   allowedMachines,
   onKeyPartAdded,
@@ -55,6 +87,7 @@ export function DescriptionSearch({
     return supabaseRef.current;
   }
 
+  const t = useTranslate(zh);
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState<SearchResultRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -203,13 +236,15 @@ export function DescriptionSearch({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>Part No. / Description Search</CardTitle>
+        <CardTitle>{t("Part No. / Description Search")}</CardTitle>
       </CardHeader>
       <CardContent>
         <Input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="Enter keywords to search part numbers or descriptions across all machines — separate multiple keywords with spaces (all must match)"
+          placeholder={t(
+            "Enter keywords to search part numbers or descriptions across all machines — separate multiple keywords with spaces (all must match)"
+          )}
         />
 
         <div className="mt-3">
@@ -221,7 +256,7 @@ export function DescriptionSearch({
             <ChevronDown
               className={cn("h-3.5 w-3.5 transition-transform", filterOpen && "rotate-180")}
             />
-            Filter Machines / Subparts
+            {t("Filter Machines / Subparts")}
             {isFiltering && (
               <Badge variant="secondary" className="ml-1">
                 {selectedBomIds.size}
@@ -237,7 +272,7 @@ export function DescriptionSearch({
                   onClick={clearFilter}
                   className="text-muted-foreground mb-2 block text-xs underline"
                 >
-                  Clear filter
+                  {t("Clear filter")}
                 </button>
               )}
 
@@ -252,7 +287,7 @@ export function DescriptionSearch({
                   }
                   onCheckedChange={toggleAllMachines}
                 />
-                All machines
+                {t("All machines")}
               </label>
               <div className="mt-1 max-h-[160px] overflow-y-auto grid gap-1 pl-6">
                 {machineGroups.map((group) => (
@@ -269,7 +304,7 @@ export function DescriptionSearch({
               {checkedMachines.size > 0 && (
                 <div className="mt-3 grid gap-3 border-t pt-3">
                   <p className="text-muted-foreground text-xs font-medium">
-                    Subparts (all included by default, uncheck individually to exclude)
+                    {t("Subparts (all included by default, uncheck individually to exclude)")}
                   </p>
                   <div className="max-h-[240px] overflow-y-auto grid gap-2">
                     {machineGroups
@@ -281,7 +316,7 @@ export function DescriptionSearch({
                               checked={machineSubpartState(group)}
                               onCheckedChange={() => toggleAllSubpartsForMachine(group)}
                             />
-                            {group.machine} (all)
+                            {group.machine} {t("(all)")}
                           </label>
                           <div className="mt-1 grid gap-1 pl-6">
                             {group.subparts.map((s) => (
@@ -304,28 +339,34 @@ export function DescriptionSearch({
         </div>
 
         <div className="mt-4">
-          {loading && <p className="text-muted-foreground text-sm">Searching…</p>}
-          {error && <p className="text-destructive text-sm">Search failed: {error}</p>}
+          {loading && <p className="text-muted-foreground text-sm">{t("Searching…")}</p>}
+          {error && (
+            <p className="text-destructive text-sm">
+              {t("Search failed:")} {error}
+            </p>
+          )}
           {!loading && !error && results && results.length === 0 && (
-            <p className="text-muted-foreground text-sm italic">No matching results</p>
+            <p className="text-muted-foreground text-sm italic">{t("No matching results")}</p>
           )}
           {!loading && results && results.length > 0 && (
             <>
               <p className="text-muted-foreground mb-2 text-xs">
-                {results.length} result(s)
-                {results.length === RESULT_LIMIT ? ` (showing only the first ${RESULT_LIMIT})` : ""}
+                {t("{n} result(s)").replace("{n}", String(results.length))}
+                {results.length === RESULT_LIMIT
+                  ? t(" (showing only the first {n})").replace("{n}", String(RESULT_LIMIT))
+                  : ""}
               </p>
               <div className="max-h-[400px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Machine</TableHead>
-                      <TableHead>Subpart</TableHead>
-                      <TableHead>Part No.</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Qty</TableHead>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Action</TableHead>
+                      <TableHead>{t("Machine")}</TableHead>
+                      <TableHead>{t("Subpart")}</TableHead>
+                      <TableHead>{t("Part No.")}</TableHead>
+                      <TableHead>{t("Description")}</TableHead>
+                      <TableHead>{t("Qty")}</TableHead>
+                      <TableHead>{t("Unit")}</TableHead>
+                      <TableHead>{t("Action")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -380,6 +421,7 @@ function AddKeyPartButton({
     return supabaseRef.current;
   }
 
+  const t = useTranslate(zh);
   const [open, setOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -425,7 +467,7 @@ function AddKeyPartButton({
       }}
     >
       <DialogTrigger asChild>
-        <Button size="icon-sm" variant="ghost" aria-label="Add key part">
+        <Button size="icon-sm" variant="ghost" aria-label={t("Add key part")}>
           {saved ? (
             <Check className="h-4 w-4 text-emerald-600" />
           ) : (
@@ -435,8 +477,8 @@ function AddKeyPartButton({
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Key Part</DialogTitle>
-          <DialogDescription>Give this part a memorable custom name.</DialogDescription>
+          <DialogTitle>{t("Add Key Part")}</DialogTitle>
+          <DialogDescription>{t("Give this part a memorable custom name.")}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3">
@@ -445,12 +487,12 @@ function AddKeyPartButton({
             <p className="text-muted-foreground">{description}</p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`custom-name-${partNo}`}>Custom Name</Label>
+            <Label htmlFor={`custom-name-${partNo}`}>{t("Custom Name")}</Label>
             <Input
               id={`custom-name-${partNo}`}
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
-              placeholder="e.g. Main Power Switch"
+              placeholder={t("e.g. Main Power Switch")}
               disabled={saving}
             />
           </div>
@@ -459,7 +501,7 @@ function AddKeyPartButton({
 
         <DialogFooter>
           <Button onClick={handleSave} disabled={!customName.trim() || saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("Saving…") : t("Save")}
           </Button>
         </DialogFooter>
       </DialogContent>

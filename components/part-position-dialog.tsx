@@ -8,6 +8,19 @@ import { buildBomTree, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useTranslate } from "@/lib/i18n";
+
+const zh: Record<string, string> = {
+  " — machine {machine}": " — 機台 {machine}",
+  "Match {current} / {total}": "第 {current} / {total} 筆符合",
+  "Previous match": "上一筆",
+  "Next match": "下一筆",
+  "Loading…": "載入中…",
+  "Full BOM": "完整 BOM",
+  "Not found in Full BOM": "在完整 BOM 中找不到",
+  Modules: "模組",
+  "Not found in any module": "在任何模組中都找不到",
+};
 
 export interface PartPositionTarget {
   partNo: string;
@@ -56,6 +69,7 @@ export function PartPositionDialog({
   getModules: (machine: string) => Promise<{ bomId: number; sourceFile: string }[]>;
   getModuleTree: (bomId: number, sourceFile: string) => Promise<BomTreeItem[]>;
 }) {
+  const t = useTranslate(zh);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullBomItems, setFullBomItems] = useState<BomTreeItem[] | null>(null);
@@ -200,19 +214,22 @@ export function PartPositionDialog({
         <DialogHeader>
           <DialogTitle>{target?.partNo}</DialogTitle>
           <DialogDescription>
-            {target?.description ?? "-"} — machine {target?.machine}
+            {target?.description ?? "-"}
+            {t(" — machine {machine}").replace("{machine}", target?.machine ?? "")}
           </DialogDescription>
         </DialogHeader>
 
         {matches.length > 1 && (
           <div className="flex shrink-0 items-center gap-2 border-b pb-3 text-sm">
             <span className="text-muted-foreground">
-              Match {activeIndex + 1} / {matches.length}
+              {t("Match {current} / {total}")
+                .replace("{current}", String(activeIndex + 1))
+                .replace("{total}", String(matches.length))}
             </span>
-            <Button size="icon" variant="outline" className="h-7 w-7" onClick={goToPrevMatch} aria-label="Previous match">
+            <Button size="icon" variant="outline" className="h-7 w-7" onClick={goToPrevMatch} aria-label={t("Previous match")}>
               <ChevronUp className="h-4 w-4" />
             </Button>
-            <Button size="icon" variant="outline" className="h-7 w-7" onClick={goToNextMatch} aria-label="Next match">
+            <Button size="icon" variant="outline" className="h-7 w-7" onClick={goToNextMatch} aria-label={t("Next match")}>
               <ChevronDown className="h-4 w-4" />
             </Button>
           </div>
@@ -220,14 +237,14 @@ export function PartPositionDialog({
 
         <div className="min-h-0 overflow-y-auto">
           {loading ? (
-            <p className="text-muted-foreground text-sm">Loading…</p>
+            <p className="text-muted-foreground text-sm">{t("Loading…")}</p>
           ) : error ? (
             <p className="text-destructive text-sm">{error}</p>
           ) : (
             <div className="grid gap-4">
               {showFullBom && (
                 <div>
-                  <p className="mb-1.5 text-sm font-medium">Full BOM</p>
+                  <p className="mb-1.5 text-sm font-medium">{t("Full BOM")}</p>
                   {fullBomView && fullBomView.matchIds.length > 0 ? (
                     <Card>
                       <CardContent>
@@ -245,13 +262,13 @@ export function PartPositionDialog({
                       </CardContent>
                     </Card>
                   ) : (
-                    <p className="text-muted-foreground text-sm italic">Not found in Full BOM</p>
+                    <p className="text-muted-foreground text-sm italic">{t("Not found in Full BOM")}</p>
                   )}
                 </div>
               )}
               {showModules && (
                 <div>
-                  <p className="mb-1.5 text-sm font-medium">Modules</p>
+                  <p className="mb-1.5 text-sm font-medium">{t("Modules")}</p>
                   {moduleTrees.length > 0 ? (
                     <div className="grid gap-3">
                       {moduleTrees.map((m) => (
@@ -274,7 +291,7 @@ export function PartPositionDialog({
                       ))}
                     </div>
                   ) : (
-                    <p className="text-muted-foreground text-sm italic">Not found in any module</p>
+                    <p className="text-muted-foreground text-sm italic">{t("Not found in any module")}</p>
                   )}
                 </div>
               )}

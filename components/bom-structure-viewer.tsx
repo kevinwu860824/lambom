@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,8 +14,34 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BomTreeNodeRow, nodeMatchesQuery, normalizeSearchText } from "@/components/bom-tree-node";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 type SupabaseClient = ReturnType<typeof createClient>;
+
+const zh: Record<string, string> = {
+  // title/description props supplied by the two callers (/tree, /full-bom)
+  "BOM Structure Viewer": "BOM 結構檢視器",
+  "Pick a machine to view its parts hierarchically, expand/collapse as needed.":
+    "選擇機台以階層方式檢視其零件,可依需要展開/收合。",
+  "Full BOM Structure Viewer": "完整 BOM 結構檢視器",
+  "Pick a machine to view its complete BOM hierarchically, expand/collapse as needed.":
+    "選擇機台以階層方式檢視其完整 BOM,可依需要展開/收合。",
+  "Back to Comparison Tool": "返回比對工具",
+  Machine: "機台",
+  "Loading…": "載入中…",
+  "Select machine": "選擇機台",
+  Subparts: "子件",
+  "No subparts selected": "未選擇子件",
+  "All subparts": "所有子件",
+  "{n}/{total} subparts selected": "已選擇 {n}/{total} 個子件",
+  "Search part no. / description…": "搜尋料號 / 說明…",
+  "Previous match": "上一個符合項目",
+  "Next match": "下一個符合項目",
+  "Expand All": "全部展開",
+  "Collapse All": "全部收合",
+  "Loading more… ({n} items so far)": "載入更多中…(目前已載入 {n} 筆)",
+  "No items.": "無項目。",
+};
 
 export interface BomStructureSubpart {
   bomId: number;
@@ -109,6 +136,7 @@ export function BomStructureViewer({
     onProgress: (partial: BomStructureSubpart[]) => void
   ) => Promise<BomStructureSubpart[]>;
 }) {
+  const t = useTranslate(zh);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
@@ -330,14 +358,17 @@ export function BomStructureViewer({
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-            <p className="text-muted-foreground mt-1 text-sm">{description}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{t(title)}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t(description)}</p>
           </div>
-          <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
-            <Link href="/lambom">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <Button variant="outline" size="icon" asChild aria-label={t("Back to Comparison Tool")}>
+              <Link href="/lambom">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
@@ -345,10 +376,10 @@ export function BomStructureViewer({
         <Card className="mb-6">
           <CardContent>
             <div className="grid gap-1.5">
-              <label className="text-sm font-medium">Machine</label>
+              <label className="text-sm font-medium">{t("Machine")}</label>
               <Select value={machine} onValueChange={handleMachineChange} disabled={listLoading}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={listLoading ? "Loading…" : "Select machine"} />
+                  <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
                 </SelectTrigger>
                 <SelectContent>
                   {machineNames.map((name) => (
@@ -362,16 +393,18 @@ export function BomStructureViewer({
 
             {subpartTrees.length > 0 && (
               <div className="mt-4 grid gap-1.5">
-                <label className="text-sm font-medium">Subparts</label>
+                <label className="text-sm font-medium">{t("Subparts")}</label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className="h-9 w-full justify-between font-normal">
                       <span className="truncate">
                         {selectedSourceFiles.size === 0
-                          ? "No subparts selected"
+                          ? t("No subparts selected")
                           : selectedSourceFiles.size === subpartTrees.length
-                            ? "All subparts"
-                            : `${selectedSourceFiles.size}/${subpartTrees.length} subparts selected`}
+                            ? t("All subparts")
+                            : t("{n}/{total} subparts selected")
+                                .replace("{n}", String(selectedSourceFiles.size))
+                                .replace("{total}", String(subpartTrees.length))}
                       </span>
                       <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
                     </Button>
@@ -388,7 +421,7 @@ export function BomStructureViewer({
                         }
                         onCheckedChange={toggleAllSubparts}
                       />
-                      All subparts
+                      {t("All subparts")}
                     </label>
                     <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
                       {subpartTrees.map((tree) => (
@@ -418,7 +451,7 @@ export function BomStructureViewer({
           </CardContent>
         </Card>
 
-        {treeLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+        {treeLoading && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
 
         {!treeLoading && subpartTrees.length > 0 && (
           <>
@@ -432,7 +465,7 @@ export function BomStructureViewer({
                   if (e.shiftKey) goToPrev();
                   else goToNext();
                 }}
-                placeholder="Search part no. / description…"
+                placeholder={t("Search part no. / description…")}
                 className="flex-1"
               />
               <span className="text-muted-foreground w-16 shrink-0 text-center text-sm whitespace-nowrap">
@@ -443,7 +476,7 @@ export function BomStructureViewer({
                 variant="outline"
                 onClick={goToPrev}
                 disabled={matches.length === 0}
-                aria-label="Previous match"
+                aria-label={t("Previous match")}
               >
                 <ChevronUp className="h-4 w-4" />
               </Button>
@@ -452,7 +485,7 @@ export function BomStructureViewer({
                 variant="outline"
                 onClick={goToNext}
                 disabled={matches.length === 0}
-                aria-label="Next match"
+                aria-label={t("Next match")}
               >
                 <ChevronDown className="h-4 w-4" />
               </Button>
@@ -461,11 +494,11 @@ export function BomStructureViewer({
             <div className="mb-3 flex items-center gap-2">
               <Button size="sm" variant="outline" onClick={expandAll}>
                 <ChevronsUpDown className="h-3.5 w-3.5" />
-                Expand All
+                {t("Expand All")}
               </Button>
               <Button size="sm" variant="outline" onClick={collapseAll}>
                 <ChevronsDownUp className="h-3.5 w-3.5" />
-                Collapse All
+                {t("Collapse All")}
               </Button>
             </div>
           </>
@@ -473,7 +506,10 @@ export function BomStructureViewer({
 
         {streamingMore && !treeLoading && (
           <p className="text-muted-foreground mb-3 text-sm">
-            Loading more… ({subpartData.reduce((n, d) => n + d.items.length, 0).toLocaleString()} items so far)
+            {t("Loading more… ({n} items so far)").replace(
+              "{n}",
+              subpartData.reduce((n, d) => n + d.items.length, 0).toLocaleString()
+            )}
           </p>
         )}
 
@@ -483,7 +519,7 @@ export function BomStructureViewer({
               <CardContent>
                 <h2 className="mb-2 text-sm font-medium">{tree.sourceFile}</h2>
                 {tree.roots.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">No items.</p>
+                  <p className="text-muted-foreground text-sm">{t("No items.")}</p>
                 ) : (
                   <div>
                     {tree.roots.map((root) => (

@@ -28,6 +28,7 @@ import {
   type RemoteEditor,
 } from "@/lib/passdown";
 import { PassdownEntryRow } from "@/components/passdown-entry-row";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -42,6 +43,62 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LanguageSwitcher } from "@/components/language-switcher";
+
+const zh: Record<string, string> = {
+  "Please select your name at the top first": "請先在上方選擇你的名字",
+  "Please select a machine, or choose \"Other\" to manually enter Tool ID / Module":
+    "請選擇機台,或選「其他」手動輸入 Tool ID / Module",
+  "Add Machine": "新增機台",
+  "Select the machine/module to add to today's board.": "選擇要加進今天看板的機台/Module。",
+  Machine: "機台",
+  "Select machine...": "選擇機台...",
+  "Other (manually enter new machine)": "其他(手動輸入新機台)",
+  "Tool ID": "機台 ID",
+  Module: "模組",
+  Product: "產品",
+  "This machine already has an entry today (hidden because its status is Up) — choosing \"Show\" will bring it back onto the board without changing its existing data.":
+    "這台今天已經有記錄(狀態是 Up 所以被隱藏),選「顯示」會直接把它叫出來,不會更動它原本的資料。",
+  Status: "狀態",
+  Up: "正常",
+  Down: "故障",
+  Monitor: "觀察",
+  Other: "其他",
+  "Problem Statement": "問題描述",
+  "Processing...": "處理中...",
+  Show: "顯示",
+  Create: "建立",
+  "F22 VXT Daily Passdown Board": "F22 VXT 每日交接班看板",
+  "I am...": "我是...",
+  Day: "白班",
+  Night: "夜班",
+  "Manage people list": "管理人員名單",
+  "Back to Home": "回首頁",
+  "Today's Board": "今日看板",
+  "History Search": "歷史查詢",
+  "Back to Today": "回到今天",
+  Copied: "已複製",
+  "Copy failed": "複製失敗",
+  "Copy as email format": "複製成信件格式",
+  "Loading...": "載入中...",
+  "{date} has no handover records yet.": "{date} 尚無交接記錄。",
+  "All tracked machines are Up today — nothing needs a handover. Use \"Add Machine\" in the top right if you need to log something.":
+    "今天追蹤中的機台都是 Up,沒有需要交接的項目。需要記錄可以按右上「新增機台」。",
+  "Activities & Planning": "紀錄與計畫",
+  Remark: "備註",
+  "Updated By": "更新者",
+  From: "起始日期",
+  To: "結束日期",
+  "Leave blank to search all": "留空查全部",
+  "Querying...": "查詢中...",
+  Query: "查詢",
+  "No results found.": "查無資料。",
+  Tool: "機台",
+  Date: "日期",
+  Problem: "問題",
+  "Results capped at 500 rows — narrow the date range or specify a Tool ID.":
+    "結果已達 500 筆上限,請縮小日期範圍或指定 Tool ID。",
+};
 
 type BoardEntry = PassdownEntry & { isPlaceholder?: boolean };
 
@@ -163,6 +220,7 @@ function NewEntryDialog({
   const [problemStatement, setProblemStatement] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useTranslate(zh);
 
   const availableMachines = knownMachines.filter((m) => !excludeKeys.has(machineKey(m)));
   const isCustom = selectedKey === CUSTOM_MACHINE_KEY;
@@ -195,7 +253,7 @@ function NewEntryDialog({
 
   async function handleSubmit() {
     if (!toolId.trim() || !module.trim()) {
-      setError("請選擇機台,或選「其他」手動輸入 Tool ID / Module");
+      setError(t("Please select a machine, or choose \"Other\" to manually enter Tool ID / Module"));
       return;
     }
     setSaving(true);
@@ -227,15 +285,15 @@ function NewEntryDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>新增機台</DialogTitle>
-          <DialogDescription>選擇要加進今天看板的機台/Module。</DialogDescription>
+          <DialogTitle>{t("Add Machine")}</DialogTitle>
+          <DialogDescription>{t("Select the machine/module to add to today's board.")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label className="mb-1">機台</Label>
+            <Label className="mb-1">{t("Machine")}</Label>
             <Select value={selectedKey} onValueChange={handleSelectMachine}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="選擇機台..." />
+                <SelectValue placeholder={t("Select machine...")} />
               </SelectTrigger>
               <SelectContent>
                 {availableMachines.map((m) => (
@@ -244,36 +302,38 @@ function NewEntryDialog({
                     {m.product ? ` (${m.product})` : ""}
                   </SelectItem>
                 ))}
-                <SelectItem value={CUSTOM_MACHINE_KEY}>其他(手動輸入新機台)</SelectItem>
+                <SelectItem value={CUSTOM_MACHINE_KEY}>{t("Other (manually enter new machine)")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           {isCustom && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="mb-1">Tool ID</Label>
+                <Label className="mb-1">{t("Tool ID")}</Label>
                 <Input value={toolId} onChange={(e) => setToolId(e.target.value)} placeholder="CCTEN1" />
               </div>
               <div>
-                <Label className="mb-1">Module</Label>
+                <Label className="mb-1">{t("Module")}</Label>
                 <Input value={module} onChange={(e) => setModule(e.target.value)} placeholder="PM1" />
               </div>
             </div>
           )}
           {isCustom && (
             <div>
-              <Label className="mb-1">Product</Label>
+              <Label className="mb-1">{t("Product")}</Label>
               <Input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="TEOS" />
             </div>
           )}
           {isExistingHidden ? (
             <p className="text-muted-foreground text-sm">
-              這台今天已經有記錄(狀態是 Up 所以被隱藏),選「顯示」會直接把它叫出來,不會更動它原本的資料。
+              {t(
+                "This machine already has an entry today (hidden because its status is Up) — choosing \"Show\" will bring it back onto the board without changing its existing data."
+              )}
             </p>
           ) : (
             <>
               <div>
-                <Label className="mb-1">Status</Label>
+                <Label className="mb-1">{t("Status")}</Label>
                 <Select value={status} onValueChange={(v) => setStatus(v as PassdownStatus)}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -281,14 +341,14 @@ function NewEntryDialog({
                   <SelectContent>
                     {STATUS_OPTIONS.map((s) => (
                       <SelectItem key={s} value={s}>
-                        {STATUS_LABELS[s]}
+                        {t(STATUS_LABELS[s])}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label className="mb-1">Problem Statement</Label>
+                <Label className="mb-1">{t("Problem Statement")}</Label>
                 <Input value={problemStatement} onChange={(e) => setProblemStatement(e.target.value)} />
               </div>
             </>
@@ -297,7 +357,7 @@ function NewEntryDialog({
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={saving || !toolId.trim() || !module.trim()}>
-            {saving ? "處理中..." : isExistingHidden ? "顯示" : "建立"}
+            {saving ? t("Processing...") : isExistingHidden ? t("Show") : t("Create")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -312,6 +372,7 @@ export default function PassdownPage() {
     return supabaseRef.current;
   }
 
+  const t = useTranslate(zh);
   const [view, setView] = useState<"board" | "history">("board");
   const [date, setDate] = useState(todayStr());
   const [entries, setEntries] = useState<BoardEntry[]>([]);
@@ -605,7 +666,7 @@ export default function PassdownPage() {
   }
 
   async function handleAddNote(entry: BoardEntry, note: string) {
-    if (!meId) throw new Error("請先在上方選擇你的名字");
+    if (!meId) throw new Error(t("Please select your name at the top first"));
     let target: PassdownEntry = entry;
     if (entry.isPlaceholder) {
       target = await upsertEntry(getSupabase(), {
@@ -712,12 +773,12 @@ export default function PassdownPage() {
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Passdown Tool</h1>
-            <p className="text-muted-foreground mt-1 text-sm">F22 VXT 每日交接班看板</p>
+            <p className="text-muted-foreground mt-1 text-sm">{t("F22 VXT Daily Passdown Board")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Select value={meId} onValueChange={saveMe}>
               <SelectTrigger size="sm" className="w-36">
-                <SelectValue placeholder="我是..." />
+                <SelectValue placeholder={t("I am...")} />
               </SelectTrigger>
               <SelectContent>
                 {people.map((p) => (
@@ -732,27 +793,28 @@ export default function PassdownPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="day">Day</SelectItem>
-                <SelectItem value="night">Night</SelectItem>
+                <SelectItem value="day">{t("Day")}</SelectItem>
+                <SelectItem value="night">{t("Night")}</SelectItem>
               </SelectContent>
             </Select>
+            <LanguageSwitcher />
             <Button variant="outline" size="icon" asChild>
-              <Link href="/passdown/people" aria-label="管理人員名單">
+              <Link href="/passdown/people" aria-label={t("Manage people list")}>
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/">回首頁</Link>
+              <Link href="/">{t("Back to Home")}</Link>
             </Button>
           </div>
         </div>
 
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Button variant={view === "board" ? "default" : "outline"} size="sm" onClick={() => setView("board")}>
-            今日看板
+            {t("Today's Board")}
           </Button>
           <Button variant={view === "history" ? "default" : "outline"} size="sm" onClick={() => setView("history")}>
-            歷史查詢
+            {t("History Search")}
           </Button>
         </div>
 
@@ -774,7 +836,7 @@ export default function PassdownPage() {
                 </Button>
                 {date !== todayStr() && (
                   <Button variant="ghost" size="sm" onClick={() => setDate(todayStr())}>
-                    回到今天
+                    {t("Back to Today")}
                   </Button>
                 )}
               </div>
@@ -785,11 +847,11 @@ export default function PassdownPage() {
                   ) : (
                     <Clipboard className="h-4 w-4" />
                   )}
-                  {copyState === "copied" ? "已複製" : copyState === "error" ? "複製失敗" : "複製成信件格式"}
+                  {copyState === "copied" ? t("Copied") : copyState === "error" ? t("Copy failed") : t("Copy as email format")}
                 </Button>
                 <Button size="sm" onClick={() => setNewEntryOpen(true)}>
                   <Plus className="h-4 w-4" />
-                  新增機台
+                  {t("Add Machine")}
                 </Button>
               </div>
             </div>
@@ -797,12 +859,14 @@ export default function PassdownPage() {
             {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
             {loading ? (
-              <p className="text-muted-foreground text-sm">載入中...</p>
+              <p className="text-muted-foreground text-sm">{t("Loading...")}</p>
             ) : boardRows.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 {entries.length === 0
-                  ? `${date} 尚無交接記錄。`
-                  : "今天追蹤中的機台都是 Up,沒有需要交接的項目。需要記錄可以按右上「新增機台」。"}
+                  ? t("{date} has no handover records yet.").replace("{date}", date)
+                  : t(
+                      "All tracked machines are Up today — nothing needs a handover. Use \"Add Machine\" in the top right if you need to log something."
+                    )}
               </p>
             ) : (
               <Card>
@@ -810,14 +874,14 @@ export default function PassdownPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Tool ID</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Module</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Problem Statement</TableHead>
-                        <TableHead>Activities &amp; Planning</TableHead>
-                        <TableHead>Remark</TableHead>
-                        <TableHead>Updated By</TableHead>
+                        <TableHead>{t("Tool ID")}</TableHead>
+                        <TableHead>{t("Product")}</TableHead>
+                        <TableHead>{t("Module")}</TableHead>
+                        <TableHead>{t("Status")}</TableHead>
+                        <TableHead>{t("Problem Statement")}</TableHead>
+                        <TableHead>{t("Activities & Planning")}</TableHead>
+                        <TableHead>{t("Remark")}</TableHead>
+                        <TableHead>{t("Updated By")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -863,41 +927,41 @@ export default function PassdownPage() {
             <CardContent className="pt-6">
               <div className="mb-4 flex flex-wrap items-end gap-3">
                 <div>
-                  <Label className="mb-1">From</Label>
+                  <Label className="mb-1">{t("From")}</Label>
                   <Input type="date" value={historyFrom} onChange={(e) => setHistoryFrom(e.target.value)} />
                 </div>
                 <div>
-                  <Label className="mb-1">To</Label>
+                  <Label className="mb-1">{t("To")}</Label>
                   <Input type="date" value={historyTo} onChange={(e) => setHistoryTo(e.target.value)} />
                 </div>
                 <div>
-                  <Label className="mb-1">Tool ID</Label>
+                  <Label className="mb-1">{t("Tool ID")}</Label>
                   <Input
                     value={historyToolId}
                     onChange={(e) => setHistoryToolId(e.target.value)}
-                    placeholder="留空查全部"
+                    placeholder={t("Leave blank to search all")}
                     className="w-36"
                   />
                 </div>
                 <Button onClick={handleHistorySearch} disabled={historyLoading}>
-                  {historyLoading ? "查詢中..." : "查詢"}
+                  {historyLoading ? t("Querying...") : t("Query")}
                 </Button>
               </div>
               {historyError && <p className="text-destructive mb-3 text-sm">{historyError}</p>}
               {historySearched && !historyLoading && historyResults.length === 0 && (
-                <p className="text-muted-foreground text-sm">查無資料。</p>
+                <p className="text-muted-foreground text-sm">{t("No results found.")}</p>
               )}
               {historyResults.length > 0 && (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Tool</TableHead>
-                      <TableHead>Module</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Problem</TableHead>
-                      <TableHead>Remark</TableHead>
-                      <TableHead>Updated By</TableHead>
+                      <TableHead>{t("Date")}</TableHead>
+                      <TableHead>{t("Tool")}</TableHead>
+                      <TableHead>{t("Module")}</TableHead>
+                      <TableHead>{t("Status")}</TableHead>
+                      <TableHead>{t("Problem")}</TableHead>
+                      <TableHead>{t("Remark")}</TableHead>
+                      <TableHead>{t("Updated By")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -906,7 +970,7 @@ export default function PassdownPage() {
                         <TableCell>{e.entryDate}</TableCell>
                         <TableCell>{e.toolId}</TableCell>
                         <TableCell>{e.module}</TableCell>
-                        <TableCell>{STATUS_LABELS[e.status]}</TableCell>
+                        <TableCell>{t(STATUS_LABELS[e.status])}</TableCell>
                         <TableCell className="max-w-xs truncate" title={e.problemStatement ?? ""}>
                           {e.problemStatement}
                         </TableCell>
@@ -921,7 +985,7 @@ export default function PassdownPage() {
               )}
               {historyResults.length >= 500 && (
                 <p className="text-muted-foreground mt-2 text-xs">
-                  結果已達 500 筆上限,請縮小日期範圍或指定 Tool ID。
+                  {t("Results capped at 500 rows — narrow the date range or specify a Tool ID.")}
                 </p>
               )}
             </CardContent>

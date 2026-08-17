@@ -4,9 +4,15 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+const zh: Record<string, string> = {
+  "Open in KM Matrix": "在 KM Matrix 開啟",
+  "Also found in:": "也發現於：",
+};
 
 /**
  * Lightweight blur-to-save cell editor for the fingerprint matrix — unlike
@@ -40,6 +46,7 @@ export function FingerprintCell({
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useTranslate(zh);
 
   useEffect(() => {
     setDraft(value);
@@ -70,7 +77,7 @@ export function FingerprintCell({
             variant="ghost"
             size="icon-xs"
             className="text-muted-foreground shrink-0"
-            aria-label="Open in KM Matrix"
+            aria-label={t("Open in KM Matrix")}
             onClick={() => openKmMatrix(value)}
           >
             <ExternalLink className="h-3 w-3" />
@@ -85,7 +92,7 @@ export function FingerprintCell({
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              <p className="font-medium">Also found in:</p>
+              <p className="font-medium">{t("Also found in:")}</p>
               <ul className="mt-0.5 list-disc pl-3">
                 {foundInModules.map((m) => (
                   <li key={m}>{m}</li>

@@ -7,12 +7,35 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
 import { fetchFidsByMachine, fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { EditableField } from "@/components/editable-field";
 import { FidDownloaderPanel } from "@/components/fid-downloader-panel";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { RequireGroupPrompt } from "@/components/require-group";
+
+const zh: Record<string, string> = {
+  "Edit Machine / Subpart Names": "編輯機台 / 子件名稱",
+  "Press Enter or click confirm after editing to save immediately.":
+    "編輯後按 Enter 或點擊確認即可立即儲存。",
+  "Done editing": "完成編輯",
+  "Edit machines/subparts": "編輯機台 / 子件",
+  "Back to Comparison Tool": "返回比對工具",
+  "Delete failed:": "刪除失敗:",
+  "Loading…": "載入中…",
+  "No machine data yet": "尚無機台資料",
+  "{count} subpart(s)": "{count} 個子件",
+  "Machine Name": "機台名稱",
+  "Delete machine": "刪除機台",
+  Subparts: "子件",
+  "Delete subpart": "刪除子件",
+  'Delete machine "{name}"? This will also delete its {count} subpart(s) and all detail data — this cannot be undone.':
+    "刪除機台「{name}」？這將同時刪除其 {count} 個子件與所有詳細資料,此操作無法復原。",
+  'Delete subpart "{name}"? This will delete all its detail data — this cannot be undone.':
+    "刪除子件「{name}」？這將刪除其所有詳細資料,此操作無法復原。",
+};
 
 export default function MachinesPage() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -22,6 +45,7 @@ export default function MachinesPage() {
   }
 
   const { allowedMachines, employeeId, group, notFound, loading: groupLoading, refresh: refreshGroup } = useEmployeeGroup();
+  const t = useTranslate(zh);
 
   const [groups, setGroups] = useState<MachineGroup[]>([]);
   const [fidsByMachine, setFidsByMachine] = useState<Map<string, string>>(new Map());
@@ -125,7 +149,11 @@ export default function MachinesPage() {
   async function deleteMachine(group: MachineGroup) {
     if (
       !window.confirm(
-        `Delete machine "${group.machine}"? This will also delete its ${group.subparts.length} subpart(s) and all detail data — this cannot be undone.`
+        t(
+          'Delete machine "{name}"? This will also delete its {count} subpart(s) and all detail data — this cannot be undone.'
+        )
+          .replace("{name}", group.machine)
+          .replace("{count}", String(group.subparts.length))
       )
     ) {
       return;
@@ -182,7 +210,10 @@ export default function MachinesPage() {
   async function deleteSubpart(machineName: string, entry: BomEntry) {
     if (
       !window.confirm(
-        `Delete subpart "${entry.source_file}"? This will delete all its detail data — this cannot be undone.`
+        t('Delete subpart "{name}"? This will delete all its detail data — this cannot be undone.').replace(
+          "{name}",
+          entry.source_file
+        )
       )
     ) {
       return;
@@ -234,21 +265,22 @@ export default function MachinesPage() {
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Edit Machine / Subpart Names</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("Edit Machine / Subpart Names")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              Press Enter or click confirm after editing to save immediately.
+              {t("Press Enter or click confirm after editing to save immediately.")}
             </p>
           </div>
           <div className="flex items-center gap-3">
             <Button
               size="icon"
               variant="outline"
-              aria-label={editMode ? "Done editing" : "Edit machines/subparts"}
+              aria-label={editMode ? t("Done editing") : t("Edit machines/subparts")}
               onClick={() => setEditMode((v) => !v)}
             >
               {editMode ? <Check className="h-4 w-4 text-emerald-600" /> : <Pencil className="h-4 w-4" />}
             </Button>
-            <Button variant="outline" size="icon" asChild aria-label="Back to Comparison Tool">
+            <LanguageSwitcher />
+            <Button variant="outline" size="icon" asChild aria-label={t("Back to Comparison Tool")}>
               <Link href="/lambom">
                 <ArrowLeft className="h-4 w-4" />
               </Link>
@@ -266,12 +298,16 @@ export default function MachinesPage() {
 
         <Card>
           <CardContent className="grid gap-4">
-            {deleteError && <p className="text-destructive text-sm">Delete failed: {deleteError}</p>}
+            {deleteError && (
+              <p className="text-destructive text-sm">
+                {t("Delete failed:")} {deleteError}
+              </p>
+            )}
 
             {loading ? (
-              <p className="text-muted-foreground text-sm">Loading…</p>
+              <p className="text-muted-foreground text-sm">{t("Loading…")}</p>
             ) : groups.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No machine data yet</p>
+              <p className="text-muted-foreground text-sm">{t("No machine data yet")}</p>
             ) : (
               groups.map((group) => {
                 const expanded = expandedMachines.has(group.machine);
@@ -294,13 +330,13 @@ export default function MachinesPage() {
                       )}
                     </span>
                     <span className="text-muted-foreground text-xs">
-                      {group.subparts.length} subpart(s)
+                      {t("{count} subpart(s)").replace("{count}", String(group.subparts.length))}
                     </span>
                   </button>
 
                   {expanded && (
                     <div className="border-t p-3">
-                      <Label className="mb-1.5">Machine Name</Label>
+                      <Label className="mb-1.5">{t("Machine Name")}</Label>
                       <div className="flex items-center gap-2">
                         <div className="flex-1">
                           {editMode ? (
@@ -316,7 +352,7 @@ export default function MachinesPage() {
                           <Button
                             size="icon-sm"
                             variant="ghost"
-                            aria-label="Delete machine"
+                            aria-label={t("Delete machine")}
                             disabled={deletingKey === `machine:${group.machine}`}
                             onClick={() => deleteMachine(group)}
                           >
@@ -325,7 +361,7 @@ export default function MachinesPage() {
                         )}
                       </div>
 
-                      <Label className="mt-4 mb-1.5 block">Subparts</Label>
+                      <Label className="mt-4 mb-1.5 block">{t("Subparts")}</Label>
                       <div className="grid gap-2 pl-2">
                         {group.subparts.map((entry) => (
                           <div key={entry.bomId} className="flex items-center gap-2">
@@ -345,7 +381,7 @@ export default function MachinesPage() {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
-                                aria-label="Delete subpart"
+                                aria-label={t("Delete subpart")}
                                 disabled={deletingKey === `subpart:${entry.bomId}`}
                                 onClick={() => deleteSubpart(group.machine, entry)}
                               >

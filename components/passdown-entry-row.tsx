@@ -14,6 +14,7 @@ import {
   type SimilarProblem,
 } from "@/lib/passdown";
 import { cn } from "@/lib/utils";
+import { useTranslate } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -69,6 +70,33 @@ function personColorIndex(personId: string): number {
   return hash % PERSON_BORDER_CLASS.length;
 }
 
+const zh: Record<string, string> = {
+  "{name} is editing": "{name} 正在編輯",
+  "Searching...": "搜尋中...",
+  "Possible similar problems from the past": "過去可能發生過的類似問題",
+  "Same machine": "同機台",
+  "Occurred {count} times": "出現過 {count} 次",
+  Remark: "備註",
+  "Similar Problems": "類似問題",
+  "Please fill in the Problem Statement first": "請先填寫問題描述",
+  "What was done last time": "上次怎麼處理",
+  "Loading...": "載入中...",
+  "This problem has no Remark or handover notes on record.": "這個問題沒有留下 Remark 或交接留言紀錄。",
+  "Copy to Remark": "複製到備註",
+  Unknown: "未知",
+  "Copy into today's note": "複製進今天留言",
+  Day: "白班",
+  Night: "夜班",
+  "Add handover note ({shift})...": "新增交接留言({shift})...",
+  Note: "留言",
+  Submit: "送出",
+  "Carried over": "沿用上次",
+  Up: "正常",
+  Down: "故障",
+  Monitor: "觀察",
+  Other: "其他",
+};
+
 /** Read-only view swapped in for Problem Statement/Remark while Presence
  * says someone else has that cell focused — shows their live-broadcast
  * draft text (falling back to the last known saved value before any
@@ -76,11 +104,12 @@ function personColorIndex(personId: string): number {
  * into the same cell at once. */
 function RemoteEditingCell({ editor, text }: { editor: RemoteEditor; text: string }) {
   const idx = personColorIndex(editor.personId);
+  const t = useTranslate(zh);
   return (
     <div className={cn(CELL_BOX, "h-full border-2", PERSON_BORDER_CLASS[idx])}>
       <Badge className={cn("mb-1 px-1.5 py-0 text-[10px]", PERSON_BADGE_CLASS[idx])}>
         <Pencil className="h-2.5 w-2.5" />
-        {editor.personName} 正在編輯
+        {t("{name} is editing").replace("{name}", editor.personName)}
       </Badge>
       <p className="whitespace-pre-wrap">
         {text || <span className="text-muted-foreground italic">...</span>}
@@ -247,10 +276,11 @@ function SimilarProblemsList({
   toolId: string;
   onPick: (s: SimilarProblem) => void;
 }) {
+  const t = useTranslate(zh);
   return (
     <>
       <p className="text-muted-foreground mb-1.5 px-1 text-xs font-medium">
-        {loading ? "搜尋中..." : "過去可能發生過的類似問題"}
+        {loading ? t("Searching...") : t("Possible similar problems from the past")}
       </p>
       <div className="max-h-72 space-y-1 overflow-y-auto">
         {results.map((s) => (
@@ -263,7 +293,7 @@ function SimilarProblemsList({
             <div className="text-muted-foreground mb-0.5 flex items-center gap-1.5">
               {s.toolId === toolId ? (
                 <Badge variant="secondary" className="px-1 py-0 text-[10px]">
-                  同機台
+                  {t("Same machine")}
                 </Badge>
               ) : (
                 <span>
@@ -273,13 +303,15 @@ function SimilarProblemsList({
               <span>{s.entryDate}</span>
               {s.occurrenceCount > 1 && (
                 <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                  出現過 {s.occurrenceCount} 次
+                  {t("Occurred {count} times").replace("{count}", String(s.occurrenceCount))}
                 </Badge>
               )}
             </div>
             <p className="text-foreground line-clamp-2 whitespace-pre-wrap">{s.problemStatement}</p>
             {s.remark && (
-              <p className="text-muted-foreground mt-0.5 line-clamp-1 whitespace-pre-wrap">Remark: {s.remark}</p>
+              <p className="text-muted-foreground mt-0.5 line-clamp-1 whitespace-pre-wrap">
+                {t("Remark")}: {s.remark}
+              </p>
             )}
           </button>
         ))}
@@ -320,6 +352,7 @@ function SimilarProblemsButton({
   const [loading, setLoading] = useState(false);
   const seqRef = useRef(0);
   const disabled = !problemStatement.trim();
+  const t = useTranslate(zh);
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
@@ -355,7 +388,7 @@ function SimilarProblemsButton({
             <PopoverTrigger asChild>
               <Button variant="ghost" size="xs" className="text-muted-foreground -ml-2" disabled={disabled}>
                 <History className="h-3.5 w-3.5" />
-                類似問題
+                {t("Similar Problems")}
               </Button>
             </PopoverTrigger>
           </span>
@@ -364,7 +397,7 @@ function SimilarProblemsButton({
           <SimilarProblemsList results={results} loading={loading} toolId={toolId} onPick={handlePick} />
         </PopoverContent>
       </Popover>
-      {disabled && <TooltipContent>請先填寫 Problem Statement</TooltipContent>}
+      {disabled && <TooltipContent>{t("Please fill in the Problem Statement first")}</TooltipContent>}
     </Tooltip>
   );
 }
@@ -665,6 +698,7 @@ function ProblemHistoryDialog({
   onCopyNote: (text: string) => void;
   onCopyRemark: (text: string) => void;
 }) {
+  const t = useTranslate(zh);
   const notesByEntryDate = new Map<string, ProblemHistoryResult["notes"]>();
   for (const n of result?.notes ?? []) {
     const list = notesByEntryDate.get(n.entryDate) ?? [];
@@ -681,7 +715,7 @@ function ProblemHistoryDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="h-4 w-4" />
-            上次怎麼處理
+            {t("What was done last time")}
           </DialogTitle>
           <DialogDescription>
             {target?.toolId} / {target?.module} — {target?.problemStatement}
@@ -689,11 +723,13 @@ function ProblemHistoryDialog({
         </DialogHeader>
         <div className="min-h-0 overflow-y-auto">
           {loading ? (
-            <p className="text-muted-foreground text-sm">載入中...</p>
+            <p className="text-muted-foreground text-sm">{t("Loading...")}</p>
           ) : error ? (
             <p className="text-destructive text-sm">{error}</p>
           ) : days.length === 0 ? (
-            <p className="text-muted-foreground text-sm italic">這個問題沒有留下 Remark 或交接留言紀錄。</p>
+            <p className="text-muted-foreground text-sm italic">
+              {t("This problem has no Remark or handover notes on record.")}
+            </p>
           ) : (
             <ul className="space-y-3">
               {days.map((day) => (
@@ -712,7 +748,7 @@ function ProblemHistoryDialog({
                         onClick={() => onCopyRemark(day.remark ?? "")}
                       >
                         <Copy className="h-3 w-3" />
-                        複製到備註
+                        {t("Copy to Remark")}
                       </Button>
                     </div>
                   )}
@@ -720,8 +756,8 @@ function ProblemHistoryDialog({
                     <div key={note.id} className="mb-1 last:mb-0">
                       <div className="text-muted-foreground mb-1 flex items-center justify-between gap-2">
                         <span className="flex items-center gap-1.5">
-                          <span className="font-medium text-foreground">{note.personName ?? "未知"}</span>
-                          {note.shift && <Badge variant="outline">{SHIFT_LABELS[note.shift]}</Badge>}
+                          <span className="font-medium text-foreground">{note.personName ?? t("Unknown")}</span>
+                          {note.shift && <Badge variant="outline">{t(SHIFT_LABELS[note.shift])}</Badge>}
                         </span>
                         <Button
                           variant="ghost"
@@ -730,7 +766,7 @@ function ProblemHistoryDialog({
                           onClick={() => onCopyNote(note.note)}
                         >
                           <Copy className="h-3 w-3" />
-                          複製進今天留言
+                          {t("Copy into today's note")}
                         </Button>
                       </div>
                       <p className="whitespace-pre-wrap">{note.note}</p>
@@ -784,6 +820,7 @@ export function PassdownEntryRow({
   onBlurCell: () => void;
   onDraftChange: (cellKey: string, text: string) => void;
 }) {
+  const t = useTranslate(zh);
   const [statusSaving, setStatusSaving] = useState(false);
   const [note, setNote] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
@@ -875,7 +912,7 @@ export function PassdownEntryRow({
           <SelectContent>
             {STATUS_OPTIONS.map((s) => (
               <SelectItem key={s} value={s}>
-                {STATUS_LABELS[s]}
+                {t(STATUS_LABELS[s])}
               </SelectItem>
             ))}
           </SelectContent>
@@ -909,8 +946,8 @@ export function PassdownEntryRow({
           {updates.map((u) => (
             <div key={u.id} className="bg-muted/50 rounded p-1.5 text-xs">
               <div className="text-muted-foreground mb-0.5 flex items-center gap-1">
-                <span className="text-foreground font-medium">{u.personName ?? "未知"}</span>
-                {u.shift && <Badge variant="outline">{SHIFT_LABELS[u.shift]}</Badge>}
+                <span className="text-foreground font-medium">{u.personName ?? t("Unknown")}</span>
+                {u.shift && <Badge variant="outline">{t(SHIFT_LABELS[u.shift])}</Badge>}
               </div>
               <p className="whitespace-pre-wrap">{u.note}</p>
             </div>
@@ -920,12 +957,12 @@ export function PassdownEntryRow({
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="xs" className="text-muted-foreground">
                   <MessageSquarePlus className="h-3.5 w-3.5" />
-                  留言
+                  {t("Note")}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-72">
                 <Textarea
-                  placeholder={`新增交接留言(${SHIFT_LABELS[currentShift]})...`}
+                  placeholder={t("Add handover note ({shift})...").replace("{shift}", t(SHIFT_LABELS[currentShift]))}
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   disabled={noteSaving}
@@ -934,7 +971,7 @@ export function PassdownEntryRow({
                 />
                 <div className="mt-2 flex items-center gap-2">
                   <Button size="sm" onClick={handleAddNote} disabled={noteSaving || !note.trim()}>
-                    送出
+                    {t("Submit")}
                   </Button>
                   {noteError && <span className="text-destructive text-xs">{noteError}</span>}
                 </div>
@@ -973,7 +1010,7 @@ export function PassdownEntryRow({
         />
       </TableCell>
       <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-        {entry.isPlaceholder ? <Badge variant="outline">沿用上次</Badge> : entry.updatedByName || "-"}
+        {entry.isPlaceholder ? <Badge variant="outline">{t("Carried over")}</Badge> : entry.updatedByName || "-"}
       </TableCell>
     </TableRow>
   );

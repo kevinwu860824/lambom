@@ -5,6 +5,8 @@ import Link from "next/link";
 import { ChevronDown, Download, ExternalLink, Home as HomeIcon, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { openKmMatrix } from "@/lib/km-matrix";
+import { useTranslate } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import {
   aggregateByPartNo,
   buildKeyPartDisplayRows,
@@ -64,6 +66,55 @@ import { KeyPartsPanel } from "@/components/key-parts-panel";
 import { exportCompareToExcel } from "@/lib/export-excel";
 import type { AggregatedItem, BomSummary } from "@/lib/bom";
 
+const zh: Record<string, string> = {
+  "BOM Comparison Tool": "BOM 比對工具",
+  "Select two machine BOMs to compare their differences.": "選擇兩台機台的 BOM 進行差異比對。",
+  "Key Parts Fingerprint": "關鍵零件指紋",
+  "ZBOM Viewer": "ZBOM 檢視器",
+  "BOM Structure": "BOM 結構",
+  "Full BOM Structure": "完整 BOM 結構",
+  "Edit machine names": "編輯機台名稱",
+  "Back to Home": "回首頁",
+  "Failed to load data:": "載入資料失敗:",
+  "Compare using": "比對方式",
+  Modules: "模組",
+  "Full BOM": "完整 BOM",
+  "Select Comparison Targets": "選擇比對目標",
+  "Comparing…": "比對中…",
+  "Start Comparison": "開始比對",
+  "Comparison failed:": "比對失敗:",
+  "Comparison Summary": "比對摘要",
+  "/ {file}: {itemCount} detail items, {uniqueCount} unique parts":
+    "/ {file}:{itemCount} 個明細項目,{uniqueCount} 個不重複料號",
+  "No comparison data yet": "尚無比對資料",
+  "Common Parts {n}": "共同料件 {n}",
+  "A Only {n}": "僅 A 有 {n}",
+  "B Only {n}": "僅 B 有 {n}",
+  "Qty Mismatch {n}": "數量不符 {n}",
+  "Only in A / B": "僅存在於 A / B",
+  "Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)":
+    "搜尋僅存在於 A/B 的料號或說明 — 可用空格分隔多個關鍵字(需全部符合)",
+  "Download Excel": "下載 Excel",
+  "Only in A": "僅 A 有",
+  "Only in B": "僅 B 有",
+  "No data": "無資料",
+  "Part No.": "料號",
+  Description: "說明",
+  Qty: "數量",
+  Unit: "單位",
+  "Key Part": "關鍵零件",
+  "Custom name:": "自訂名稱:",
+  "Subparts:": "子件:",
+  "Possibly renamed (machine {other})": "可能已重新命名(機台 {other})",
+  "Machine {label}": "機台 {label}",
+  "Select machine": "選擇機台",
+  "Subpart {label}": "子件 {label}",
+  "No subparts": "無子件",
+  "No subparts selected": "未選取子件",
+  "All subparts": "全部子件",
+  "{selected}/{total} subparts selected": "已選取 {selected}/{total} 個子件",
+};
+
 export default function Home() {
   // Created lazily on first use inside an effect/handler rather than during
   // render, so this never runs during Next.js's server-side prerender pass.
@@ -78,6 +129,7 @@ export default function Home() {
   const bomDataRef = useRef<BomEntry[]>([]);
 
   const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const t = useTranslate(zh);
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
   const [machineA, setMachineA] = useState("");
@@ -322,7 +374,7 @@ export default function Home() {
   useEffect(() => {
     if (!allowedMachines) return;
     loadData(allowedMachines).catch((err) => {
-      setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
+      setInitError(`${t("Failed to load data:")} ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
     loadKeyParts(allowedMachines);
@@ -507,31 +559,32 @@ export default function Home() {
       <div className="mx-auto max-w-[1600px] px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">BOM Comparison Tool</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("BOM Comparison Tool")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              Select two machine BOMs to compare their differences.
+              {t("Select two machine BOMs to compare their differences.")}
             </p>
           </div>
           <div className="flex items-start gap-2">
             <Button variant="outline" asChild>
-              <Link href="/fingerprint">Key Parts Fingerprint</Link>
+              <Link href="/fingerprint">{t("Key Parts Fingerprint")}</Link>
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/zbom">ZBOM Viewer</Link>
+              <Link href="/zbom">{t("ZBOM Viewer")}</Link>
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/tree">BOM Structure</Link>
+              <Link href="/tree">{t("BOM Structure")}</Link>
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/full-bom">Full BOM Structure</Link>
+              <Link href="/full-bom">{t("Full BOM Structure")}</Link>
             </Button>
+            <LanguageSwitcher />
             <Button variant="outline" size="icon" asChild>
-              <Link href="/machines" aria-label="Edit machine names">
+              <Link href="/machines" aria-label={t("Edit machine names")}>
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
             <Button variant="outline" size="icon" asChild>
-              <Link href="/" aria-label="回首頁">
+              <Link href="/" aria-label={t("Back to Home")}>
                 <HomeIcon className="h-4 w-4" />
               </Link>
             </Button>
@@ -551,11 +604,11 @@ export default function Home() {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Select Comparison Targets</CardTitle>
+            <CardTitle>{t("Select Comparison Targets")}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="mb-4 flex items-center gap-2">
-              <span className="text-sm font-medium">Compare using</span>
+              <span className="text-sm font-medium">{t("Compare using")}</span>
               <div className="inline-flex rounded-md border p-0.5">
                 <Button
                   type="button"
@@ -564,7 +617,7 @@ export default function Home() {
                   className="h-7"
                   onClick={() => setCompareMode("modules")}
                 >
-                  Modules
+                  {t("Modules")}
                 </Button>
                 <Button
                   type="button"
@@ -573,7 +626,7 @@ export default function Home() {
                   className="h-7"
                   onClick={() => setCompareMode("fullBom")}
                 >
-                  Full BOM
+                  {t("Full BOM")}
                 </Button>
               </div>
             </div>
@@ -614,20 +667,22 @@ export default function Home() {
                 (compareMode === "modules" && (subpartsA.size === 0 || subpartsB.size === 0))
               }
             >
-              {compareLoading ? "Comparing…" : "Start Comparison"}
+              {compareLoading ? t("Comparing…") : t("Start Comparison")}
             </Button>
           </CardContent>
         </Card>
 
         {compareError && (
           <Card className="mb-6 border-destructive/50">
-            <CardContent className="text-destructive text-sm">Comparison failed: {compareError}</CardContent>
+            <CardContent className="text-destructive text-sm">
+              {t("Comparison failed:")} {compareError}
+            </CardContent>
           </Card>
         )}
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Comparison Summary</CardTitle>
+            <CardTitle>{t("Comparison Summary")}</CardTitle>
           </CardHeader>
           <CardContent>
             {compareLoading ? (
@@ -638,24 +693,30 @@ export default function Home() {
             ) : summaryA && summaryB && result ? (
               <div className="grid gap-2 text-sm">
                 <p>
-                  <span className="font-medium">{summaryA.machine}</span> / {summaryA.source_file}
-                  : {summaryA.itemCount} detail items, {summaryA.uniqueCount} unique parts
+                  <span className="font-medium">{summaryA.machine}</span>{" "}
+                  {t("/ {file}: {itemCount} detail items, {uniqueCount} unique parts")
+                    .replace("{file}", summaryA.source_file)
+                    .replace("{itemCount}", String(summaryA.itemCount))
+                    .replace("{uniqueCount}", String(summaryA.uniqueCount))}
                 </p>
                 <p>
-                  <span className="font-medium">{summaryB.machine}</span> / {summaryB.source_file}
-                  : {summaryB.itemCount} detail items, {summaryB.uniqueCount} unique parts
+                  <span className="font-medium">{summaryB.machine}</span>{" "}
+                  {t("/ {file}: {itemCount} detail items, {uniqueCount} unique parts")
+                    .replace("{file}", summaryB.source_file)
+                    .replace("{itemCount}", String(summaryB.itemCount))
+                    .replace("{uniqueCount}", String(summaryB.uniqueCount))}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <Badge variant="secondary">Common Parts {result.common.length}</Badge>
-                  <Badge variant="outline">A Only {result.onlyA.length}</Badge>
-                  <Badge variant="outline">B Only {result.onlyB.length}</Badge>
+                  <Badge variant="secondary">{t("Common Parts {n}").replace("{n}", String(result.common.length))}</Badge>
+                  <Badge variant="outline">{t("A Only {n}").replace("{n}", String(result.onlyA.length))}</Badge>
+                  <Badge variant="outline">{t("B Only {n}").replace("{n}", String(result.onlyB.length))}</Badge>
                   <Badge variant={qtyMismatchCount > 0 ? "destructive" : "secondary"}>
-                    Qty Mismatch {qtyMismatchCount}
+                    {t("Qty Mismatch {n}").replace("{n}", String(qtyMismatchCount))}
                   </Badge>
                 </div>
               </div>
             ) : (
-              <p className="text-muted-foreground text-sm">No comparison data yet</p>
+              <p className="text-muted-foreground text-sm">{t("No comparison data yet")}</p>
             )}
           </CardContent>
         </Card>
@@ -670,7 +731,7 @@ export default function Home() {
             }}
             className="flex cursor-pointer select-none flex-row items-center justify-between"
           >
-            <CardTitle>Only in A / B</CardTitle>
+            <CardTitle>{t("Only in A / B")}</CardTitle>
             <ChevronDown
               className={`h-4 w-4 transition-transform ${resultsExpanded ? "rotate-180" : ""}`}
             />
@@ -684,11 +745,13 @@ export default function Home() {
                     <Input
                       value={resultFilter}
                       onChange={(e) => setResultFilter(e.target.value)}
-                      placeholder="Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)"
+                      placeholder={t(
+                        "Search part numbers or descriptions in Only A/B — separate multiple keywords with spaces (all must match)"
+                      )}
                     />
                     <Button variant="outline" onClick={handleExportClick} className="shrink-0">
                       <Download className="h-4 w-4" />
-                      Download Excel
+                      {t("Download Excel")}
                     </Button>
                   </div>
                   <DocumentPartsFilter
@@ -701,7 +764,7 @@ export default function Home() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <PartTable
-                  title="Only in A"
+                  title={t("Only in A")}
                   items={filteredOnlyA}
                   keyPartInfo={keyPartInfoA}
                   renameInfo={renameInfoA}
@@ -711,7 +774,7 @@ export default function Home() {
                   onSelectPart={openPositionDialog}
                 />
                 <PartTable
-                  title="Only in B"
+                  title={t("Only in B")}
                   items={filteredOnlyB}
                   keyPartInfo={keyPartInfoB}
                   renameInfo={renameInfoB}
@@ -779,6 +842,7 @@ function MachineSelectGroup({
   onToggleSubpart: (sourceFile: string) => void;
   onToggleAll: () => void;
 }) {
+  const t = useTranslate(zh);
   const allState: boolean | "indeterminate" =
     selectedSubparts.size === 0
       ? false
@@ -789,10 +853,10 @@ function MachineSelectGroup({
   return (
     <div className="grid gap-3">
       <div className="grid gap-1.5">
-        <label className="text-sm font-medium">Machine {label}</label>
+        <label className="text-sm font-medium">{t("Machine {label}").replace("{label}", label)}</label>
         <Select value={machine} onValueChange={onMachineChange} disabled={disabled}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select machine" />
+            <SelectValue placeholder={t("Select machine")} />
           </SelectTrigger>
           <SelectContent>
             {machineGroups.map((group) => (
@@ -805,7 +869,7 @@ function MachineSelectGroup({
       </div>
       {!hideSubparts && (
         <div className="grid gap-1.5">
-          <label className="text-sm font-medium">Subpart {label}</label>
+          <label className="text-sm font-medium">{t("Subpart {label}").replace("{label}", label)}</label>
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -815,12 +879,14 @@ function MachineSelectGroup({
               >
                 <span className="truncate">
                   {subparts.length === 0
-                    ? "No subparts"
+                    ? t("No subparts")
                     : selectedSubparts.size === 0
-                      ? "No subparts selected"
+                      ? t("No subparts selected")
                       : selectedSubparts.size === subparts.length
-                        ? "All subparts"
-                        : `${selectedSubparts.size}/${subparts.length} subparts selected`}
+                        ? t("All subparts")
+                        : t("{selected}/{total} subparts selected")
+                            .replace("{selected}", String(selectedSubparts.size))
+                            .replace("{total}", String(subparts.length))}
                 </span>
                 <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 opacity-50" />
               </Button>
@@ -828,7 +894,7 @@ function MachineSelectGroup({
             <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
               <label className="flex items-center gap-2 border-b pb-1.5 text-sm font-medium">
                 <Checkbox checked={allState} onCheckedChange={onToggleAll} disabled={disabled} />
-                All subparts
+                {t("All subparts")}
               </label>
               <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto">
                 {subparts.map((entry) => (
@@ -874,6 +940,7 @@ function PartTable({
   machine: string;
   onSelectPart: (item: AggregatedItem, machine: string) => void;
 }) {
+  const t = useTranslate(zh);
   const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0 || (renameInfo?.size ?? 0) > 0;
 
   const rows = buildKeyPartDisplayRows(
@@ -890,16 +957,16 @@ function PartTable({
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="text-muted-foreground text-sm italic">No data</p>
+          <p className="text-muted-foreground text-sm italic">{t("No data")}</p>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Part No.</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Unit</TableHead>
-                {hasKeyPartColumn && <TableHead>Key Part</TableHead>}
+                <TableHead>{t("Part No.")}</TableHead>
+                <TableHead>{t("Description")}</TableHead>
+                <TableHead>{t("Qty")}</TableHead>
+                <TableHead>{t("Unit")}</TableHead>
+                {hasKeyPartColumn && <TableHead>{t("Key Part")}</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -944,16 +1011,18 @@ function PartTable({
                         <div className="grid gap-0.5 text-xs">
                           {info && (
                             <>
-                              <span className="font-medium">Custom name: {info.customName}</span>
+                              <span className="font-medium">
+                                {t("Custom name:")} {info.customName}
+                              </span>
                               <span className="text-muted-foreground">
-                                Subparts: {info.subparts.length > 0 ? info.subparts.join(", ") : "-"}
+                                {t("Subparts:")} {info.subparts.length > 0 ? info.subparts.join(", ") : "-"}
                               </span>
                             </>
                           )}
                           {renameText && (
                             <>
                               <Badge variant="destructive" className="w-fit">
-                                Possibly renamed (machine {otherSideLabel})
+                                {t("Possibly renamed (machine {other})").replace("{other}", otherSideLabel ?? "")}
                               </Badge>
                               <span>{renameText}</span>
                             </>
@@ -963,13 +1032,13 @@ function PartTable({
                       ) : renameText ? (
                         <div className="grid gap-0.5">
                           <Badge variant="destructive" className="w-fit">
-                            Possibly renamed (machine {otherSideLabel})
+                            {t("Possibly renamed (machine {other})").replace("{other}", otherSideLabel ?? "")}
                           </Badge>
                           <span className="text-xs">{renameText}</span>
                         </div>
                       ) : info ? (
                         <Badge variant="secondary" className="w-fit">
-                          Key Part
+                          {t("Key Part")}
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground">-</span>

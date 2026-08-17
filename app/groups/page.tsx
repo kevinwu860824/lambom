@@ -20,12 +20,43 @@ import {
   type Group,
   type GroupMember,
 } from "@/lib/groups";
+import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EditableField } from "@/components/editable-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+const zh: Record<string, string> = {
+  "Admin Password": "管理員密碼",
+  "Incorrect password": "密碼錯誤",
+  Confirm: "確認",
+  "Back to Home": "回首頁",
+  "Edit Groups": "編輯群組",
+  "Grouped by employee ID — after logging in, you only see machines owned by your own group. Machine ownership is mainly generated automatically at download time; the machine list here is just for manual fixes.":
+    "依工號分組,登入後只看得到自己群組擁有的機台。機台歸屬主要由下載當下自動產生,這裡的機台列表只用來手動修正。",
+  "New group name": "新增群組名稱",
+  "Add Group": "新增",
+  "Loading…": "載入中…",
+  "No groups yet — add one to get started.": "尚無群組,請先新增。",
+  "Delete Group": "刪除群組",
+  "Members (Employee ID)": "成員(工號)",
+  "Employee ID": "工號",
+  "Name (optional)": "姓名(選填)",
+  "Add Member": "新增",
+  "No members yet": "尚無成員",
+  "Remove Member": "移除成員",
+  Machines: "機台",
+  "Select a machine to add to this group": "選擇機台加入這個群組",
+  "Add Machine": "新增",
+  "No machines yet — add one above, or members can add them automatically via SAP download.":
+    "尚無機台,可由上方新增,或由成員透過 SAP 下載自動加入。",
+  "Remove Machine": "移除機台",
+  'Delete group "{name}"? This will also remove all its members and machine ownership records — this cannot be undone.':
+    "刪除群組「{name}」？這會同時移除該群組的所有成員與機台歸屬紀錄,無法復原。",
+};
 
 // Internal-tool-grade gate, not real security — matches the rest of
 // lambom's no-auth convention (see project memory
@@ -39,6 +70,7 @@ const ADMIN_PASSWORD = "admin";
 function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(false);
+  const t = useTranslate(zh);
 
   function submit() {
     if (password === ADMIN_PASSWORD) {
@@ -49,10 +81,13 @@ function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="absolute right-4 top-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-xs">
         <CardContent className="grid gap-3 pt-6">
-          <Label>管理員密碼</Label>
+          <Label>{t("Admin Password")}</Label>
           <Input
             type="password"
             value={password}
@@ -63,12 +98,12 @@ function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
             onKeyDown={(e) => e.key === "Enter" && submit()}
             autoFocus
           />
-          {error && <p className="text-sm text-destructive">密碼錯誤</p>}
+          {error && <p className="text-sm text-destructive">{t("Incorrect password")}</p>}
           <Button onClick={submit} disabled={!password}>
-            確認
+            {t("Confirm")}
           </Button>
           <Button variant="outline" asChild>
-            <Link href="/">回首頁</Link>
+            <Link href="/">{t("Back to Home")}</Link>
           </Button>
         </CardContent>
       </Card>
@@ -78,6 +113,7 @@ function AdminPasswordGate({ onUnlock }: { onUnlock: () => void }) {
 
 export default function GroupsPage() {
   const [unlocked, setUnlocked] = useState(false);
+  const t = useTranslate(zh);
 
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
@@ -173,7 +209,13 @@ export default function GroupsPage() {
   }
 
   async function handleDeleteGroup(group: Group) {
-    if (!window.confirm(`刪除群組「${group.name}」？這會同時移除該群組的所有成員與機台歸屬紀錄,無法復原。`)) {
+    if (
+      !window.confirm(
+        t(
+          'Delete group "{name}"? This will also remove all its members and machine ownership records — this cannot be undone.'
+        ).replace("{name}", group.name)
+      )
+    ) {
       return;
     }
     setError(null);
@@ -251,34 +293,39 @@ export default function GroupsPage() {
       <div className="mx-auto max-w-2xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">編輯群組</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("Edit Groups")}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              依工號分組,登入後只看得到自己群組擁有的機台。機台歸屬主要由下載當下自動產生,這裡的機台列表只用來手動修正。
+              {t(
+                "Grouped by employee ID — after logging in, you only see machines owned by your own group. Machine ownership is mainly generated automatically at download time; the machine list here is just for manual fixes."
+              )}
             </p>
           </div>
-          <Button variant="outline" asChild>
-            <Link href="/">回首頁</Link>
-          </Button>
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher />
+            <Button variant="outline" asChild>
+              <Link href="/">{t("Back to Home")}</Link>
+            </Button>
+          </div>
         </div>
 
         <div className="mb-4 flex gap-2">
           <Input
             value={newGroupName}
             onChange={(e) => setNewGroupName(e.target.value)}
-            placeholder="新增群組名稱"
+            placeholder={t("New group name")}
             onKeyDown={(e) => e.key === "Enter" && handleAddGroup()}
           />
           <Button onClick={handleAddGroup} disabled={saving || !newGroupName.trim()}>
-            新增
+            {t("Add Group")}
           </Button>
         </div>
 
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
 
         {loading ? (
-          <p className="text-sm text-muted-foreground">載入中...</p>
+          <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
         ) : groups.length === 0 ? (
-          <p className="text-sm text-muted-foreground">尚無群組,請先新增。</p>
+          <p className="text-sm text-muted-foreground">{t("No groups yet — add one to get started.")}</p>
         ) : (
           <div className="grid gap-3">
             {groups.map((group) => {
@@ -299,7 +346,7 @@ export default function GroupsPage() {
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label="刪除群組"
+                      aria-label={t("Delete Group")}
                       className="mr-4"
                       onClick={() => handleDeleteGroup(group)}
                     >
@@ -310,30 +357,30 @@ export default function GroupsPage() {
                     {isExpanded && (
                       <div className="border-t p-4">
                         {detailLoading ? (
-                          <p className="text-sm text-muted-foreground">載入中...</p>
+                          <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
                         ) : (
                           <>
-                            <Label className="mb-1.5 block">成員(工號)</Label>
+                            <Label className="mb-1.5 block">{t("Members (Employee ID)")}</Label>
                             <div className="mb-2 flex gap-2">
                               <Input
                                 value={newEmployeeId}
                                 onChange={(e) => setNewEmployeeId(e.target.value)}
-                                placeholder="工號"
+                                placeholder={t("Employee ID")}
                                 className="w-28"
                               />
                               <Input
                                 value={newDisplayName}
                                 onChange={(e) => setNewDisplayName(e.target.value)}
-                                placeholder="姓名(選填)"
+                                placeholder={t("Name (optional)")}
                                 onKeyDown={(e) => e.key === "Enter" && handleAddMember(group.id)}
                               />
                               <Button size="sm" onClick={() => handleAddMember(group.id)} disabled={!newEmployeeId.trim()}>
-                                新增
+                                {t("Add Member")}
                               </Button>
                             </div>
                             <div className="mb-4 grid gap-1.5">
                               {members.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">尚無成員</p>
+                                <p className="text-sm text-muted-foreground">{t("No members yet")}</p>
                               ) : (
                                 members.map((m) => (
                                   <div key={m.employeeId} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
@@ -352,7 +399,7 @@ export default function GroupsPage() {
                                     <Button
                                       size="icon-sm"
                                       variant="ghost"
-                                      aria-label="移除成員"
+                                      aria-label={t("Remove Member")}
                                       onClick={() => handleRemoveMember(group.id, m.employeeId)}
                                     >
                                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -362,11 +409,11 @@ export default function GroupsPage() {
                               )}
                             </div>
 
-                            <Label className="mb-1.5 block">機台</Label>
+                            <Label className="mb-1.5 block">{t("Machines")}</Label>
                             <div className="mb-2 flex gap-2">
                               <Select value={addMachineValue} onValueChange={setAddMachineValue}>
                                 <SelectTrigger className="flex-1">
-                                  <SelectValue placeholder="選擇機台加入這個群組" />
+                                  <SelectValue placeholder={t("Select a machine to add to this group")} />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {allMachineNames
@@ -379,12 +426,14 @@ export default function GroupsPage() {
                                 </SelectContent>
                               </Select>
                               <Button size="sm" onClick={() => handleAddMachine(group.id)} disabled={!addMachineValue}>
-                                新增
+                                {t("Add Machine")}
                               </Button>
                             </div>
                             <div className="grid gap-1">
                               {machineNames.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">尚無機台,可由上方新增,或由成員透過 SAP 下載自動加入。</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {t("No machines yet — add one above, or members can add them automatically via SAP download.")}
+                                </p>
                               ) : (
                                 machineNames.map((name) => (
                                   <div key={name} className="flex items-center justify-between rounded-md border px-2 py-1.5">
@@ -392,7 +441,7 @@ export default function GroupsPage() {
                                     <Button
                                       size="icon-sm"
                                       variant="ghost"
-                                      aria-label="移除機台"
+                                      aria-label={t("Remove Machine")}
                                       onClick={() => handleRemoveMachine(group.id, name)}
                                     >
                                       <Trash2 className="h-3.5 w-3.5 text-destructive" />

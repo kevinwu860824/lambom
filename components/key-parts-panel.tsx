@@ -30,18 +30,54 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EditableField } from "@/components/editable-field";
 import { cn } from "@/lib/utils";
+import { useTranslate } from "@/lib/i18n";
 
 const ALL_MACHINES = "__all__";
 
+const zh: Record<string, string> = {
+  "Same Part No.": "料號相同",
+  "Possibly Renamed": "可能已重新命名",
+  "Not Found": "找不到",
+  "Delete this key part?": "確定要刪除這個關鍵零件嗎?",
+  "Key Parts Comparison": "關鍵零件比對",
+  "Machine Filter": "機台篩選",
+  "All Machines": "全部機台",
+  "Loading…": "載入中…",
+  'No key parts yet — add one from a result row in the "Part No. / Description Search" above.':
+    "尚無關鍵零件 — 可從上方「料號 / 說明搜尋」的結果列新增。",
+  "This machine has no key parts marked yet.": "此機台尚未標記任何關鍵零件。",
+  "Custom Name": "自訂名稱",
+  "Source Machine": "來源機台",
+  Subpart: "子件",
+  "Part No.": "料號",
+  Description: "說明",
+  "Delete key part": "刪除關鍵零件",
+  "Will check against machine A (": "將對照機台 A(",
+  ") and machine B (": ") 與機台 B(",
+  ") selected above": ") 進行比對",
+  "not selected": "未選擇",
+  "Checking…": "檢查中…",
+  "Start Check ({n})": "開始檢查 ({n})",
+  'Select machine A / B and their subparts in "Select Comparison Targets" above first':
+    "請先在上方「選擇比對目標」選取機台 A / B 及其子件",
+  "Original Part No.": "原始料號",
+  "Original Description": "原始說明",
+  "A Status": "A 狀態",
+  "A Result": "A 結果",
+  "B Status": "B 狀態",
+  "B Result": "B 結果",
+};
+
 function StatusBadge({ status }: { status: KeyPartCheckResult["status"] }) {
-  if (status === "same") return <Badge variant="secondary">Same Part No.</Badge>;
+  const t = useTranslate(zh);
+  if (status === "same") return <Badge variant="secondary">{t("Same Part No.")}</Badge>;
   if (status === "renamed")
     return (
       <Badge variant="outline" className="border-amber-400 text-amber-700">
-        Possibly Renamed
+        {t("Possibly Renamed")}
       </Badge>
     );
-  return <Badge variant="destructive">Not Found</Badge>;
+  return <Badge variant="destructive">{t("Not Found")}</Badge>;
 }
 
 export function KeyPartsPanel({
@@ -69,6 +105,7 @@ export function KeyPartsPanel({
   onRename: (id: number, newName: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
 }) {
+  const t = useTranslate(zh);
   const [expanded, setExpanded] = useState(false);
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -83,7 +120,7 @@ export function KeyPartsPanel({
   const [resultsB, setResultsB] = useState<KeyPartCheckResult[] | null>(null);
 
   async function handleDelete(id: number) {
-    if (!window.confirm("Delete this key part?")) return;
+    if (!window.confirm(t("Delete this key part?"))) return;
 
     setDeletingId(id);
     setDeleteError(null);
@@ -142,7 +179,9 @@ export function KeyPartsPanel({
       ]);
 
       if (!bomA || !bomB) {
-        setCheckError('Select machine A / B and their subparts in "Select Comparison Targets" above first');
+        setCheckError(
+          t('Select machine A / B and their subparts in "Select Comparison Targets" above first')
+        );
         return;
       }
 
@@ -167,7 +206,7 @@ export function KeyPartsPanel({
         }}
         className="flex cursor-pointer select-none flex-row items-center justify-between"
       >
-        <CardTitle>Key Parts Comparison</CardTitle>
+        <CardTitle>{t("Key Parts Comparison")}</CardTitle>
         <ChevronDown
           className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")}
         />
@@ -181,13 +220,13 @@ export function KeyPartsPanel({
 
           {!keyPartsLoading && keyParts.length > 0 && (
             <div className="mb-4 grid max-w-xs gap-1.5">
-              <label className="text-sm font-medium">Machine Filter</label>
+              <label className="text-sm font-medium">{t("Machine Filter")}</label>
               <Select value={machineFilter} onValueChange={setMachineFilter}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select machine" />
+                  <SelectValue placeholder={t("Select machine")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL_MACHINES}>All Machines</SelectItem>
+                  <SelectItem value={ALL_MACHINES}>{t("All Machines")}</SelectItem>
                   {machineOptions.map((machine) => (
                     <SelectItem key={machine} value={machine}>
                       {machine}
@@ -199,14 +238,17 @@ export function KeyPartsPanel({
           )}
 
           {keyPartsLoading ? (
-            <p className="text-muted-foreground text-sm">Loading…</p>
+            <p className="text-muted-foreground text-sm">{t("Loading…")}</p>
           ) : keyParts.length === 0 ? (
             <p className="text-muted-foreground text-sm italic">
-              No key parts yet — add one from a result row in the &quot;Part No. / Description
-              Search&quot; above.
+              {t(
+                'No key parts yet — add one from a result row in the "Part No. / Description Search" above.'
+              )}
             </p>
           ) : filteredKeyParts.length === 0 ? (
-            <p className="text-muted-foreground text-sm italic">This machine has no key parts marked yet.</p>
+            <p className="text-muted-foreground text-sm italic">
+              {t("This machine has no key parts marked yet.")}
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -219,11 +261,11 @@ export function KeyPartsPanel({
                       onCheckedChange={toggleSelectAll}
                     />
                   </TableHead>
-                  <TableHead>Custom Name</TableHead>
-                  <TableHead>Source Machine</TableHead>
-                  <TableHead>Subpart</TableHead>
-                  <TableHead>Part No.</TableHead>
-                  <TableHead>Description</TableHead>
+                  <TableHead>{t("Custom Name")}</TableHead>
+                  <TableHead>{t("Source Machine")}</TableHead>
+                  <TableHead>{t("Subpart")}</TableHead>
+                  <TableHead>{t("Part No.")}</TableHead>
+                  <TableHead>{t("Description")}</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
@@ -250,7 +292,7 @@ export function KeyPartsPanel({
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label="Delete key part"
+                        aria-label={t("Delete key part")}
                         disabled={deletingId === part.id}
                         onClick={() => handleDelete(part.id)}
                       >
@@ -265,8 +307,11 @@ export function KeyPartsPanel({
 
           <div className="mt-4 flex items-center gap-3 border-t pt-4">
             <p className="text-muted-foreground text-sm">
-              Will check against machine A (<span className="font-medium">{machineA || "not selected"}</span>)
-              and machine B (<span className="font-medium">{machineB || "not selected"}</span>) selected above
+              {t("Will check against machine A (")}
+              <span className="font-medium">{machineA || t("not selected")}</span>
+              {t(") and machine B (")}
+              <span className="font-medium">{machineB || t("not selected")}</span>
+              {t(") selected above")}
             </p>
             <Button
               className="ml-auto shrink-0"
@@ -280,7 +325,7 @@ export function KeyPartsPanel({
                 subpartsB.size === 0
               }
             >
-              {checkLoading ? "Checking…" : `Start Check (${selectedIds.size})`}
+              {checkLoading ? t("Checking…") : t("Start Check ({n})").replace("{n}", String(selectedIds.size))}
             </Button>
           </div>
 
@@ -291,13 +336,13 @@ export function KeyPartsPanel({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Custom Name</TableHead>
-                    <TableHead>Original Part No.</TableHead>
-                    <TableHead>Original Description</TableHead>
-                    <TableHead>A Status</TableHead>
-                    <TableHead>A Result</TableHead>
-                    <TableHead>B Status</TableHead>
-                    <TableHead>B Result</TableHead>
+                    <TableHead>{t("Custom Name")}</TableHead>
+                    <TableHead>{t("Original Part No.")}</TableHead>
+                    <TableHead>{t("Original Description")}</TableHead>
+                    <TableHead>{t("A Status")}</TableHead>
+                    <TableHead>{t("A Result")}</TableHead>
+                    <TableHead>{t("B Status")}</TableHead>
+                    <TableHead>{t("B Result")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
