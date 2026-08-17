@@ -40,7 +40,13 @@ interface SearchResultRow {
 
 const RESULT_LIMIT = 200;
 
-export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => void }) {
+export function DescriptionSearch({
+  allowedMachines,
+  onKeyPartAdded,
+}: {
+  allowedMachines: Set<string>;
+  onKeyPartAdded?: () => void;
+}) {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) {
@@ -62,7 +68,12 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
 
   useEffect(() => {
     fetchMachineGroups(getSupabase())
-      .then(({ machineGroups: groups }) => {
+      .then(({ machineGroups: allGroups }) => {
+        // Scoped to the signed-in employee's group — without this, both the
+        // filter panel and (since selectedBomIds defaults to every fetched
+        // subpart) the search itself covered every machine in the system,
+        // not just the ones this employee is allowed to see.
+        const groups = allGroups.filter((g) => allowedMachines.has(g.machine));
         setMachineGroups(groups);
         // Default to everything included, so the panel reads as "opt-out"
         // rather than starting empty and looking like nothing will match.
@@ -73,7 +84,7 @@ export function DescriptionSearch({ onKeyPartAdded }: { onKeyPartAdded?: () => v
         // Filter panel just won't have options; the search itself still works unfiltered.
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [allowedMachines]);
 
   function machineSubpartState(group: MachineGroup): boolean | "indeterminate" {
     const checkedCount = group.subparts.filter((s) => selectedBomIds.has(s.bomId)).length;

@@ -286,13 +286,14 @@ export default function Home() {
     await runCompare(machineAName, entriesA, machineBName, entriesB);
   }
 
-  async function loadKeyParts() {
+  async function loadKeyParts(allowedMachines: Set<string>) {
     setKeyPartsLoading(true);
     setKeyPartsError(null);
     try {
       const { data, error } = await getSupabase()
         .from("key_parts")
         .select("id,part_no,description,custom_name,machine_name,source_file")
+        .in("machine_name", Array.from(allowedMachines))
         .order("id", { ascending: true });
       if (error) throw new Error(error.message);
       setKeyParts(data ?? []);
@@ -324,7 +325,7 @@ export default function Home() {
       setInitError(`Failed to load data: ${err instanceof Error ? err.message : String(err)}`);
       setInitLoading(false);
     });
-    loadKeyParts();
+    loadKeyParts(allowedMachines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedMachines]);
 
@@ -543,7 +544,10 @@ export default function Home() {
           </Card>
         )}
 
-        <DescriptionSearch onKeyPartAdded={loadKeyParts} />
+        <DescriptionSearch
+          allowedMachines={allowedMachines}
+          onKeyPartAdded={() => loadKeyParts(allowedMachines)}
+        />
 
         <Card className="mb-6">
           <CardHeader>
