@@ -83,37 +83,71 @@ export interface KeyPartInfo {
 export interface KeyPartDisplayRow {
   item: AggregatedItem;
   keyPartInfo: KeyPartInfo | null;
-  renameText: string | null;
+}
+
+// Symmetric description-based pairing between two "Only in A/B" item lists,
+// independent of key_parts — this is what lets a genuinely-renamed part (same
+// description, different part_no) line up on the same row across both sides,
+// without depending on key_parts.description ever being populated. Returns a
+// rank per side; items sharing a description get the same rank, so sorting
+// both sides by rank puts matched pairs on the same row index.
+export function matchItemsByDescription(
+  itemsA: AggregatedItem[],
+  itemsB: AggregatedItem[]
+): { rankA: Map<string, number>; rankB: Map<string, number> } {
+  const byDescriptionB = new Map<string, AggregatedItem[]>();
+  for (const item of itemsB) {
+    const key = normalizeDescription(item.description);
+    if (!key) continue;
+    if (!byDescriptionB.has(key)) byDescriptionB.set(key, []);
+    byDescriptionB.get(key)!.push(item);
+  }
+
+  const matchedA = itemsA
+    .filter((item) => byDescriptionB.has(normalizeDescription(item.description)))
+    .slice()
+    .sort((a, b) => a.part_no.localeCompare(b.part_no));
+
+  const rankA = new Map<string, number>();
+  const rankB = new Map<string, number>();
+  matchedA.forEach((item, rank) => {
+    rankA.set(item.part_no, rank);
+    const matches = byDescriptionB.get(normalizeDescription(item.description)) ?? [];
+    matches.forEach((m) => {
+      if (!rankB.has(m.part_no)) rankB.set(m.part_no, rank);
+    });
+  });
+
+  return { rankA, rankB };
 }
 
 // Shared by the on-screen Only in A/B tables and the Excel export, so both
-// always agree on ordering/highlighting: suspected-renamed rows first, then
-// plain key parts, then everything else. `renameRank`, when given, orders the
-// renamed group to match the position of the key part it corresponds to on
-// the other side (see app/page.tsx's renameRankB), instead of alphabetically.
+// always agree on ordering/highlighting. Sort tiers: ① registered key parts
+// (on this row's own machine) always come first, regardless of whether a
+// description match was found; ② rows paired by matching description (via
+// `descRank`) come next, sorted to line up with their counterpart on the
+// other side; ③ everything else last, alphabetically. A row that is both a
+// key part and description-matched stays in tier ①, but still sorts by its
+// descRank so it lines up with its counterpart.
 export function buildKeyPartDisplayRows(
   items: AggregatedItem[],
   keyPartInfo: Map<string, KeyPartInfo>,
-  renameInfo: Map<string, string>,
-  renameRank?: Map<string, number>
+  descRank: Map<string, number>
 ): KeyPartDisplayRow[] {
   return items
     .map((item) => ({
       item,
       keyPartInfo: keyPartInfo.get(item.part_no) ?? null,
-      renameText: renameInfo.get(item.part_no) ?? null,
+      _rank: descRank.get(item.part_no) ?? Number.MAX_SAFE_INTEGER,
     }))
     .sort((a, b) => {
-      const scoreA = a.renameText ? 2 : a.keyPartInfo ? 1 : 0;
-      const scoreB = b.renameText ? 2 : b.keyPartInfo ? 1 : 0;
-      if (scoreA !== scoreB) return scoreB - scoreA;
-      if (scoreA === 2 && renameRank) {
-        const rankA = renameRank.get(a.item.part_no) ?? Number.MAX_SAFE_INTEGER;
-        const rankB = renameRank.get(b.item.part_no) ?? Number.MAX_SAFE_INTEGER;
-        if (rankA !== rankB) return rankA - rankB;
-      }
+      const scoreA = a.keyPartInfo ? 0 : a._rank !== Number.MAX_SAFE_INTEGER ? 1 : 2;
+      const scoreB = b.keyPartInfo ? 0 : b._rank !== Number.MAX_SAFE_INTEGER ? 1 : 2;
+      if (scoreA !== scoreB) return scoreA - scoreB;
+      if (a._rank !== b._rank) return a._rank - b._rank;
       return a.item.part_no.localeCompare(b.item.part_no);
-    });
+    })
+    .map(({ item, keyPartInfo: info }) => ({ item, keyPartInfo: info }));
 }
 
 export function formatAggregatedMatches(matches: AggregatedItem[]): string {

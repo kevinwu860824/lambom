@@ -10,7 +10,6 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import {
   aggregateByPartNo,
   buildKeyPartDisplayRows,
-  checkKeyParts,
   compareBoms,
   documentPartCodeFor,
   DOCUMENT_PART_PREFIXES,
@@ -19,9 +18,8 @@ import {
   fetchFullBomItems,
   fetchFullBomTreeItems,
   fetchMachineGroups,
-  formatAggregatedMatches,
+  matchItemsByDescription,
   type BomEntry,
-  type BomItem,
   type BomTreeItem,
   type CompareResult,
   type KeyPart,
@@ -105,7 +103,6 @@ const zh: Record<string, string> = {
   "Key Part": "關鍵零件",
   "Custom name:": "自訂名稱:",
   "Subparts:": "子件:",
-  "Possibly renamed (machine {other})": "可能已重新命名(機台 {other})",
   "Machine {label}": "機台 {label}",
   "Select machine": "選擇機台",
   "Subpart {label}": "子件 {label}",
@@ -154,8 +151,6 @@ export default function Home() {
   const [resultFilter, setResultFilter] = useState("");
   const [visibleDocumentCodes, setVisibleDocumentCodes] = useState<Set<string>>(new Set());
   const [resultsExpanded, setResultsExpanded] = useState(true);
-  const [bomAItems, setBomAItems] = useState<BomItem[]>([]);
-  const [bomBItems, setBomBItems] = useState<BomItem[]>([]);
   const [subpartMapA, setSubpartMapA] = useState<Map<string, string[]>>(new Map());
   const [subpartMapB, setSubpartMapB] = useState<Map<string, string[]>>(new Map());
 
@@ -287,8 +282,6 @@ export default function Home() {
         return;
       }
 
-      setBomAItems(bomA.items);
-      setBomBItems(bomB.items);
       // Full BOM has no per-module breakdown, so there's nothing to show in
       // the "Subparts: ..." key-part detail column in that mode.
       setSubpartMapA(compareMode === "fullBom" ? new Map() : buildSubpartMap(entriesA));
@@ -342,13 +335,31 @@ export default function Home() {
     setKeyPartsLoading(true);
     setKeyPartsError(null);
     try {
-      const { data, error } = await getSupabase()
-        .from("key_parts")
-        .select("id,part_no,description,custom_name,machine_name,source_file")
-        .in("machine_name", Array.from(allowedMachines))
-        .order("id", { ascending: true });
-      if (error) throw new Error(error.message);
-      setKeyParts(data ?? []);
+      // Keyset-paginated (id > afterId, ordered by id, page size 1000) — a
+      // single .in("machine_name", ...) select without pagination silently
+      // truncates at Supabase/PostgREST's default 1000-row cap. A group
+      // with enough machines/key parts (e.g. EXTREME: 3,279 matching rows)
+      // would silently lose every row past the cap, with no error — whole
+      // machines' worth of key parts just vanish from later id ranges.
+      const machineNames = Array.from(allowedMachines);
+      const pageSize = 1000;
+      const allRows: KeyPart[] = [];
+      let afterId = 0;
+      for (;;) {
+        const { data, error } = await getSupabase()
+          .from("key_parts")
+          .select("id,part_no,description,custom_name,machine_name,source_file")
+          .in("machine_name", machineNames)
+          .gt("id", afterId)
+          .order("id", { ascending: true })
+          .limit(pageSize);
+        if (error) throw new Error(error.message);
+        if (!data || data.length === 0) break;
+        allRows.push(...data);
+        afterId = data[data.length - 1].id;
+        if (data.length < pageSize) break;
+      }
+      setKeyParts(allRows);
     } catch (err) {
       setKeyPartsError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -449,13 +460,10 @@ export default function Home() {
     );
   }
 
-  // Key parts: each machine's own key parts get sorted to the top and flagged
-  // in "Only in A/B" (A shows which subpart it appears in + its custom name);
-  // if the other side has an item with the same description but a different
-  // part number, treat it as a possible rename and pin/flag it in red — even
-  // when B has no key parts of its own, if one of A's key parts turns up a
-  // suspected rename in B, that item still gets pinned/flagged on the B side
-  // too (reverse detection).
+  // Key parts: any "Only in A/B" row whose part_no is registered as a key
+  // part on its OWN machine is flagged in red with its custom name —
+  // unconditionally, regardless of whether the other side has anything
+  // matching it (a part unique to one machine is still worth calling out).
   const keyPartsA = useMemo(
     () => keyParts.filter((k) => k.machine_name === machineA),
     [keyParts, machineA]
@@ -480,66 +488,22 @@ export default function Home() {
     return map;
   }, [keyPartsB, subpartMapB]);
 
-  const renameCheckA = useMemo(
-    () => (keyPartsA.length > 0 ? checkKeyParts(keyPartsA, bomBItems) : []),
-    [keyPartsA, bomBItems]
+  // Separately: any two "Only in A/B" rows — key part or not — whose
+  // description matches exactly are paired and sorted to the same row
+  // position on both sides, purely by comparing the actual BOM data (not
+  // key_parts.description, which is frequently unpopulated).
+  const descMatch = useMemo(
+    () => matchItemsByDescription(filteredOnlyA, filteredOnlyB),
+    [filteredOnlyA, filteredOnlyB]
   );
-  const renameCheckB = useMemo(
-    () => (keyPartsB.length > 0 ? checkKeyParts(keyPartsB, bomAItems) : []),
-    [keyPartsB, bomAItems]
-  );
-
-  const renameInfoA = useMemo(() => {
-    const map = new Map<string, string>();
-    renameCheckA.forEach((r) => {
-      if (r.status === "renamed") map.set(r.keyPart.part_no, formatAggregatedMatches(r.matches));
-    });
-    return map;
-  }, [renameCheckA]);
-
-  const renameInfoB = useMemo(() => {
-    const map = new Map<string, string>();
-    renameCheckB.forEach((r) => {
-      if (r.status === "renamed") map.set(r.keyPart.part_no, formatAggregatedMatches(r.matches));
-    });
-    // Reverse direction: A's key parts that seem renamed in B should also
-    // pin/flag on the B side, even when B has no key parts of its own.
-    renameCheckA.forEach((r) => {
-      if (r.status === "renamed") {
-        r.matches.forEach((m) => {
-          map.set(m.part_no, `Possibly A's key part "${r.keyPart.custom_name}" (original part no. ${r.keyPart.part_no})`);
-        });
-      }
-    });
-    return map;
-  }, [renameCheckA, renameCheckB]);
-
-  // B's ordering: after pinning to the top, sort by the rank of the A key
-  // part each row maps to (not by B's own part number alphabetically), so
-  // the two sides' suspected-matching rows line up as closely as possible.
-  const renameRankB = useMemo(() => {
-    const rankedA = renameCheckA
-      .filter((r) => r.status === "renamed")
-      .slice()
-      .sort((a, b) => a.keyPart.part_no.localeCompare(b.keyPart.part_no));
-
-    const map = new Map<string, number>();
-    rankedA.forEach((r, rank) => {
-      r.matches.forEach((m) => {
-        if (!map.has(m.part_no)) map.set(m.part_no, rank);
-      });
-    });
-    return map;
-  }, [renameCheckA]);
 
   function handleExportClick() {
     if (!summaryA || !summaryB || !result) return;
     exportCompareToExcel(summaryA, summaryB, result, filteredOnlyA, filteredOnlyB, {
       keyPartInfoA,
       keyPartInfoB,
-      renameInfoA,
-      renameInfoB,
-      renameRankB,
+      descRankA: descMatch.rankA,
+      descRankB: descMatch.rankB,
     });
   }
 
@@ -767,8 +731,7 @@ export default function Home() {
                   title={t("Only in A")}
                   items={filteredOnlyA}
                   keyPartInfo={keyPartInfoA}
-                  renameInfo={renameInfoA}
-                  otherSideLabel="B"
+                  descRank={descMatch.rankA}
                   keyPartColumnVariant="detail"
                   machine={summaryA?.machine ?? ""}
                   onSelectPart={openPositionDialog}
@@ -777,9 +740,7 @@ export default function Home() {
                   title={t("Only in B")}
                   items={filteredOnlyB}
                   keyPartInfo={keyPartInfoB}
-                  renameInfo={renameInfoB}
-                  renameRank={renameRankB}
-                  otherSideLabel="A"
+                  descRank={descMatch.rankB}
                   keyPartColumnVariant="badge"
                   machine={summaryB?.machine ?? ""}
                   onSelectPart={openPositionDialog}
@@ -923,9 +884,7 @@ function PartTable({
   title,
   items,
   keyPartInfo,
-  renameInfo,
-  renameRank,
-  otherSideLabel,
+  descRank,
   keyPartColumnVariant = "badge",
   machine,
   onSelectPart,
@@ -933,22 +892,15 @@ function PartTable({
   title: string;
   items?: AggregatedItem[];
   keyPartInfo?: Map<string, KeyPartInfo>;
-  renameInfo?: Map<string, string>;
-  renameRank?: Map<string, number>;
-  otherSideLabel?: string;
+  descRank?: Map<string, number>;
   keyPartColumnVariant?: "badge" | "detail";
   machine: string;
   onSelectPart: (item: AggregatedItem, machine: string) => void;
 }) {
   const t = useTranslate(zh);
-  const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0 || (renameInfo?.size ?? 0) > 0;
+  const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0;
 
-  const rows = buildKeyPartDisplayRows(
-    items ?? [],
-    keyPartInfo ?? new Map(),
-    renameInfo ?? new Map(),
-    renameRank
-  );
+  const rows = buildKeyPartDisplayRows(items ?? [], keyPartInfo ?? new Map(), descRank ?? new Map());
 
   return (
     <Card>
@@ -970,7 +922,7 @@ function PartTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map(({ item, keyPartInfo: info, renameText }) => (
+              {rows.map(({ item, keyPartInfo: info }) => (
                 <TableRow
                   key={item.part_no}
                   role="button"
@@ -979,10 +931,7 @@ function PartTable({
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") onSelectPart(item, machine);
                   }}
-                  className={cn(
-                    "hover:bg-accent cursor-pointer",
-                    renameText && "text-red-600 dark:text-red-400"
-                  )}
+                  className={cn("hover:bg-accent cursor-pointer", info && "text-red-600 dark:text-red-400")}
                 >
                   <TableCell>
                     <div className="flex items-center gap-1.5">
@@ -1007,39 +956,21 @@ function PartTable({
                   <TableCell>{item.uom ?? ""}</TableCell>
                   {hasKeyPartColumn && (
                     <TableCell>
-                      {keyPartColumnVariant === "detail" ? (
-                        <div className="grid gap-0.5 text-xs">
-                          {info && (
-                            <>
-                              <span className="font-medium">
-                                {t("Custom name:")} {info.customName}
-                              </span>
-                              <span className="text-muted-foreground">
-                                {t("Subparts:")} {info.subparts.length > 0 ? info.subparts.join(", ") : "-"}
-                              </span>
-                            </>
-                          )}
-                          {renameText && (
-                            <>
-                              <Badge variant="destructive" className="w-fit">
-                                {t("Possibly renamed (machine {other})").replace("{other}", otherSideLabel ?? "")}
-                              </Badge>
-                              <span>{renameText}</span>
-                            </>
-                          )}
-                          {!info && !renameText && <span className="text-muted-foreground">-</span>}
-                        </div>
-                      ) : renameText ? (
-                        <div className="grid gap-0.5">
+                      {info ? (
+                        keyPartColumnVariant === "detail" ? (
+                          <div className="grid gap-0.5 text-xs">
+                            <span className="font-medium">
+                              {t("Custom name:")} {info.customName}
+                            </span>
+                            <span>
+                              {t("Subparts:")} {info.subparts.length > 0 ? info.subparts.join(", ") : "-"}
+                            </span>
+                          </div>
+                        ) : (
                           <Badge variant="destructive" className="w-fit">
-                            {t("Possibly renamed (machine {other})").replace("{other}", otherSideLabel ?? "")}
+                            {info.customName}
                           </Badge>
-                          <span className="text-xs">{renameText}</span>
-                        </div>
-                      ) : info ? (
-                        <Badge variant="secondary" className="w-fit">
-                          {t("Key Part")}
-                        </Badge>
+                        )
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}

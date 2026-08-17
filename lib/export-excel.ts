@@ -19,9 +19,8 @@ const RENAMED_FONT_COLOR = "DC2626";
 export interface KeyPartExportInfo {
   keyPartInfoA: Map<string, KeyPartInfo>;
   keyPartInfoB: Map<string, KeyPartInfo>;
-  renameInfoA: Map<string, string>;
-  renameInfoB: Map<string, string>;
-  renameRankB: Map<string, number>;
+  descRankA: Map<string, number>;
+  descRankB: Map<string, number>;
 }
 
 function thinBorder(color: string) {
@@ -42,9 +41,9 @@ function headerStyle(): CellStyle {
   };
 }
 
-function bodyStyle(isStripe: boolean, isRenamed: boolean): CellStyle {
+function bodyStyle(isStripe: boolean, isKeyPart: boolean): CellStyle {
   return {
-    font: isRenamed ? { color: { rgb: RENAMED_FONT_COLOR } } : undefined,
+    font: isKeyPart ? { color: { rgb: RENAMED_FONT_COLOR } } : undefined,
     fill: isStripe ? { fgColor: { rgb: STRIPE_FILL } } : undefined,
     border: thinBorder(BORDER_COLOR),
     alignment: { vertical: "center" },
@@ -55,7 +54,7 @@ function applyStyles(
   sheet: XLSX.WorkSheet,
   rows: CellValue[][],
   headerRowCount: number,
-  renamedRows: Set<number> = new Set()
+  keyPartRows: Set<number> = new Set()
 ) {
   const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
 
@@ -66,7 +65,7 @@ function applyStyles(
       sheet[ref].s =
         r < headerRowCount
           ? headerStyle()
-          : bodyStyle((r - headerRowCount) % 2 === 1, renamedRows.has(r));
+          : bodyStyle((r - headerRowCount) % 2 === 1, keyPartRows.has(r));
     }
   }
 }
@@ -88,41 +87,39 @@ function autoColWidths(rows: CellValue[][]): { wch: number }[] {
 function buildSheet(
   rows: CellValue[][],
   headerRowCount: number,
-  renamedRows?: Set<number>
+  keyPartRows?: Set<number>
 ): XLSX.WorkSheet {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet["!cols"] = autoColWidths(rows);
-  applyStyles(sheet, rows, headerRowCount, renamedRows);
+  applyStyles(sheet, rows, headerRowCount, keyPartRows);
   return sheet;
 }
 
 function buildPartSheet(
   items: AggregatedItem[],
   keyPartInfo: Map<string, KeyPartInfo>,
-  renameInfo: Map<string, string>,
-  renameRank?: Map<string, number>
+  descRank: Map<string, number>
 ): XLSX.WorkSheet {
-  const displayRows = buildKeyPartDisplayRows(items, keyPartInfo, renameInfo, renameRank);
+  const displayRows = buildKeyPartDisplayRows(items, keyPartInfo, descRank);
 
   const rows: CellValue[][] = [
-    ["Part No.", "Description", "Qty", "Unit", "Custom Name", "Subparts", "Possibly Renamed"],
-    ...displayRows.map(({ item, keyPartInfo: info, renameText }) => [
+    ["Part No.", "Description", "Qty", "Unit", "Custom Name", "Subparts"],
+    ...displayRows.map(({ item, keyPartInfo: info }) => [
       item.part_no,
       item.description ?? "",
       item.qty ?? "",
       item.uom ?? "",
       info?.customName ?? "",
       info && info.subparts.length > 0 ? info.subparts.join(", ") : "",
-      renameText ?? "",
     ]),
   ];
 
-  const renamedRows = new Set<number>();
+  const keyPartRows = new Set<number>();
   displayRows.forEach((row, i) => {
-    if (row.renameText) renamedRows.add(i + 1); // +1: header occupies row 0
+    if (row.keyPartInfo) keyPartRows.add(i + 1); // +1: header occupies row 0
   });
 
-  return buildSheet(rows, 1, renamedRows);
+  return buildSheet(rows, 1, keyPartRows);
 }
 
 function safeFilenamePart(name: string): string {
@@ -137,7 +134,7 @@ export function exportCompareToExcel(
   filteredOnlyB: AggregatedItem[],
   keyPartExportInfo: KeyPartExportInfo
 ) {
-  const { keyPartInfoA, keyPartInfoB, renameInfoA, renameInfoB, renameRankB } = keyPartExportInfo;
+  const { keyPartInfoA, keyPartInfoB, descRankA, descRankB } = keyPartExportInfo;
   const qtyMismatchCount = result.common.filter((item) => !item.qtyMatch).length;
 
   const summaryRows: CellValue[][] = [
@@ -160,12 +157,12 @@ export function exportCompareToExcel(
   XLSX.utils.book_append_sheet(wb, buildSheet(summaryRows, 1), "Comparison Summary");
   XLSX.utils.book_append_sheet(
     wb,
-    buildPartSheet(filteredOnlyA, keyPartInfoA, renameInfoA),
+    buildPartSheet(filteredOnlyA, keyPartInfoA, descRankA),
     "Only in A"
   );
   XLSX.utils.book_append_sheet(
     wb,
-    buildPartSheet(filteredOnlyB, keyPartInfoB, renameInfoB, renameRankB),
+    buildPartSheet(filteredOnlyB, keyPartInfoB, descRankB),
     "Only in B"
   );
 
