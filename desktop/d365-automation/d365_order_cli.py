@@ -371,7 +371,15 @@ def create_work_order(page, wo):
         if count == 1:
             chosen = options.first
         elif chamber:
-            chosen = options.filter(has_text=chamber)
+            # Matched against the aria-label attribute, same as the FID
+            # match above — not .filter(has_text=...), which checks
+            # rendered/visible text and isn't guaranteed to contain the
+            # same identifying detail the aria-label does (confirmed in
+            # real testing: these labels distinguish chambers by a serial
+            # suffix like "VXT-6550" / "VXT-6551", not literal "PM1"/"PM2"
+            # text — the caller passes whatever substring actually appears
+            # in the aria-label for the chamber they mean).
+            chosen = page.locator(f'[aria-label*="{fid}"][aria-label*="{chamber}"]')
             if chosen.count() == 0:
                 raise RuntimeError(
                     f"FID '{fid}' matched {count} option(s), but none contain chamber hint "
