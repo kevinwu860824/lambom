@@ -19,3 +19,14 @@ contextBridge.exposeInMainWorld("fidDownloader", {
 contextBridge.exposeInMainWorld("inventoryLookup", {
   lookup: (partNo) => ipcRenderer.invoke("inventory:lookup", { partNo }),
 });
+
+contextBridge.exposeInMainWorld("d365Order", {
+  fill: (payload) => ipcRenderer.invoke("d365-order:fill", payload),
+  confirmSubmit: () => ipcRenderer.invoke("d365-order:confirm-submit"),
+  cancel: () => ipcRenderer.invoke("d365-order:cancel"),
+  onLog: (callback) => {
+    const listener = (_event, line) => callback(line);
+    ipcRenderer.on("d365-order:log", listener);
+    return () => ipcRenderer.removeListener("d365-order:log", listener);
+  },
+});

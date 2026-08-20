@@ -23,6 +23,10 @@ desktop/sap-downloader/dist/
 desktop/sap-downloader/build/
 desktop/sap-downloader/__pycache__/
 desktop/sap-downloader/*.spec
+desktop/d365-automation/dist/
+desktop/d365-automation/build/
+desktop/d365-automation/__pycache__/
+desktop/d365-automation/*.spec
 
 # misc
 .DS_Store

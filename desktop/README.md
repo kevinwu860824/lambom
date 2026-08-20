@@ -1,6 +1,6 @@
 # lambom Desktop
 
-Packages the lambom web app as a Windows desktop program (a real window, not a browser tab opened for you), and also bundles the SAP FID download tool (automation logic moved over from `fid_downloader_gui.py`).
+Packages the lambom web app as a Windows desktop program (a real window, not a browser tab opened for you), and also bundles the SAP FID download tool (automation logic moved over from `fid_downloader_gui.py`) and the D365 spare-part order automation tool.
 
 Completely independent from the main lambom web project — it doesn't affect the Vercel deployment at all. This whole `desktop/` folder is only needed when you actually want to build the desktop version.
 
@@ -10,6 +10,7 @@ Completely independent from the main lambom web project — it doesn't affect th
 desktop/
   electron/          Electron desktop shell (window, preload bridge)
   sap-downloader/     fid_downloader_gui.py with the window UI stripped out, as a CLI
+  d365-automation/    D365 spare-part order automation, driving Edge via Playwright
 ```
 
 **The main window** loads the live production URL of the lambom web app directly (Next.js isn't bundled into the exe), so whenever you push to main and Vercel auto-deploys, the desktop app automatically shows the latest version too — no need to rebuild the exe.
@@ -32,6 +33,31 @@ If one item fails (at any step), it doesn't stop the batch — processing contin
 
 While processing, a "Cancel" button appears — clicking it immediately kills the currently running SAP download child process and stops processing the rest of the queue (already-completed items are unaffected). The running download child process is also automatically killed when the lambom window is closed or the app quits entirely, so it never lingers as an orphan process still operating SAP in the background.
 
+## Spare Part Order (D365 automation) — v1, Stage 1 only
+
+**Its own page, `/spare-order`** (`components/spare-order-panel.tsx`), not embedded in an existing page — same `window.d365Order` desktop-detection pattern as the two tools above (`lib/d365-order.ts`), invisible on the public web deployment.
+
+Automates the tedious part of ordering a spare part in D365 Field Service: fill in a form (problem description, machine, part number, delivery info), click "Fill D365 Form", and a real, visible Microsoft Edge window is driven through creating a Work Order, a Bookable Resource booking, a Quality Escape (header + item), and the Product/Delivery Instruction fields — then **stops** at a review checkpoint, leaving that Edge window open and untouched for you to look at.
+
+**"Upload to SAP" (the step that actually creates a real Sales Order) is deliberately NOT automated yet.** Clicking "Confirm" in the panel doesn't click that button for you — it just logs a reminder to click it yourself in the still-open Edge window. See `d365_order_cli.py`'s module docstring for exactly why (the recorded reference walkthrough this tool was built from failed to capture that click reliably — it's inside a flaky nested Power Apps canvas widget) and the project's plan file for the concrete next step before wiring that up for real.
+
+Unlike the SAP downloader above, this tool's child process is **long-lived on purpose**: it has to keep the same browser window open between "form filled in" and "user clicks Confirm/Discard," which can be minutes apart. It reads the form payload as one line of JSON on stdin, then later reads a second `{"action": "confirm"}` / `{"action": "cancel"}` line — see the module docstring for the full protocol. "Discard" closes the browser without touching SAP; quitting the whole lambom app force-kills it the same way as the SAP downloader (`taskkill /T /F`).
+
+Uses Playwright (not SAP GUI Scripting) to drive Edge, launched via a **dedicated, separate Edge profile** (not your everyday one) so it never fights over a locked profile with your regular already-open Edge windows — this relies on this device's Entra ID SSO trusting a brand-new profile the same way it trusts your regular one, which **has not been verified** (see the module docstring's "KNOWN UNVERIFIED ASSUMPTIONS").
+
+Build the same way as the SAP downloader:
+
+```bat
+cd desktop\d365-automation
+build.bat
+```
+
+Produces `desktop\d365-automation\dist\d365_order_cli.exe`. Test it standalone before wiring it into Electron:
+
+```bat
+echo {"workOrder":{"installation":"Non Installation","description":"test","reportedProblemDetail":"test","serviceType":"Warranty Service (ZSM3)","customerAsset":"255711","e10AssetState":"Unscheduled Down Time","e10AssetSubstatus":"Repair"},"qualityEscape":{"customerTemperature":"Unknown","wafersScrapped":"No","customerTrackingType":"","safetyIssue":"No","commitDate":"Minor Commit Date Missed","problemDescription":"test"},"qualityEscapeItem":{"causingProblem":"test","deviation":"test","specification":"test","additionalNotes":""},"product":{"partNo":"734-C05212-001","priorityCode":"P0","deliveryDate":"2026-01-01","deliveryTime":"11:00","location":"test dock","contactName":"Test","contactPhone":"0000-000-000"}} | dist\d365_order_cli.exe
+```
+
 ## Configuring the production URL
 
 Edit `electron/config.js` and replace `LAMBOM_URL` with lambom's actual Vercel production URL.
@@ -44,7 +70,7 @@ npm install
 npm start
 ```
 
-This lets you test the window shell itself on a Mac (the main window, menu, SAP Download panel's display/log logic). But whether "SAP Download" actually works when clicked can only be verified on a Windows machine with SAP GUI installed, since `fid_downloader_cli.py`'s use of `win32com` is Windows-only COM automation that simply doesn't run on a Mac.
+This lets you test the window shell itself on a Mac (the main window, menu, SAP Download panel's display/log logic). But whether "SAP Download" actually works when clicked can only be verified on a Windows machine with SAP GUI installed, since `fid_downloader_cli.py`'s use of `win32com` is Windows-only COM automation that simply doesn't run on a Mac. Same story for "Spare Part Order" — `channel="msedge"` needs a real, installed Microsoft Edge, and the whole SSO assumption it's built on only means anything on the actual company Windows machine.
 
 ## Building a production exe on Windows
 
@@ -71,7 +97,9 @@ dist\fid_downloader_cli.exe --mode modules --so R0542
 
 Once finished you should see an `R0542_modules.xlsx` in the current folder, one sheet per module (the multiple raw files SAP produces have already been merged and cleaned up automatically).
 
-**Step 2: build the Electron desktop app**
+**Step 2: build `d365_order_cli.exe`** — same idea, see the "Spare Part Order" section above (`cd desktop\d365-automation && build.bat`).
+
+**Step 3: build the Electron desktop app**
 
 ```bat
 cd desktop\electron
@@ -79,10 +107,11 @@ npm install
 npm run dist
 ```
 
-The `electron-builder` config already specifies that the `fid_downloader_cli.exe` produced in the previous step gets bundled in too (`extraResources`); once done, you'll find an installer (`.exe` NSIS installer) in `desktop\electron\dist\`.
+The `electron-builder` config already specifies that `fid_downloader_cli.exe`, `inventory_lookup_cli.exe`, and `d365_order_cli.exe` produced in the previous steps all get bundled in too (`extraResources`); once done, you'll find an installer (`.exe` NSIS installer) in `desktop\electron\dist\`.
 
 ## Known limitations / possible future work
 
 - There's no app icon yet — electron-builder will use its default icon. To use a custom one, drop a 256x256 .ico at `electron/build/icon.ico`, and add `"icon": "build/icon.ico"` under `build.win` in `package.json`.
 - There's no code signing yet, so Windows SmartScreen may show a warning — the same situation as the current BOM Manager exe, which is generally acceptable for an internal tool.
 - FID→SO resolution (`resolve_so_from_fid`): if a FID's BOM has been revised, VA03 may return more than one result, in which case the "bottom-most" one in the list is always picked. The list's "row" spacing (each additional result shifts down by 129) was derived from real cases and has been verified correct up to 5 results (FID 245828). The list's "column" position isn't always the same across searches (columns 3, 4, and 7 have all been observed for different FIDs), so the tool first scans a column range (starting at 2, excluding a decorative column 1 found during testing) to determine which column this search is using, rather than guessing a fixed value. If VA03's order field comes back empty after selecting, it raises an error immediately rather than continuing with an unverified SO value. If a wrong selection happens, check whether the log's printed result count / column / resolved SO are correct.
+- **Spare Part Order is genuinely untested against real D365** — it's a direct, best-effort translation of one `playwright codegen` recording, not something that's been run and debugged against the live system yet (unlike everything else in this desktop app). See the project's plan file and `d365_order_cli.py`'s module docstring ("KNOWN UNVERIFIED ASSUMPTIONS") for the specific open questions — most importantly the "Upload to SAP" button's selector (needed before Stage 2/"Confirm" can do anything real), whether a brand-new Edge profile still gets silent SSO on the target device, and the full valid option lists for each D365 dropdown field.

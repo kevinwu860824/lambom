@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Boxes, ClipboardList, Settings } from "lucide-react";
+import { Boxes, ClipboardList, Package, Settings } from "lucide-react";
 import { useEmployeeGroup, type Group } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ const zh: Record<string, string> = {
   "Please enter your employee ID first": "請先輸入工號",
   "BOM Comparison Tool": "BOM 比對工具",
   "F22 VXT Daily Passdown": "F22 VXT 交接紀錄",
+  "D365 Order Automation": "D365 訂料自動化",
 };
 
 const apps = [
@@ -39,6 +40,13 @@ const apps = [
     description: "F22 VXT Daily Passdown",
     icon: ClipboardList,
     gradient: "from-amber-400 to-orange-600",
+  },
+  {
+    href: "/spare-order",
+    label: "Spare Order",
+    description: "D365 Order Automation",
+    icon: Package,
+    gradient: "from-emerald-400 to-teal-600",
   },
 ];
 
@@ -132,7 +140,7 @@ export default function Home() {
             {t("Please enter your employee ID in the top-right corner first to access the tools below")}
           </p>
         )}
-        <div className="grid grid-cols-2 gap-8 sm:gap-12">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 sm:gap-12">
           {apps.map(({ href, label, description, icon: Icon, gradient }) => {
             const tile = (
               <>

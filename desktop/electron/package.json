@@ -24,6 +24,10 @@
       {
         "from": "../sap-downloader/dist/inventory_lookup_cli.exe",
         "to": "inventory_lookup_cli.exe"
+      },
+      {
+        "from": "../d365-automation/dist/d365_order_cli.exe",
+        "to": "d365_order_cli.exe"
       }
     ],
     "win": {
