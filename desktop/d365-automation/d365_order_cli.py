@@ -133,10 +133,14 @@ KNOWN UNVERIFIED ASSUMPTIONS — read before relying on this in production:
     reporting back exactly what broke — the same iterative process this
     repo's SAP GUI Scripting tools were originally built with.
 
-Packaging into an exe (run on Windows):
+Packaging into an exe (run on Windows) — see build.bat, which does this:
     pip install -r requirements.txt
     playwright install msedge
     pyinstaller --onefile --console --name d365_order_cli d365_order_cli.py
+   (requirements.txt points at the real PyPI index directly for this —
+   this company's internal pip mirror doesn't proxy playwright, confirmed
+   2026-08-20: installing it against the default/company index fails with
+   "Could not find a version that satisfies the requirement playwright".)
    (Keep console output — don't add --noconsole, since Electron needs to
    read stdout, and this tool also reads a second command from stdin.)
 """

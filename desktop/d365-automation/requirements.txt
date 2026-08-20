@@ -1,2 +1,7 @@
+# This company's internal pip mirror (Artifactory) doesn't proxy
+# playwright — confirmed 2026-08-20, `pip install playwright` against the
+# default index fails with "Could not find a version that satisfies the
+# requirement playwright". Go straight to the real PyPI index instead.
+--index-url https://pypi.org/simple
 playwright
 pyinstaller
