@@ -393,30 +393,23 @@ def create_work_order(page, wo):
 
         chosen.click(timeout=4000)
 
-        # CONFIRMED IN REAL TESTING (2026-08-20): a failed/wrong asset
-        # selection here doesn't fail loudly on its own — instead a LATER,
-        # unrelated field (SEMI E10 Asset State, which D365 likely only
-        # shows once a valid asset is selected) fails to even be found at
-        # all, which is a much more confusing error to debug. Verify right
-        # here instead, so a bad selection fails at its actual source.
+        # CONFIRMED IN REAL TESTING (2026-08-20): after a successful
+        # selection, this field displays a completely different internal
+        # system ID (e.g. "10185217"), NOT anything containing the FID —
+        # an earlier version of this check assumed the FID would still
+        # appear and raised a false-positive error on every run, even
+        # though the screenshot from that same run showed the selection
+        # had genuinely succeeded. Don't try to verify the exact displayed
+        # value at all — log whatever's readable as a best-effort
+        # diagnostic only, and let the next real dependency (SEMI E10
+        # Asset State only appearing once a valid asset is selected) be
+        # the actual signal of success, same as it already reliably is.
         page.wait_for_timeout(500)
         try:
-            # CONFIRMED IN REAL TESTING (2026-08-20): .input_value() threw
-            # (silently swallowed here, showing up as a false-negative
-            # "field shows None") — this combobox is very likely a styled
-            # contenteditable element, not a literal <input>/<textarea>,
-            # which is all .input_value() supports. Read the DOM value
-            # directly instead, falling back to textContent for a
-            # contenteditable-style widget.
             current_value = asset_box.evaluate("el => el.value ?? el.textContent ?? null")
         except Exception:
             current_value = None
         log(f"  Customer Asset field now shows: {current_value!r}")
-        if not current_value or fid not in current_value:
-            raise RuntimeError(
-                f"Customer Asset selection looks wrong — field shows {current_value!r}, expected "
-                f"it to contain FID '{fid}'. Check the screenshot to see what was actually on screen."
-            )
 
     select_option(page, "SEMI E10 Asset State", wo.get("e10AssetState"))
     select_option(page, "SEMI E10 Asset Substatus", wo.get("e10AssetSubstatus"))
