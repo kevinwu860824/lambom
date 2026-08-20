@@ -27,8 +27,10 @@ const zh: Record<string, string> = {
   "Work Order": "Work Order",
   "Installation?": "Installation?",
   "Service Type": "Service Type",
-  "Machine (Customer Asset)": "機台(Customer Asset)",
+  "FID (Customer Asset)": "FID(Customer Asset)",
   "e.g. 255711": "例如 255711",
+  "Chamber (only needed if this FID has multiple chambers)": "Chamber(此 FID 有多個 chamber 時才需要填)",
+  "e.g. PM1": "例如 PM1",
   "SEMI E10 Asset State": "SEMI E10 Asset State",
   "SEMI E10 Asset Substatus": "SEMI E10 Asset Substatus",
   "Quality Escape": "Quality Escape",
@@ -69,7 +71,8 @@ const DEFAULT_PAYLOAD: D365OrderPayload = {
     description: "",
     reportedProblemDetail: "",
     serviceType: "Warranty Service (ZSM3)",
-    customerAsset: "",
+    fid: "",
+    chamber: "",
     e10AssetState: "Unscheduled Down Time",
     e10AssetSubstatus: "Repair",
   },
@@ -245,11 +248,20 @@ export function SpareOrderPanel() {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label>{t("Machine (Customer Asset)")}</Label>
+            <Label>{t("FID (Customer Asset)")}</Label>
             <Input
-              value={payload.workOrder.customerAsset}
-              onChange={(e) => updateSection("workOrder", "customerAsset", e.target.value)}
+              value={payload.workOrder.fid}
+              onChange={(e) => updateSection("workOrder", "fid", e.target.value)}
               placeholder={t("e.g. 255711")}
+              disabled={disabled}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>{t("Chamber (only needed if this FID has multiple chambers)")}</Label>
+            <Input
+              value={payload.workOrder.chamber}
+              onChange={(e) => updateSection("workOrder", "chamber", e.target.value)}
+              placeholder={t("e.g. PM1")}
               disabled={disabled}
             />
           </div>

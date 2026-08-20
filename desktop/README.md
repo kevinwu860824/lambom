@@ -55,7 +55,7 @@ build.bat
 Produces `desktop\d365-automation\dist\d365_order_cli.exe`. Test it standalone before wiring it into Electron:
 
 ```bat
-echo {"workOrder":{"installation":"Non Installation","description":"test","reportedProblemDetail":"test","serviceType":"Warranty Service (ZSM3)","customerAsset":"255711","e10AssetState":"Unscheduled Down Time","e10AssetSubstatus":"Repair"},"qualityEscape":{"customerTemperature":"Unknown","wafersScrapped":"No","customerTrackingType":"","safetyIssue":"No","commitDate":"Minor Commit Date Missed","problemDescription":"test"},"qualityEscapeItem":{"causingProblem":"test","deviation":"test","specification":"test","additionalNotes":""},"product":{"partNo":"734-C05212-001","priorityCode":"P0","deliveryDate":"2026-01-01","deliveryTime":"11:00","location":"test dock","contactName":"Test","contactPhone":"0000-000-000"}} | dist\d365_order_cli.exe
+echo {"workOrder":{"installation":"Non Installation","description":"test","reportedProblemDetail":"test","serviceType":"Warranty Service (ZSM3)","fid":"255711","chamber":"","e10AssetState":"Unscheduled Down Time","e10AssetSubstatus":"Repair"},"qualityEscape":{"customerTemperature":"Unknown","wafersScrapped":"No","customerTrackingType":"","safetyIssue":"No","commitDate":"Minor Commit Date Missed","problemDescription":"test"},"qualityEscapeItem":{"causingProblem":"test","deviation":"test","specification":"test","additionalNotes":""},"product":{"partNo":"734-C05212-001","priorityCode":"P0","deliveryDate":"2026-01-01","deliveryTime":"11:00","location":"test dock","contactName":"Test","contactPhone":"0000-000-000"}} | dist\d365_order_cli.exe
 ```
 
 ## Configuring the production URL

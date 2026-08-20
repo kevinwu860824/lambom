@@ -50,7 +50,11 @@ INPUT SCHEMA (one line of JSON on stdin):
         "description": str,
         "reportedProblemDetail": str,
         "serviceType": str,           # e.g. "Warranty Service (ZSM3)"
-        "customerAsset": str,         # search text, e.g. "255711"
+        "fid": str,                   # FID to search Customer Asset by, e.g. "255711"
+        "chamber": str,               # e.g. "PM1" — REQUIRED if the FID has more than
+                                       # one chamber (Customer Asset search returns one
+                                       # option per chamber); "" is fine for a
+                                       # single-chamber FID
         "e10AssetState": str,         # e.g. "Unscheduled Down Time"
         "e10AssetSubstatus": str      # e.g. "Repair"
       },
@@ -324,39 +328,54 @@ def create_work_order(page, wo):
     fill_textbox(page, "Reported Problem Detail", wo.get("reportedProblemDetail"))
     select_option(page, "Service Type", wo.get("serviceType"))
 
-    customer_asset = wo.get("customerAsset")
-    if customer_asset:
-        log(f"Searching Customer Asset for '{customer_asset}'...")
+    fid = wo.get("fid")
+    chamber = wo.get("chamber")
+    if fid:
+        log(f"Searching Customer Asset for FID '{fid}'...")
         asset_box = page.get_by_role("combobox", name="Customer Asset, Lookup")
         asset_box.click()
-        asset_box.fill(customer_asset)
-        # The recording clicked a specific labeled suggestion
-        # (getByLabel('CCOXN1, 255711-VXT-6550-')) rather than a generic
-        # role=option — D365 lookup flyouts sometimes render suggestions as
-        # a plain listbox (role=option) and sometimes as custom
-        # aria-labeled rows, so try the more standard role first and fall
-        # back to a text-based match if that finds nothing. The search
-        # itself is an async server round-trip, so wait for a suggestion
-        # to actually appear instead of a blind sleep before giving up on
-        # the primary strategy.
+        asset_box.fill(fid)
+
+        # Per the user (2026-08-20): this field is normally searched by
+        # FID, not a bare machine name — searching by FID returns one
+        # option PER CHAMBER for a multi-chamber tool (e.g. "CCOXN1 PM1"
+        # and "CCOXN1 PM2" for a 2-chamber machine), a small precise set;
+        # searching by machine name alone returns many more, unrelated
+        # options. So: wait for FID-matching suggestions, and if more than
+        # one comes back, require `chamber` to disambiguate rather than
+        # guessing — an earlier version blindly clicked the first broad
+        # text match here, which (in real testing) silently selected the
+        # wrong thing and only surfaced confusingly on an unrelated later
+        # field.
+        options = page.get_by_role("option").filter(has_text=fid)
         try:
-            option = page.get_by_role("option").filter(has_text=customer_asset).first
-            option.wait_for(state="visible", timeout=8000)
-            option.click(timeout=4000)
+            options.first.wait_for(state="visible", timeout=8000)
         except PlaywrightTimeoutError:
-            log("  no role=option suggestion appeared — trying a text-based fallback...")
-            candidates = page.get_by_text(customer_asset, exact=False)
-            match_count = candidates.count()
-            log(f"  text-based fallback found {match_count} match(es) on the page.")
-            if match_count == 0:
+            raise RuntimeError(
+                f"No Customer Asset suggestion appeared for FID '{fid}' — check whether this FID "
+                "exists in D365, or whether the lookup is slower than expected."
+            )
+
+        count = options.count()
+        log(f"  found {count} matching option(s) for FID '{fid}'.")
+        if count == 1:
+            chosen = options.first
+        elif chamber:
+            chosen = options.filter(has_text=chamber)
+            if chosen.count() == 0:
                 raise RuntimeError(
-                    f"Couldn't find any suggestion for Customer Asset '{customer_asset}' — "
-                    "check whether this asset number actually exists in D365, or whether the "
-                    "lookup search is slower than expected."
+                    f"FID '{fid}' matched {count} option(s), but none contain chamber hint "
+                    f"'{chamber}'. Options seen: {options.all_inner_texts()}"
                 )
-            if match_count > 1:
-                log(f"  WARNING: {match_count} matches found, clicking the first one — this may not be the intended one.")
-            candidates.first.click(timeout=4000)
+            chosen = chosen.first
+        else:
+            raise RuntimeError(
+                f"FID '{fid}' matched {count} option(s) — this FID has multiple chambers, so the "
+                f"Chamber field needs to specify which one (e.g. 'PM1'). Options seen: "
+                f"{options.all_inner_texts()}"
+            )
+
+        chosen.click(timeout=4000)
 
         # CONFIRMED IN REAL TESTING (2026-08-20): a failed/wrong asset
         # selection here doesn't fail loudly on its own — instead a LATER,
@@ -370,11 +389,10 @@ def create_work_order(page, wo):
         except Exception:
             current_value = None
         log(f"  Customer Asset field now shows: {current_value!r}")
-        if not current_value or customer_asset not in current_value:
+        if not current_value or fid not in current_value:
             raise RuntimeError(
-                f"Customer Asset selection looks wrong — field shows {current_value!r}, "
-                f"expected it to contain '{customer_asset}'. Check the screenshot to see what "
-                "was actually on screen."
+                f"Customer Asset selection looks wrong — field shows {current_value!r}, expected "
+                f"it to contain FID '{fid}'. Check the screenshot to see what was actually on screen."
             )
 
     select_option(page, "SEMI E10 Asset State", wo.get("e10AssetState"))

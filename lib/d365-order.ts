@@ -20,7 +20,13 @@ export interface D365OrderPayload {
     description: string;
     reportedProblemDetail: string;
     serviceType: string;
-    customerAsset: string;
+    /** FID to search the Customer Asset lookup by — NOT a machine name.
+     * Searching by FID returns one option per chamber (e.g. "CCOXN1 PM1" /
+     * "CCOXN1 PM2" for a 2-chamber tool); searching by machine name alone
+     * returns many unrelated options. */
+    fid: string;
+    /** e.g. "PM1" — required if the FID matches more than one chamber; "" is fine for a single-chamber FID. */
+    chamber: string;
     e10AssetState: string;
     e10AssetSubstatus: string;
   };
