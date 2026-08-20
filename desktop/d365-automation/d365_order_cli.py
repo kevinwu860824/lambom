@@ -401,7 +401,14 @@ def create_work_order(page, wo):
         # here instead, so a bad selection fails at its actual source.
         page.wait_for_timeout(500)
         try:
-            current_value = asset_box.input_value()
+            # CONFIRMED IN REAL TESTING (2026-08-20): .input_value() threw
+            # (silently swallowed here, showing up as a false-negative
+            # "field shows None") — this combobox is very likely a styled
+            # contenteditable element, not a literal <input>/<textarea>,
+            # which is all .input_value() supports. Read the DOM value
+            # directly instead, falling back to textContent for a
+            # contenteditable-style widget.
+            current_value = asset_box.evaluate("el => el.value ?? el.textContent ?? null")
         except Exception:
             current_value = None
         log(f"  Customer Asset field now shows: {current_value!r}")
