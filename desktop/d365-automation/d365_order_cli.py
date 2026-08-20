@@ -211,23 +211,54 @@ def extract_record_id(url):
 # instead of repeating it field-by-field, rather than inventing a different
 # selection strategy.
 
-def fill_textbox(page, label, value, exact=False):
+def fill_textbox(page, label, value, exact=False, max_attempts=4):
+    """CONFIRMED IN REAL TESTING (2026-08-20): D365's form re-renders parts
+    of itself after a field changes (likely an onChange business-rule
+    pipeline), which can detach a NEIGHBORING field's control from the DOM
+    right as Playwright tries to click into it — a single un-retried
+    attempt hit "element was detached from the DOM, retrying" for a full
+    30s and gave up. Every attempt re-runs get_by_role() from scratch
+    (never reuses a stale Locator reference) so it always grabs whatever
+    the CURRENT DOM node is, and skips the separate .click() the recording
+    did by hand — .fill() alone already waits for the element to be
+    actionable and focuses it, so the extra click was just one more
+    actionability-wait cycle that could itself hit the same detach race."""
     if value is None or value == "":
         return
-    box = page.get_by_role("textbox", name=label, exact=exact)
-    box.click()
-    box.fill(value)
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            page.get_by_role("textbox", name=label, exact=exact).fill(value, timeout=8000)
+            return
+        except Exception as e:
+            last_error = e
+            log(f"  fill '{label}': attempt {attempt}/{max_attempts} failed ({e.__class__.__name__}), retrying...")
+            page.wait_for_timeout(1000)
+    raise RuntimeError(f"Failed to fill '{label}' after {max_attempts} attempts: {last_error}")
 
 
-def select_option(page, label, value, exact=True):
+def select_option(page, label, value, exact=True, max_attempts=4):
     """Opens a combobox by its accessible label and clicks the option with
     the given exact text. Leaves the field untouched if value is empty —
     this is how qualityEscape.customerTrackingType being "" reproduces the
-    recording's own behavior of explicitly not choosing a value there."""
+    recording's own behavior of explicitly not choosing a value there.
+
+    Same retry-with-fresh-locator treatment as fill_textbox() above, and
+    for the same confirmed-real reason — a neighboring combobox can get
+    detached/re-rendered mid-click just as easily as a textbox can."""
     if value is None or value == "":
         return
-    page.get_by_role("combobox", name=label).click()
-    page.get_by_role("option", name=value, exact=exact).click()
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            page.get_by_role("combobox", name=label).click(timeout=8000)
+            page.get_by_role("option", name=value, exact=exact).click(timeout=8000)
+            return
+        except Exception as e:
+            last_error = e
+            log(f"  select '{label}'='{value}': attempt {attempt}/{max_attempts} failed ({e.__class__.__name__}), retrying...")
+            page.wait_for_timeout(1000)
+    raise RuntimeError(f"Failed to select '{value}' in '{label}' after {max_attempts} attempts: {last_error}")
 
 
 def click_canvas_app_widget(page, button_name="登入", max_attempts=3):
