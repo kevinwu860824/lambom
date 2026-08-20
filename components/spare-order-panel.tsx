@@ -7,7 +7,9 @@ import {
   confirmD365Submit,
   fillD365Form,
   isD365OrderAvailable,
+  onD365OrderAssetOptions,
   onD365OrderLog,
+  selectD365Asset,
   type D365OrderPayload,
 } from "@/lib/d365-order";
 import { useTranslate } from "@/lib/i18n";
@@ -29,8 +31,6 @@ const zh: Record<string, string> = {
   "Service Type": "Service Type",
   "FID (Customer Asset)": "FID(Customer Asset)",
   "e.g. 255711": "例如 255711",
-  "Chamber (only needed if this FID has multiple chambers)": "Chamber(此 FID 有多個 chamber 時才需要填)",
-  "e.g. PM1": "例如 PM1",
   "SEMI E10 Asset State": "SEMI E10 Asset State",
   "SEMI E10 Asset Substatus": "SEMI E10 Asset Substatus",
   "Quality Escape": "Quality Escape",
@@ -55,6 +55,8 @@ const zh: Record<string, string> = {
   "Contact Phone": "聯絡電話",
   "Fill D365 Form": "自動填寫 D365 表單",
   "Filling…": "填寫中…",
+  "This FID matched more than one record in D365 — pick the correct one:":
+    "這個 FID 在 D365 裡對應到不只一筆資料 — 請選擇正確的那一筆:",
   "Work Order created: {id}": "已建立 Work Order:{id}",
   "Everything is filled in — review the Edge window, then either confirm or discard.":
     "已經全部填完 — 請檢查 Edge 視窗內容,再決定確認或放棄。",
@@ -72,7 +74,6 @@ const DEFAULT_PAYLOAD: D365OrderPayload = {
     reportedProblemDetail: "",
     serviceType: "Warranty Service (ZSM3)",
     fid: "",
-    chamber: "",
     e10AssetState: "Unscheduled Down Time",
     e10AssetSubstatus: "Repair",
   },
@@ -125,15 +126,25 @@ export function SpareOrderPanel() {
   const [problemDescription, setProblemDescription] = useState("");
   const [stage, setStage] = useState<Stage>("form");
   const [workOrderId, setWorkOrderId] = useState<string | null>(null);
+  const [assetOptions, setAssetOptions] = useState<string[] | null>(null);
   const [log, setLog] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isD365OrderAvailable()) return;
     setAvailable(true);
-    return onD365OrderLog((line) => {
+    const unsubscribeLog = onD365OrderLog((line) => {
       setLog((prev) => `${prev}${line}\n`);
     });
+    // Fires mid-fill, while handleFill()'s fillD365Form() call is still
+    // pending — the automation process is paused waiting for this choice.
+    const unsubscribeAssetOptions = onD365OrderAssetOptions((options) => {
+      setAssetOptions(options);
+    });
+    return () => {
+      unsubscribeLog();
+      unsubscribeAssetOptions();
+    };
   }, []);
 
   useEffect(() => {
@@ -169,6 +180,16 @@ export function SpareOrderPanel() {
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}[Error] ${message}\n`);
       setStage("form");
+    }
+  }
+
+  async function handleSelectAsset(index: number) {
+    setAssetOptions(null);
+    try {
+      await selectD365Asset(index);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Error] ${message}\n`);
     }
   }
 
@@ -253,15 +274,6 @@ export function SpareOrderPanel() {
               value={payload.workOrder.fid}
               onChange={(e) => updateSection("workOrder", "fid", e.target.value)}
               placeholder={t("e.g. 255711")}
-              disabled={disabled}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label>{t("Chamber (only needed if this FID has multiple chambers)")}</Label>
-            <Input
-              value={payload.workOrder.chamber}
-              onChange={(e) => updateSection("workOrder", "chamber", e.target.value)}
-              placeholder={t("e.g. PM1")}
               disabled={disabled}
             />
           </div>
@@ -441,6 +453,28 @@ export function SpareOrderPanel() {
           </div>
         </CardContent>
       </Card>
+
+      {assetOptions && (
+        <Card className="border-primary">
+          <CardHeader>
+            <CardTitle className="text-base">
+              {t("This FID matched more than one record in D365 — pick the correct one:")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            {assetOptions.map((label, index) => (
+              <Button
+                key={index}
+                variant="outline"
+                className="h-auto justify-start whitespace-normal text-left"
+                onClick={() => handleSelectAsset(index)}
+              >
+                {label}
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent>

@@ -311,6 +311,23 @@ ipcMain.handle("d365-order:fill", async (event, payload) => {
           continue; // internal sentinel, not meant to show up in the visible log
         }
 
+        // Mid-fill pause: the Customer Asset (FID) search matched more than
+        // one record and the CLI is now blocked waiting for a {"index": N}
+        // line on stdin (see d365_order_cli.py's module docstring) — forward
+        // the option labels to the renderer so it can show a picker; the
+        // eventual d365-order:select-asset call writes the user's choice
+        // back to this same child's stdin.
+        const assetOptionsMatch = line.match(/^ASSET_OPTIONS:(.*)$/);
+        if (assetOptionsMatch) {
+          try {
+            const options = JSON.parse(assetOptionsMatch[1]);
+            event.sender.send("d365-order:asset-options", options);
+          } catch (err) {
+            event.sender.send("d365-order:log", `[Error] Failed to parse ASSET_OPTIONS: ${err.message}`);
+          }
+          continue; // internal sentinel, not meant to show up in the visible log
+        }
+
         const woMatch = line.match(/^WORK_ORDER_ID:(.*)$/);
         if (woMatch) {
           event.sender.send("d365-order:log", `Work Order created: ${woMatch[1].trim()}`);
@@ -347,6 +364,18 @@ ipcMain.handle("d365-order:fill", async (event, payload) => {
 
     child.stdin.write(JSON.stringify(payload) + "\n");
   });
+});
+
+// Answers a mid-fill "which Customer Asset option?" pause (see the
+// d365-order:asset-options event above) — writes the choice back to the
+// same still-running child's stdin and lets it continue; the fill sequence
+// resumes from there towards its own READY_FOR_CONFIRM.
+ipcMain.handle("d365-order:select-asset", async (_event, index) => {
+  if (!activeD365Order) {
+    return { ok: false, error: "No D365 order is currently waiting for an asset selection." };
+  }
+  activeD365Order.child.stdin.write(JSON.stringify({ index }) + "\n");
+  return { ok: true };
 });
 
 // v1: automated submission isn't implemented yet (see the CLI's module

@@ -21,12 +21,12 @@ export interface D365OrderPayload {
     reportedProblemDetail: string;
     serviceType: string;
     /** FID to search the Customer Asset lookup by — NOT a machine name.
-     * Searching by FID returns one option per chamber (e.g. "CCOXN1 PM1" /
-     * "CCOXN1 PM2" for a 2-chamber tool); searching by machine name alone
-     * returns many unrelated options. */
+     * Searching by FID returns one option per chamber/module (e.g. process
+     * chambers and transfer modules can all share the same FID); if it
+     * matches more than one, fillD365Form()'s in-progress automation pauses
+     * and the D365OrderApi.onAssetOptions callback fires so the caller can
+     * show a picker — see selectD365Asset() below. */
     fid: string;
-    /** e.g. "PM1" — required if the FID matches more than one chamber; "" is fine for a single-chamber FID. */
-    chamber: string;
     e10AssetState: string;
     e10AssetSubstatus: string;
   };
@@ -65,9 +65,16 @@ export interface D365OrderFillResult {
 
 export interface D365OrderApi {
   fill: (payload: D365OrderPayload) => Promise<D365OrderFillResult>;
+  selectAsset: (index: number) => Promise<{ ok: boolean; error?: string }>;
   confirmSubmit: () => Promise<{ ok: boolean; error?: string }>;
   cancel: () => Promise<boolean>;
   onLog: (callback: (line: string) => void) => () => void;
+  /** Fires mid-fill, while fillD365Form()'s promise is still pending, when
+   * the Customer Asset (FID) search matched more than one record — each
+   * string is one option's full label (as shown in D365's own suggestion
+   * list). Call selectD365Asset() with the chosen index to let the
+   * automation continue. */
+  onAssetOptions: (callback: (options: string[]) => void) => () => void;
 }
 
 declare global {
@@ -88,6 +95,19 @@ export async function fillD365Form(payload: D365OrderPayload): Promise<D365Order
   const result = await window.d365Order.fill(payload);
   if (!result.ok) throw new Error("Failed to fill the D365 form — check the log for details.");
   return result;
+}
+
+/** Answers a pending onAssetOptions prompt — resumes the in-progress
+ * fillD365Form() call, which was paused waiting for this choice. */
+export async function selectD365Asset(index: number): Promise<void> {
+  if (!window.d365Order) throw new Error("D365 order automation isn't available outside the desktop app");
+  const result = await window.d365Order.selectAsset(index);
+  if (!result.ok) throw new Error(result.error || "Failed to select the Customer Asset option");
+}
+
+export function onD365OrderAssetOptions(callback: (options: string[]) => void): () => void {
+  if (!window.d365Order) return () => {};
+  return window.d365Order.onAssetOptions(callback);
 }
 
 /** v1: doesn't actually click "Upload to SAP" yet (not implemented — see

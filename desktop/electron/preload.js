@@ -22,11 +22,17 @@ contextBridge.exposeInMainWorld("inventoryLookup", {
 
 contextBridge.exposeInMainWorld("d365Order", {
   fill: (payload) => ipcRenderer.invoke("d365-order:fill", payload),
+  selectAsset: (index) => ipcRenderer.invoke("d365-order:select-asset", index),
   confirmSubmit: () => ipcRenderer.invoke("d365-order:confirm-submit"),
   cancel: () => ipcRenderer.invoke("d365-order:cancel"),
   onLog: (callback) => {
     const listener = (_event, line) => callback(line);
     ipcRenderer.on("d365-order:log", listener);
     return () => ipcRenderer.removeListener("d365-order:log", listener);
+  },
+  onAssetOptions: (callback) => {
+    const listener = (_event, options) => callback(options);
+    ipcRenderer.on("d365-order:asset-options", listener);
+    return () => ipcRenderer.removeListener("d365-order:asset-options", listener);
   },
 });

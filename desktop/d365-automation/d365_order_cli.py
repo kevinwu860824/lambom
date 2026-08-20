@@ -21,7 +21,9 @@ differences instead of copying that file's pattern verbatim:
    human to look at between "fill in the form" and "click submit" — which
    could be minutes apart — so after filling everything in, it prints a
    sentinel line and then BLOCKS reading a second command from stdin
-   instead of exiting. See the "STDIN PROTOCOL" section below.
+   instead of exiting. It also pauses MID-fill, the same way, whenever a
+   Customer Asset search needs a human to disambiguate. See "STDIN
+   PROTOCOL" below.
 
 Usage:
     d365_order_cli.exe
@@ -31,9 +33,16 @@ Usage:
 STDIN PROTOCOL:
     Line 1 (sent immediately by the caller): the JSON form payload.
     ... tool fills in D365, printing progress lines as it goes ...
+
+    If the Customer Asset (FID) search matches more than one record (e.g.
+    a machine's chambers and transfer modules all sharing the same FID),
+    the tool prints `ASSET_OPTIONS:<json array of option label strings>`
+    and blocks, waiting to read ONE line of JSON from stdin:
+        {"index": N}   -> which option (0-based) to select; fill continues
+
     Once everything is filled in and nothing has been submitted to SAP yet,
-    the tool prints `READY_FOR_CONFIRM:<work_order_id>` and then blocks,
-    waiting to read a SECOND line of JSON from stdin:
+    the tool prints `READY_FOR_CONFIRM:<work_order_id>` and then blocks
+    again, waiting to read a line of JSON from stdin:
         {"action": "cancel"}   -> close the browser, exit 0, don't touch SAP
         {"action": "confirm"}  -> NOT YET IMPLEMENTED (see below); for now
                                    this just logs a message telling the user
@@ -51,10 +60,8 @@ INPUT SCHEMA (one line of JSON on stdin):
         "reportedProblemDetail": str,
         "serviceType": str,           # e.g. "Warranty Service (ZSM3)"
         "fid": str,                   # FID to search Customer Asset by, e.g. "255711"
-        "chamber": str,               # e.g. "PM1" — REQUIRED if the FID has more than
-                                       # one chamber (Customer Asset search returns one
-                                       # option per chamber); "" is fine for a
-                                       # single-chamber FID
+                                       # — see "STDIN PROTOCOL" above if this
+                                       # matches more than one record
         "e10AssetState": str,         # e.g. "Unscheduled Down Time"
         "e10AssetSubstatus": str      # e.g. "Repair"
       },
@@ -329,7 +336,6 @@ def create_work_order(page, wo):
     select_option(page, "Service Type", wo.get("serviceType"))
 
     fid = wo.get("fid")
-    chamber = wo.get("chamber")
     if fid:
         log(f"Searching Customer Asset for FID '{fid}'...")
         asset_box = page.get_by_role("combobox", name="Customer Asset, Lookup")
@@ -338,15 +344,10 @@ def create_work_order(page, wo):
 
         # Per the user (2026-08-20): this field is normally searched by
         # FID, not a bare machine name — searching by FID returns one
-        # option PER CHAMBER for a multi-chamber tool (e.g. "CCOXN1 PM1"
-        # and "CCOXN1 PM2" for a 2-chamber machine), a small precise set;
-        # searching by machine name alone returns many more, unrelated
-        # options. So: wait for FID-matching suggestions, and if more than
-        # one comes back, require `chamber` to disambiguate rather than
-        # guessing — an earlier version blindly clicked the first broad
-        # text match here, which (in real testing) silently selected the
-        # wrong thing and only surfaced confusingly on an unrelated later
-        # field.
+        # option per chamber/module for a multi-chamber tool (e.g. process
+        # chambers AND transfer modules can all show up as separate
+        # matches for the same FID), a small precise set; searching by
+        # machine name alone returns many more, unrelated options.
         #
         # CONFIRMED IN REAL TESTING (2026-08-20): role=option found ZERO
         # matches, even after waiting — the reference recording's own
@@ -368,29 +369,27 @@ def create_work_order(page, wo):
         count = options.count()
         option_labels = [options.nth(i).get_attribute("aria-label") for i in range(count)]
         log(f"  found {count} matching option(s) for FID '{fid}': {option_labels}")
+
         if count == 1:
             chosen = options.first
-        elif chamber:
-            # Matched against the aria-label attribute, same as the FID
-            # match above — not .filter(has_text=...), which checks
-            # rendered/visible text and isn't guaranteed to contain the
-            # same identifying detail the aria-label does (confirmed in
-            # real testing: these labels distinguish chambers by a serial
-            # suffix like "VXT-6550" / "VXT-6551", not literal "PM1"/"PM2"
-            # text — the caller passes whatever substring actually appears
-            # in the aria-label for the chamber they mean).
-            chosen = page.locator(f'[aria-label*="{fid}"][aria-label*="{chamber}"]')
-            if chosen.count() == 0:
-                raise RuntimeError(
-                    f"FID '{fid}' matched {count} option(s), but none contain chamber hint "
-                    f"'{chamber}'. Options seen: {option_labels}"
-                )
-            chosen = chosen.first
         else:
-            raise RuntimeError(
-                f"FID '{fid}' matched {count} option(s) — this FID has multiple chambers, so the "
-                f"Chamber field needs to specify which one (e.g. 'PM1'). Options seen: {option_labels}"
-            )
+            # More than one match (chambers, transfer modules, etc. all
+            # share the same FID) — per the user (2026-08-20), don't guess
+            # which one via a pre-typed hint; show the real options and let
+            # them pick, the same way they'd see them in D365 itself.
+            # ASSET_OPTIONS is a new sentinel (parsed by
+            # desktop/electron/main.js) carrying the option labels as a
+            # JSON array; the caller is expected to write back one line of
+            # JSON, {"index": N}, choosing which one.
+            log(f"ASSET_OPTIONS:{json.dumps(option_labels)}")
+            selection = read_stdin_json_line("asset selection")
+            index = selection.get("index")
+            if not isinstance(index, int) or not (0 <= index < count):
+                raise RuntimeError(
+                    f"Invalid asset selection index {index!r} — expected an integer from 0 to {count - 1}."
+                )
+            chosen = options.nth(index)
+            log(f"  selected option {index}: {option_labels[index]!r}")
 
         chosen.click(timeout=4000)
 
