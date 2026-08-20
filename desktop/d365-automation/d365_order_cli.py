@@ -330,18 +330,52 @@ def create_work_order(page, wo):
         asset_box = page.get_by_role("combobox", name="Customer Asset, Lookup")
         asset_box.click()
         asset_box.fill(customer_asset)
-        page.wait_for_timeout(1200)
         # The recording clicked a specific labeled suggestion
         # (getByLabel('CCOXN1, 255711-VXT-6550-')) rather than a generic
         # role=option — D365 lookup flyouts sometimes render suggestions as
         # a plain listbox (role=option) and sometimes as custom
         # aria-labeled rows, so try the more standard role first and fall
-        # back to a text-based match if that finds nothing.
+        # back to a text-based match if that finds nothing. The search
+        # itself is an async server round-trip, so wait for a suggestion
+        # to actually appear instead of a blind sleep before giving up on
+        # the primary strategy.
         try:
-            page.get_by_role("option").filter(has_text=customer_asset).first.click(timeout=4000)
+            option = page.get_by_role("option").filter(has_text=customer_asset).first
+            option.wait_for(state="visible", timeout=8000)
+            option.click(timeout=4000)
         except PlaywrightTimeoutError:
-            log("  no role=option match for the asset suggestion, trying a text-based fallback...")
-            page.get_by_text(customer_asset, exact=False).first.click(timeout=4000)
+            log("  no role=option suggestion appeared — trying a text-based fallback...")
+            candidates = page.get_by_text(customer_asset, exact=False)
+            match_count = candidates.count()
+            log(f"  text-based fallback found {match_count} match(es) on the page.")
+            if match_count == 0:
+                raise RuntimeError(
+                    f"Couldn't find any suggestion for Customer Asset '{customer_asset}' — "
+                    "check whether this asset number actually exists in D365, or whether the "
+                    "lookup search is slower than expected."
+                )
+            if match_count > 1:
+                log(f"  WARNING: {match_count} matches found, clicking the first one — this may not be the intended one.")
+            candidates.first.click(timeout=4000)
+
+        # CONFIRMED IN REAL TESTING (2026-08-20): a failed/wrong asset
+        # selection here doesn't fail loudly on its own — instead a LATER,
+        # unrelated field (SEMI E10 Asset State, which D365 likely only
+        # shows once a valid asset is selected) fails to even be found at
+        # all, which is a much more confusing error to debug. Verify right
+        # here instead, so a bad selection fails at its actual source.
+        page.wait_for_timeout(500)
+        try:
+            current_value = asset_box.input_value()
+        except Exception:
+            current_value = None
+        log(f"  Customer Asset field now shows: {current_value!r}")
+        if not current_value or customer_asset not in current_value:
+            raise RuntimeError(
+                f"Customer Asset selection looks wrong — field shows {current_value!r}, "
+                f"expected it to contain '{customer_asset}'. Check the screenshot to see what "
+                "was actually on screen."
+            )
 
     select_option(page, "SEMI E10 Asset State", wo.get("e10AssetState"))
     select_option(page, "SEMI E10 Asset Substatus", wo.get("e10AssetSubstatus"))
