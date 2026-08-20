@@ -347,9 +347,18 @@ def create_work_order(page, wo):
         # text match here, which (in real testing) silently selected the
         # wrong thing and only surfaced confusingly on an unrelated later
         # field.
-        options = page.get_by_role("option").filter(has_text=fid)
+        #
+        # CONFIRMED IN REAL TESTING (2026-08-20): role=option found ZERO
+        # matches, even after waiting — the reference recording's own
+        # selector for this exact widget was getByLabel('CCOXN1,
+        # 255711-VXT-6550-'), not a role=option lookup, which means each
+        # suggestion row carries a descriptive aria-label but may not
+        # expose an ARIA "option" role at all. Match on the aria-label
+        # attribute directly (a plain CSS attribute selector, independent
+        # of ARIA role) instead of assuming a role.
+        options = page.locator(f'[aria-label*="{fid}"]')
         try:
-            options.first.wait_for(state="visible", timeout=8000)
+            options.first.wait_for(state="visible", timeout=15000)
         except PlaywrightTimeoutError:
             raise RuntimeError(
                 f"No Customer Asset suggestion appeared for FID '{fid}' — check whether this FID "
@@ -357,7 +366,8 @@ def create_work_order(page, wo):
             )
 
         count = options.count()
-        log(f"  found {count} matching option(s) for FID '{fid}'.")
+        option_labels = [options.nth(i).get_attribute("aria-label") for i in range(count)]
+        log(f"  found {count} matching option(s) for FID '{fid}': {option_labels}")
         if count == 1:
             chosen = options.first
         elif chamber:
@@ -365,14 +375,13 @@ def create_work_order(page, wo):
             if chosen.count() == 0:
                 raise RuntimeError(
                     f"FID '{fid}' matched {count} option(s), but none contain chamber hint "
-                    f"'{chamber}'. Options seen: {options.all_inner_texts()}"
+                    f"'{chamber}'. Options seen: {option_labels}"
                 )
             chosen = chosen.first
         else:
             raise RuntimeError(
                 f"FID '{fid}' matched {count} option(s) — this FID has multiple chambers, so the "
-                f"Chamber field needs to specify which one (e.g. 'PM1'). Options seen: "
-                f"{options.all_inner_texts()}"
+                f"Chamber field needs to specify which one (e.g. 'PM1'). Options seen: {option_labels}"
             )
 
         chosen.click(timeout=4000)
