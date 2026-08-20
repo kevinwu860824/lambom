@@ -348,7 +348,15 @@ def create_work_order(page, wo):
 
     log("Saving Work Order...")
     page.get_by_role("menuitem", name="Save (CTRL+S) Save this Work").click()
-    page.wait_for_timeout(2500)
+    # CONFIRMED IN REAL TESTING (2026-08-20): a fixed 2.5s wait was too
+    # short — the URL still had no id= param yet (D365 was still saving,
+    # likely running server-side validation/plugins), so reading the URL
+    # immediately failed. Wait for the URL to actually gain an id= instead
+    # of guessing a sleep duration.
+    try:
+        page.wait_for_url(re.compile(r"[?&]id=[0-9a-fA-F-]{36}"), timeout=30000)
+    except PlaywrightTimeoutError:
+        pass  # fall through to the explicit check below for a clearer error message
 
     wo_id = extract_record_id(page.url)
     if not wo_id:
