@@ -59,6 +59,24 @@ INPUT SCHEMA (one line of JSON on stdin):
         "description": str,
         "reportedProblemDetail": str,
         "serviceType": str,           # e.g. "Warranty Service (ZSM3)"
+        "existingWorkOrderId": str,   # optional: reuse this Work Order GUID
+                           # for iterative testing instead of
+                           # creating a new Work Order
+        "submitOnly": bool,           # only valid with existingWorkOrderId:
+                           # submit that existing Work Order and
+                           # wait for its SAP Service Order
+        "qualityEscapeOnly": bool,    # only valid with existingWorkOrderId:
+                           # add a Quality Escape after confirming
+                           # the Work Order already has an SO
+        "partsAndQualityItemOnly": bool, # only valid with existingWorkOrderId:
+                          # add, validate, include, and submit
+                          # one Part against an existing QE
+        "qualityEscapeToPartOnly": bool, # only valid with existingWorkOrderId:
+                          # create QE, then complete one Part
+                          # against an existing SAP Service Order
+        "completeExistingPartOnly": bool, # only valid with existingWorkOrderId:
+                            # validate and complete an existing
+                            # Pending Part without creating one
         "fid": str,                   # FID to search Customer Asset by, e.g. "255711"
                                        # — see "STDIN PROTOCOL" above if this
                                        # matches more than one record
@@ -161,6 +179,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -440,32 +459,53 @@ def add_bookable_resource(page, wo_id):
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
 
-    # The recording fills no fields at all on this quick-create form — see
-    # the module docstring's "KNOWN UNVERIFIED ASSUMPTIONS" for the caveat
-    # that this may not always be true.
-    page.locator('[id="OverflowButton_buttonid-2336_msdyn_workorder:bookings$button"]').click()
+    # The Summary-page Bookings grid is virtualized and may not exist in
+    # the DOM on an existing Work Order. The Tasks and Time tab exposes the
+    # same action through stable accessible names instead.
+    page.get_by_role("tab", name="Tasks and Time").click()
+    page.get_by_role("menuitem", name="More commands for Bookable").click()
     page.get_by_role("menuitem", name="Add New Bookable Resource").click()
+    booking_dialog_title = page.get_by_text("New Bookable Resource Booking", exact=True)
+    booking_dialog_title.wait_for(state="visible", timeout=15000)
     page.get_by_role("menuitem", name="Save & Close Save and close").click()
-    page.wait_for_timeout(1500)
 
-    # The recording reloads and clicks "Discard changes" right after this —
-    # read as clearing a leftover "unsaved changes" indicator on the parent
-    # Work Order form after returning from the sub-record, not a real
-    # data-discarding action (the Work Order was already saved in step 1).
+    # Save & Close starts an asynchronous D365 save. Do not navigate the
+    # underlying Work Order until the quick-create dialog has actually
+    # closed; navigating immediately leaves the booking unsaved.
+    try:
+        booking_dialog_title.wait_for(state="hidden", timeout=30000)
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError(
+            "The New Bookable Resource Booking dialog did not close after Save & Close; "
+            "the booking was not saved, so the automation stopped."
+        ) from e
+
+    # Depending on the D365 session, Save & Close either returns to the
+    # Work Order with a pending parent save or directly to the Work Orders
+    # list. The extra parent save is optional, not a precondition for
+    # continuing.
+    try:
+        page.get_by_role("button", name="Save and continue").click(timeout=5000)
+        log("  Saved the parent Work Order after creating the booking.")
+    except PlaywrightTimeoutError:
+        log("  Booking quick-create returned directly to the list; no parent save was needed.")
+
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
-    try:
-        page.get_by_role("button", name="Discard changes").click(timeout=3000)
-    except PlaywrightTimeoutError:
-        log("  no 'Discard changes' prompt appeared — nothing to discard, continuing.")
+    page.get_by_role("tab", name="Summary").click()
+    log("  Bookable Resource Booking created through Tasks and Time.")
 
 
 # ---------- Step 3: Quality Escape (header) ----------
 
+def open_quality_related(page):
+    page.locator('[id^="icon_more_tab_"]:visible').click(timeout=15000)
+    page.locator("#relatedEntityContainer").get_by_text("Quality", exact=True).click(timeout=15000)
+
+
 def add_quality_escape(page, wo_id, qe):
     log("Opening the Quality related section and adding a Quality Escape...")
-    page.locator("#icon_more_tab_1").click()
-    page.locator("#relatedEntityContainer").get_by_text("Quality", exact=True).click()
+    open_quality_related(page)
     page.get_by_role("menuitem", name="Add New Quality Escape Add a").click()
 
     log("Filling Quality Escape fields...")
@@ -475,51 +515,40 @@ def add_quality_escape(page, wo_id, qe):
     select_option(page, "Safety Issue?", qe.get("safetyIssue"))
     select_option(page, "Instl/Upgrd Commit Date", qe.get("commitDate"))
     fill_textbox(page, "Problem Description", qe.get("problemDescription"))
-
-    # The recording shows no explicit "Save" click here before moving on to
-    # the canvas widget + Quality Escape Item — this quick-create panel may
-    # autosave per field, or there may be an implicit save this recording
-    # doesn't show. Reload the Work Order (matching the recording) so
-    # whatever state exists gets persisted/refreshed before continuing.
-    page.goto(record_url("msdyn_workorder", wo_id))
-    page.wait_for_load_state("domcontentloaded")
-    click_canvas_app_widget(page)
+    page.get_by_role("menuitem", name="Save & Close Save and close").click()
+    try:
+        page.wait_for_function(
+            """() => /[?&]etn=lam_quality_escape&[\\s\\S]*[?&]id=[0-9a-fA-F-]{36}/.test(window.location.href)""",
+            timeout=30000,
+        )
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError("Quality Escape did not save to a record URL after Save & Close; stopped before continuing.") from e
+    log("  Quality Escape saved.")
 
 
 # ---------- Step 4: Quality Escape Item ----------
 
-def create_quality_escape_item(page, wo_id, qei):
-    """LEAST CERTAIN PART OF THIS FILE — read before trusting it.
+def fill_quality_escape_item(page, qei, quality_escape_description):
+    """Runs after Work Order Part validation, which exposes the Quality
+    Escape Item requiring interaction in the Parts workflow."""
+    log("Opening the Quality Escape Item requiring interaction...")
+    quality_escape_link = page.get_by_role("link", name=quality_escape_description, exact=True).first
+    for _ in range(8):
+        if quality_escape_link.count() and quality_escape_link.is_visible():
+            quality_escape_link.click(timeout=15000)
+            break
+        page.mouse.wheel(0, 800)
+        page.wait_for_timeout(750)
+    else:
+        raise RuntimeError(
+            f"Quality Escape Item link {quality_escape_description!r} did not appear after validation."
+        )
 
-    The reference recording reaches the Quality Escape Item via a hardcoded
-    record URL (a GUID that obviously can't be reused for a new record),
-    immediately after clicking the canvas widget's "登入" button in
-    add_quality_escape() above. This strongly suggests the Item record gets
-    auto-created as a child of the Quality Escape header at that point
-    (a common D365 pattern for header/detail entity pairs), but that's an
-    inference, not something confirmed against the live system.
-
-    This implementation's best-effort approach: after add_quality_escape()
-    finishes, look for a Quality Escape Item related grid/link reachable
-    from the same Work Order or Quality Escape record, and open the most
-    recently created row. If that navigation path turns out to be wrong,
-    this is the first place to fix once tested against real D365 — not a
-    guess worth hardening further without that feedback.
-    """
-    log("Looking for the auto-created Quality Escape Item...")
-    page.goto(record_url("msdyn_workorder", wo_id))
-    page.wait_for_load_state("domcontentloaded")
-    page.locator("#icon_more_tab_1").click()
-    page.locator("#relatedEntityContainer").get_by_text("Quality", exact=True).click()
-    page.wait_for_timeout(1000)
-
-    # Best-effort: click the first/most-recent row in whatever "Quality
-    # Escape Item" grid is showing. get_by_role("row") excludes the header
-    # row by default in Playwright's accessibility mapping, so index 0 here
-    # should be the first real data row, not a column-header row.
-    first_row = page.get_by_role("row").first
-    first_row.click()
-    page.wait_for_timeout(1500)
+    select_option(page, "Replaced/Removed Type", qei.get("replacedRemovedType"))
+    select_option(page, "Module Type", qei.get("moduleType"))
+    select_option(page, "Damage Code Group", qei.get("damageCodeGroup"))
+    select_option(page, "Damage Code", qei.get("damageCode"))
+    select_option(page, "Symptom Detail", qei.get("symptomDetail"))
 
     problem_description = (
         f"What (Object) is causing the problem? {qei.get('causingProblem', '')}\n"
@@ -536,51 +565,299 @@ def create_quality_escape_item(page, wo_id, qei):
 
     log("Filling Quality Escape Item Problem Description...")
     fill_textbox(page, "Problem Description", problem_description)
-    # Note: the recording's AI-writing-assist iframe ("aigenerator") arrow
-    # clicks are deliberately NOT reproduced here — that's an optional
-    # Power Apps text-assist feature, not a required step.
+    page.get_by_role("menuitem", name="Save & Close Save and close").click()
+    log("  Quality Escape Item saved and closed.")
 
 
-# ---------- Step 5: Product / Delivery Instruction ----------
+def select_pending_part(page, part_no):
+    pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
+    part_identifier = part_no.split("-", 1)[-1]
+    part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
+    part_row.get_by_role("gridcell", name="Select row").click(timeout=15000)
+    return pending_parts
 
-def fill_product_and_delivery(page, wo_id, product):
-    log("Returning to the Work Order to fill Product and Delivery Instruction...")
+
+def click_ready_validate(page):
+    validate_command = page.get_by_role("menuitem", name="Validate", exact=True)
+    validate_command.wait_for(state="visible", timeout=30000)
+    for attempt in range(1, 13):
+        if validate_command.is_enabled():
+            log(f"  Validate is enabled after {attempt * 5 - 5} seconds.")
+            break
+        page.wait_for_timeout(5000)
+    else:
+        raise RuntimeError("Validate did not become enabled within 60 seconds after selecting the Part.")
+
+    # D365's validation handler finishes binding after the toolbar first
+    # reports enabled, the same behavior observed for Submit-to-SAP.
+    log("  Validate is enabled; waiting 15 seconds for the D365 command to settle...")
+    page.wait_for_timeout(15000)
+    validate_command = page.get_by_role("menuitem", name="Validate", exact=True)
+    if not validate_command.is_enabled():
+        raise RuntimeError("Validate became disabled while D365 was synchronizing the selected Part.")
+    log(f"  Validate locator count: {validate_command.count()}")
+    log(f"  Validate element: {validate_command.evaluate('(element) => element.outerHTML')}")
+    validate_command.hover(timeout=15000)
+    validate_command.click(timeout=15000)
+
+
+def wait_for_part_validated(page, part_no):
+    part_identifier = part_no.split("-", 1)[-1]
+    valid_indicator = page.get_by_role("img", name="Valid")
+    for attempt in range(1, 13):
+        pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
+        part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
+        if valid_indicator.count() and valid_indicator.first.is_visible():
+            log("  Work Order Part validation completed (Valid indicator is green).")
+            return
+        page.wait_for_timeout(5000)
+        log(f"  Validation still pending after {attempt * 5} seconds.")
+    raise RuntimeError(f"Part '{part_no}' did not reach Validation Status 'Validated' within 60 seconds.")
+
+
+def include_and_submit_part(page, wo_id, part_no):
+    log("Including the validated Work Order Part...")
+    select_pending_part(page, part_no)
+    page.get_by_role("menuitem", name="Include", exact=True).click()
+    page.get_by_role("button", name="OK", exact=True).click()
+
+    page.wait_for_timeout(1000)
+    select_pending_part(page, part_no)
+    page.get_by_role("menuitem", name="Submit", exact=True).click()
+    page.wait_for_timeout(20000)
+
+    for attempt in range(1, 13):
+        pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
+        pending_parts.get_by_label("Refresh").click(timeout=15000)
+        page.wait_for_timeout(10000)
+        ordered_parts = page.get_by_role("region", name="Work Order Parts - Ordered")
+        if ordered_parts.get_by_text(part_no, exact=False).count():
+            log(f"  Work Order Part '{part_no}' is now ordered.")
+            return
+        log(f"  Part not ordered after refresh {attempt}/12; waiting...")
+
+    raise RuntimeError(f"Part '{part_no}' did not move to Work Order Parts - Ordered within 120 seconds.")
+
+
+# ---------- Step 5: Work Order Part ----------
+
+def format_delivery_datetime(date_value, time_value):
+    if not date_value:
+        return ""
+    formatted_date = date_value.replace("-", "/")
+    if not time_value:
+        return formatted_date
+    hour_text, minute_text = time_value.split(":", 1)
+    hour = int(hour_text)
+    period = "AM" if hour < 12 else "PM"
+    display_hour = hour % 12 or 12
+    return f"{formatted_date} {period} {display_hour:02d}:{minute_text}"
+
+
+def add_and_validate_work_order_part(page, wo_id, product):
+    log("Opening Parts and creating a Work Order Product...")
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
+    page.get_by_role("tab", name="Parts").click()
+
+    pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
+    pending_parts.get_by_label("New Work Order Product Create").click()
 
     part_no = product.get("partNo")
     if part_no:
-        log(f"Filling Product lookup with '{part_no}'...")
+        log(f"Selecting Product '{part_no}'...")
         product_box = page.get_by_role("combobox", name="Product, Lookup")
         product_box.click()
         product_box.fill(part_no)
-        page.wait_for_timeout(1200)
-        # The recording shows no follow-up click here — unclear whether an
-        # exact match auto-resolves on blur, or whether this is the same
-        # kind of capture gap as the Upload-to-SAP click. Try clicking a
-        # matching suggestion if one appears; if not, fall through — the
-        # typed value may already be enough.
-        try:
-            page.get_by_role("option").filter(has_text=part_no).first.click(timeout=3000)
-        except PlaywrightTimeoutError:
-            log("  no suggestion flyout appeared for the Product field — assuming it auto-resolved on the typed value.")
+        page.get_by_text(part_no.lstrip("0"), exact=False).first.click(timeout=15000)
+
+    date_needed = product.get("deliveryDate")
+    if date_needed:
+        parsed_date = datetime.strptime(date_needed, "%Y-%m-%d")
+        date_box = page.get_by_role("combobox", name="Date Needed")
+        date_box.click()
+        day_button = re.compile(rf"^{parsed_date.day}, {parsed_date.strftime('%B')},")
+        page.get_by_role("button", name=day_button).click(timeout=15000)
+        page.wait_for_timeout(500)
+        expected_date = f"{parsed_date.month}/{parsed_date.day}/{parsed_date.year}"
+        if not date_box.input_value():
+            date_box.fill(expected_date)
+            date_box.press("Tab")
+        date_state = date_box.evaluate("(element) => ({ value: element.value, html: element.outerHTML })")
+        log(f"  Date Needed control value: {date_state['value']!r}")
+        log(f"  Date Needed control: {date_state['html']}")
+        page.screenshot(path=os.path.join(os.environ.get("D365_ORDER_USER_DATA_DIR", DEFAULT_USER_DATA_DIR), "after-date-needed.png"))
+        if expected_date not in date_state["value"]:
+            raise RuntimeError(f"Date Needed was not accepted by D365 (expected {expected_date!r}).")
 
     delivery_text = ",".join(
         part
         for part in [
             product.get("priorityCode", ""),
-            f"{product.get('deliveryDate', '')} {product.get('deliveryTime', '')}".strip(),
+            format_delivery_datetime(product.get("deliveryDate", ""), product.get("deliveryTime", "")),
             product.get("location", ""),
             product.get("contactName", ""),
             product.get("contactPhone", ""),
         ]
     )
+    # The Work Order Product form virtualizes lower fields until they enter
+    # the modal viewport, so scroll before resolving the Delivery controls.
+    page.mouse.wheel(0, 900)
+    page.wait_for_timeout(500)
     fill_textbox(page, "Delivery Instruction (", delivery_text)
     fill_textbox(page, "Delivery Instruction Detail (", delivery_text)
+    page.get_by_role("menuitem", name="Save & Close Save and close").click()
 
+    page.get_by_text("New Work Order Product", exact=True).first.wait_for(state="hidden", timeout=30000)
+    pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
+    part_identifier = part_no.split("-", 1)[-1]
+    part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
+    try:
+        part_row.wait_for(state="visible", timeout=30000)
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError(
+            f"Work Order Part '{part_no}' did not appear in Pending after Save & Close; it was not saved."
+        ) from e
+    part_row.get_by_role("gridcell", name="Select row").click()
+    click_ready_validate(page)
+    try:
+        page.get_by_role("button", name="Close", exact=True).click(timeout=5000)
+    except PlaywrightTimeoutError:
+        log("  Validate completed without a results dialog.")
+    wait_for_part_validated(page, part_no)
+    log("  Work Order Part saved and validated.")
+
+
+def validate_existing_work_order_part(page, wo_id, part_no):
+    log(f"Validating existing Pending Part '{part_no}'...")
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
-    click_canvas_app_widget(page)
+    page.get_by_role("tab", name="Parts").click()
+    select_pending_part(page, part_no)
+    click_ready_validate(page)
+    try:
+        page.get_by_role("button", name="Close", exact=True).click(timeout=5000)
+    except PlaywrightTimeoutError:
+        log("  Validate completed without a results dialog.")
+    wait_for_part_validated(page, part_no)
+    log("  Existing Work Order Part validated.")
+
+# ---------- Submit / SAP Service Order ----------
+
+def submit_existing_work_order(page, wo_id, user_data_dir):
+    """Submits an already-prepared Work Order and waits for D365 to replace
+    the SAP Service Order placeholder (`---`) in the record header."""
+    log("Opening the existing Work Order for SAP submission...")
+    page.goto(record_url("msdyn_workorder", wo_id))
+    page.wait_for_load_state("domcontentloaded")
+
+    sap_order_header = page.locator("#headerControlsList_0")
+    sap_order_header.wait_for(state="visible", timeout=30000)
+    initial_value = (sap_order_header.inner_text() or "").strip().splitlines()[0].strip()
+    if initial_value and initial_value != "---":
+        raise RuntimeError(
+            f"Work Order already has a SAP Service Order ({initial_value!r}); refusing to submit it again."
+        )
+
+    log("Waiting for Submit to become available...")
+    submit_command = page.get_by_role("menuitem", name="Submit", exact=True)
+    submit_command.wait_for(state="visible", timeout=30000)
+    submit_command.scroll_into_view_if_needed(timeout=30000)
+    for attempt in range(1, 13):
+        if submit_command.is_enabled():
+            log(f"  Submit is enabled after {attempt * 5 - 5} seconds.")
+            break
+        page.wait_for_timeout(5000)
+    else:
+        raise RuntimeError(
+            "Submit did not become enabled within 60 seconds. Check whether the Work Order "
+            "still has required fields or background processing in progress."
+        )
+
+    # D365 exposes the command as enabled before its custom Submit-to-SAP
+    # handler is consistently ready. Let the form settle, then reacquire
+    # the live toolbar button before issuing the single real submission.
+    log("  Submit is enabled; waiting 15 seconds for the D365 command to settle...")
+    page.wait_for_timeout(15000)
+    submit_command = page.get_by_role("menuitem", name="Submit", exact=True)
+    if not submit_command.is_enabled():
+        raise RuntimeError("Submit became disabled while D365 was initializing; stopped without submitting.")
+
+    log("Submitting the Work Order to SAP...")
+    log(f"  Submit locator count: {submit_command.count()}")
+    log(f"  Submit element: {submit_command.evaluate('(element) => element.outerHTML')}")
+    submit_command.hover(timeout=15000)
+    submit_command.click(timeout=15000)
+    page.wait_for_timeout(1000)
+    after_click_path = os.path.join(user_data_dir, "after-submit-click.png")
+    page.screenshot(path=after_click_path)
+    dialogs = page.get_by_role("dialog").all_inner_texts()
+    log(f"  after Submit: {len(dialogs)} dialog(s) visible; screenshot saved to {after_click_path}")
+
+    # The Submit-to-SAP progress surface is an overlay, not an ARIA dialog.
+    # Wait for its whole lifecycle before refreshing the record underneath.
+    # D365 renders the same text once as the visible progress message and
+    # once as a screen-reader alert. Use the visible message's stable id to
+    # avoid Playwright strict-mode ambiguity.
+    submission_overlay = page.locator("#appProgressIndicatorMessage")
+    try:
+        submission_overlay.wait_for(state="visible", timeout=30000)
+        log("  SAP submission overlay appeared; waiting for it to finish...")
+        submission_overlay.wait_for(state="hidden", timeout=120000)
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError(
+            "D365 did not complete the 'Preparing work order for submission' overlay in time; "
+            "check the Work Order manually before retrying."
+        ) from e
+
+    def read_visible_sap_order():
+        # Refresh can recreate the form header with a different numeric DOM
+        # id, but the visible SAP Service Order label remains stable. Find
+        # the line directly before that label in its nearest header group.
+        label = page.get_by_text("SAP Service Order", exact=True).first
+        try:
+            label.wait_for(state="visible", timeout=30000)
+            return label.evaluate(
+                """(element) => {
+                    for (let node = element.parentElement; node && node !== document.body; node = node.parentElement) {
+                        const lines = (node.innerText || '').split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+                        const labelIndex = lines.indexOf('SAP Service Order');
+                        if (labelIndex > 0) return lines[labelIndex - 1];
+                    }
+                    return '';
+                }"""
+            ).strip()
+        except PlaywrightTimeoutError:
+            return ""
+
+    # D365 does not automatically refresh this form after the SAP upload.
+    # The Edge recording confirmed the Service Order becomes visible only
+    # after More commands for Work Order -> Refresh. Poll that same action
+    # for up to two minutes instead of watching the stale header DOM.
+    for attempt in range(1, 13):
+        page.wait_for_timeout(10000)
+        page.get_by_role("menuitem", name="More commands for Work Order", exact=True).click(timeout=15000)
+        page.get_by_role("menuitem", name="Refresh", exact=True).click(timeout=15000)
+        page.wait_for_load_state("domcontentloaded")
+
+        sap_order = read_visible_sap_order()
+        if sap_order and sap_order != "---":
+            log(f"SAP_SERVICE_ORDER:{sap_order}")
+            return sap_order
+        log(f"  SAP Service Order not visible after refresh {attempt}/12; waiting...")
+
+    raise RuntimeError(
+        "Submit did not produce a SAP Service Order within 120 seconds after refreshing the Work Order; "
+        "check the D365 upload status manually before retrying."
+    )
+
+
+def get_existing_sap_service_order(page, wo_id):
+    page.goto(record_url("msdyn_workorder", wo_id))
+    page.wait_for_load_state("domcontentloaded")
+    header = page.locator("#headerControlsList_0")
+    header.wait_for(state="visible", timeout=30000)
+    return (header.inner_text() or "").strip().splitlines()[0].strip()
 
 
 # ---------- Browser launch ----------
@@ -633,11 +910,84 @@ def run(payload, user_data_dir):
             page.wait_for_load_state("domcontentloaded")
             check_for_login_wall(page)
 
-            wo_id = create_work_order(page, payload.get("workOrder", {}))
+            work_order = payload.get("workOrder", {})
+            existing_wo_id = work_order.get("existingWorkOrderId")
+            if existing_wo_id:
+                if not re.fullmatch(r"[0-9a-fA-F-]{36}", existing_wo_id):
+                    raise RuntimeError("workOrder.existingWorkOrderId must be a valid Work Order GUID.")
+                wo_id = existing_wo_id
+                log(f"Reusing existing Work Order for this test: {wo_id}")
+            else:
+                wo_id = create_work_order(page, work_order)
+
+            if work_order.get("submitOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.submitOnly requires workOrder.existingWorkOrderId.")
+                submit_existing_work_order(page, wo_id, user_data_dir)
+                log("Submit-only test completed.")
+                return
+
+            if work_order.get("qualityEscapeOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.qualityEscapeOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Quality Escape.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                add_quality_escape(page, wo_id, payload.get("qualityEscape", {}))
+                log("Quality Escape-only test completed.")
+                return
+
+            if work_order.get("partsAndQualityItemOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.partsAndQualityItemOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Work Order Part.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                product = payload.get("product", {})
+                add_and_validate_work_order_part(page, wo_id, product)
+                fill_quality_escape_item(page, payload.get("qualityEscapeItem", {}), payload.get("qualityEscape", {}).get("problemDescription", ""))
+                include_and_submit_part(page, wo_id, product.get("partNo", ""))
+                log("Parts and Quality Escape Item-only test completed.")
+                return
+
+            if work_order.get("qualityEscapeToPartOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.qualityEscapeToPartOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Quality Escape.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                quality_escape = payload.get("qualityEscape", {})
+                product = payload.get("product", {})
+                add_quality_escape(page, wo_id, quality_escape)
+                add_and_validate_work_order_part(page, wo_id, product)
+                fill_quality_escape_item(page, payload.get("qualityEscapeItem", {}), quality_escape.get("problemDescription", ""))
+                include_and_submit_part(page, wo_id, product.get("partNo", ""))
+                log("Quality Escape-to-Part test completed.")
+                return
+
+            if work_order.get("completeExistingPartOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.completeExistingPartOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to complete a Part.")
+                product = payload.get("product", {})
+                validate_existing_work_order_part(page, wo_id, product.get("partNo", ""))
+                fill_quality_escape_item(page, payload.get("qualityEscapeItem", {}), payload.get("qualityEscape", {}).get("problemDescription", ""))
+                include_and_submit_part(page, wo_id, product.get("partNo", ""))
+                log("Existing Part completion test completed.")
+                return
+
             add_bookable_resource(page, wo_id)
+            submit_existing_work_order(page, wo_id, user_data_dir)
             add_quality_escape(page, wo_id, payload.get("qualityEscape", {}))
-            create_quality_escape_item(page, wo_id, payload.get("qualityEscapeItem", {}))
-            fill_product_and_delivery(page, wo_id, payload.get("product", {}))
+            product = payload.get("product", {})
+            add_and_validate_work_order_part(page, wo_id, product)
+            fill_quality_escape_item(page, payload.get("qualityEscapeItem", {}), payload.get("qualityEscape", {}).get("problemDescription", ""))
+            include_and_submit_part(page, wo_id, product.get("partNo", ""))
 
             log(f"READY_FOR_CONFIRM:{wo_id}")
 
