@@ -148,7 +148,9 @@ export function BomStructureViewer({
   const [machine, setMachine] = useState("");
   const [subpartData, setSubpartData] = useState<BomStructureSubpart[]>([]);
   const [selectedSourceFiles, setSelectedSourceFiles] = useState<Set<string>>(new Set());
-  const [visibleDocumentCodes, setVisibleDocumentCodes] = useState<Set<string>>(new Set());
+  const [visibleDocumentCodes, setVisibleDocumentCodes] = useState<Set<string>>(
+    () => new Set(DOCUMENT_PART_PREFIXES.map((p) => p.code))
+  );
   const [listLoading, setListLoading] = useState(true);
   const [treeLoading, setTreeLoading] = useState(false);
   const [streamingMore, setStreamingMore] = useState(false);
@@ -243,7 +245,14 @@ export function BomStructureViewer({
     return () => cancelAnimationFrame(raf);
   }, [activeMatch, expandedIds]);
 
+  // Which level button (if any) matches the current expansion state —
+  // used to highlight it. Cleared on any manual per-node toggle, since at
+  // that point the actual expansion no longer cleanly corresponds to any
+  // single level.
+  const [activeLevel, setActiveLevel] = useState<number | null>(null);
+
   function toggleExpanded(id: string) {
+    setActiveLevel(null);
     setManualExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -256,10 +265,12 @@ export function BomStructureViewer({
     const all = new Set<string>();
     for (const tree of visibleSubpartTrees) collectExpandablePaths(tree.roots, String(tree.bomId), all);
     setManualExpandedIds(all);
+    setActiveLevel(maxTreeLevel);
   }
 
   function collapseAll() {
     setManualExpandedIds(new Set());
+    setActiveLevel(null);
   }
 
   // Deepest level value among the currently-visible trees (root = level 0,
@@ -294,6 +305,7 @@ export function BomStructureViewer({
     }
     for (const tree of visibleSubpartTrees) walk(tree.roots, String(tree.bomId));
     setManualExpandedIds(ids);
+    setActiveLevel(targetLevel);
   }
 
   function toggleSubpartSelected(sourceFile: string) {
@@ -366,6 +378,10 @@ export function BomStructureViewer({
     setSelectedSourceFiles(new Set());
     setError(null);
     setManualExpandedIds(new Set());
+    // expandRootsOf below expands exactly the roots (level 0) — the same
+    // set expandToLevel(1) would produce — so the level-1 button starts
+    // out highlighted to match.
+    setActiveLevel(1);
     setTreeLoading(true);
     setStreamingMore(true);
     let gotFirstProgress = false;
@@ -542,7 +558,7 @@ export function BomStructureViewer({
                     <Button
                       key={n}
                       size="sm"
-                      variant="outline"
+                      variant={n === activeLevel ? "default" : "outline"}
                       className="h-8 w-8 px-0"
                       onClick={() => expandToLevel(n)}
                     >
