@@ -39,6 +39,7 @@ const zh: Record<string, string> = {
   "Next match": "下一個符合項目",
   "Expand All": "全部展開",
   "Collapse All": "全部收合",
+  "Expand to level": "展開到層級",
   "Loading more… ({n} items so far)": "載入更多中…(目前已載入 {n} 筆)",
   "No items.": "無項目。",
 };
@@ -259,6 +260,40 @@ export function BomStructureViewer({
 
   function collapseAll() {
     setManualExpandedIds(new Set());
+  }
+
+  // Deepest level value among the currently-visible trees (root = level 0,
+  // per every lib/bom-parse.ts parser) — used to size the "expand to level"
+  // button row and to hide it entirely when there's no nesting to control.
+  const maxTreeLevel = useMemo(() => {
+    let max = 0;
+    function walk(nodes: BomTreeNode[]) {
+      for (const node of nodes) {
+        if (node.item.level > max) max = node.item.level;
+        walk(node.children);
+      }
+    }
+    for (const tree of visibleSubpartTrees) walk(tree.roots);
+    return max;
+  }, [visibleSubpartTrees]);
+
+  // Expands every node shallower than targetLevel so nodes down to
+  // targetLevel become visible (targetLevel=1 reveals level-1 children of
+  // the roots, ..., targetLevel=maxTreeLevel is equivalent to expandAll) —
+  // replaces manualExpandedIds outright, same "absolute action, not
+  // additive" semantics as expandAll/collapseAll above.
+  function expandToLevel(targetLevel: number) {
+    const ids = new Set<string>();
+    function walk(nodes: BomTreeNode[], idPrefix: string) {
+      for (const node of nodes) {
+        if (node.children.length > 0 && node.item.level < targetLevel) {
+          ids.add(`${idPrefix}:${node.path}`);
+          walk(node.children, idPrefix);
+        }
+      }
+    }
+    for (const tree of visibleSubpartTrees) walk(tree.roots, String(tree.bomId));
+    setManualExpandedIds(ids);
   }
 
   function toggleSubpartSelected(sourceFile: string) {
@@ -491,7 +526,7 @@ export function BomStructureViewer({
               </Button>
             </div>
 
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" onClick={expandAll}>
                 <ChevronsUpDown className="h-3.5 w-3.5" />
                 {t("Expand All")}
@@ -500,6 +535,22 @@ export function BomStructureViewer({
                 <ChevronsDownUp className="h-3.5 w-3.5" />
                 {t("Collapse All")}
               </Button>
+              {maxTreeLevel > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground text-sm">{t("Expand to level")}</span>
+                  {Array.from({ length: maxTreeLevel }, (_, i) => i + 1).map((n) => (
+                    <Button
+                      key={n}
+                      size="sm"
+                      variant="outline"
+                      className="h-8 w-8 px-0"
+                      onClick={() => expandToLevel(n)}
+                    >
+                      {n}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         )}
