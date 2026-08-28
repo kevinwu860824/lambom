@@ -71,12 +71,24 @@ INPUT SCHEMA (one line of JSON on stdin):
         "partsAndQualityItemOnly": bool, # only valid with existingWorkOrderId:
                           # add, validate, include, and submit
                           # one Part against an existing QE
+        "partValidationOnly": bool, # only valid with existingWorkOrderId:
+                  # add and validate one new Part, then stop
+        "qualityEscapeAndPartValidationOnly": bool, # only valid with
+                  # existingWorkOrderId: create QE, add one Part,
+                  # validate it, then stop
+        "qualityItemIncludeSubmitOnly": bool, # only valid with
+                  # existingWorkOrderId: fill an existing QE Item,
+                  # include and submit the existing Part
+        "includeSubmitOnly": bool, # only valid with existingWorkOrderId:
+                  # include and submit the existing Part
         "qualityEscapeToPartOnly": bool, # only valid with existingWorkOrderId:
                           # create QE, then complete one Part
                           # against an existing SAP Service Order
         "completeExistingPartOnly": bool, # only valid with existingWorkOrderId:
                             # validate and complete an existing
                             # Pending Part without creating one
+        "validateExistingPartOnly": bool, # only valid with existingWorkOrderId:
+                    # validate an existing Pending Part, then stop
         "fid": str,                   # FID to search Customer Asset by, e.g. "255711"
                                        # — see "STDIN PROTOCOL" above if this
                                        # matches more than one record
@@ -269,20 +281,55 @@ def fill_textbox(page, label, value, exact=False, max_attempts=4):
 
 def select_option(page, label, value, exact=True, max_attempts=4):
     """Opens a combobox by its accessible label and clicks the option with
-    the given exact text. Leaves the field untouched if value is empty —
-    this is how qualityEscape.customerTrackingType being "" reproduces the
+    the given text. Leaves the field untouched if value is empty — this is
+    how qualityEscape.customerTrackingType being "" reproduces the
     recording's own behavior of explicitly not choosing a value there.
 
-    Same retry-with-fresh-locator treatment as fill_textbox() above, and
-    for the same confirmed-real reason — a neighboring combobox can get
-    detached/re-rendered mid-click just as easily as a textbox can."""
+    D365 often re-renders the field after a lookup selection, so we don't
+    trust a single role-based locator. Wait for the combobox to appear, try
+    the exact accessible-name selector first, then fall back to a broader
+    label/aria selector before reattempting.
+    """
     if value is None or value == "":
         return
     last_error = None
     for attempt in range(1, max_attempts + 1):
         try:
-            page.get_by_role("combobox", name=label).click(timeout=8000)
-            page.get_by_role("option", name=value, exact=exact).click(timeout=8000)
+            candidate = None
+            for locator in [
+                lambda: page.get_by_role("combobox", name=label, exact=exact),
+                lambda: page.get_by_label(label, exact=exact),
+                lambda: page.locator(f"[role='combobox'][aria-label='{label}']").first,
+                lambda: page.locator(f"[aria-label='{label}']").first,
+                lambda: page.locator(f"[aria-label*='{label}']").first,
+            ]:
+                match = locator()
+                if match.count() > 0:
+                    candidate = match
+                    break
+            if not candidate:
+                # D365 virtualizes parts of long forms. A field below the
+                # current viewport may not exist in the DOM until the form is
+                # scrolled, so advance the form before retrying the lookup.
+                page.mouse.wheel(0, 700)
+                page.wait_for_timeout(1000)
+                raise RuntimeError(f"No combobox matched label {label!r}.")
+            candidate.wait_for(state="visible", timeout=10000)
+            candidate.click(timeout=10000)
+            option = None
+            for option_locator in [
+                lambda: page.get_by_role("option", name=value, exact=exact),
+                lambda: page.locator(f"[role='option'][aria-label='{value}']").first,
+                lambda: page.locator(f"[role='option'][aria-label*='{value}']").first,
+                lambda: page.locator(f"[role='option']").filter(has_text=value).first,
+            ]:
+                match = option_locator()
+                if match.count() > 0:
+                    option = match
+                    break
+            if not option:
+                raise RuntimeError(f"No option matched value {value!r}.")
+            option.click(timeout=10000)
             return
         except Exception as e:
             last_error = e
@@ -492,21 +539,61 @@ def add_bookable_resource(page, wo_id):
 
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
-    page.get_by_role("tab", name="Summary").click()
+    page.get_by_role("tab", name="Summary", exact=True).click()
     log("  Bookable Resource Booking created through Tasks and Time.")
 
 
 # ---------- Step 3: Quality Escape (header) ----------
 
 def open_quality_related(page):
-    page.locator('[id^="icon_more_tab_"]:visible').click(timeout=15000)
-    page.locator("#relatedEntityContainer").get_by_text("Quality", exact=True).click(timeout=15000)
+    """Open Quality using the selectors from the previously working flow."""
+    last_error = None
+    for attempt in range(1, 5):
+        try:
+            more_tabs = None
+            for locator in [
+                page.locator('[id^="icon_more_tab_"]:visible').first,
+                page.get_by_role("button", name=re.compile(r"more tabs|show more", re.I)).first,
+                page.locator('[aria-label*="More tabs"]:visible').first,
+                page.locator('[title*="More tabs"]:visible').first,
+                page.locator("button:visible").filter(has_text="...").last,
+            ]:
+                if locator.count() > 0:
+                    more_tabs = locator
+                    break
+            if not more_tabs:
+                raise RuntimeError("Could not find the visible More Tabs button.")
+            more_tabs.click(timeout=10000)
+            related_quality = page.locator("#relatedEntityContainer").get_by_text("Quality", exact=True)
+            related_quality.wait_for(state="visible", timeout=10000)
+            related_quality.click(timeout=10000)
+            page.wait_for_timeout(1500)
+            return
+        except Exception as e:
+            last_error = e
+            log(f"  open Quality: attempt {attempt}/4 failed ({e.__class__.__name__}), retrying...")
+            page.wait_for_timeout(1500)
+    raise RuntimeError(f"Could not open the Quality section after retries: {last_error}")
 
 
 def add_quality_escape(page, wo_id, qe):
     log("Opening the Quality related section and adding a Quality Escape...")
     open_quality_related(page)
-    page.get_by_role("menuitem", name="Add New Quality Escape Add a").click()
+    quality_escape_add = None
+    for locator in [
+        page.get_by_role("button", name="New Quality Escape", exact=True),
+        page.get_by_role("menuitem", name="Add New Quality Escape Add a", exact=True),
+        page.locator('[aria-label="New Quality Escape"]:visible'),
+        page.get_by_text("New Quality Escape", exact=True),
+        page.get_by_role("button", name=re.compile(r"New Quality Escape", re.I)),
+    ]:
+        if locator.count() > 0:
+            quality_escape_add = locator.first
+            break
+    if not quality_escape_add:
+        raise RuntimeError("Could not find the New Quality Escape command in the Quality grid.")
+    quality_escape_add.wait_for(state="visible", timeout=30000)
+    quality_escape_add.click(timeout=15000)
 
     log("Filling Quality Escape fields...")
     select_option(page, "Customer Temperature", qe.get("customerTemperature"))
@@ -516,14 +603,19 @@ def add_quality_escape(page, wo_id, qe):
     select_option(page, "Instl/Upgrd Commit Date", qe.get("commitDate"))
     fill_textbox(page, "Problem Description", qe.get("problemDescription"))
     page.get_by_role("menuitem", name="Save & Close Save and close").click()
-    try:
-        page.wait_for_function(
-            """() => /[?&]etn=lam_quality_escape&[\\s\\S]*[?&]id=[0-9a-fA-F-]{36}/.test(window.location.href)""",
-            timeout=30000,
+    deadline = time.time() + 30000 / 1000
+    quality_escape_id = None
+    while time.time() < deadline:
+        if re.search(r"[?&]etn=lam_quality_escape(?:&|$)", page.url):
+            quality_escape_id = extract_record_id(page.url)
+            if quality_escape_id:
+                break
+        page.wait_for_timeout(500)
+    if not quality_escape_id:
+        raise RuntimeError(
+            f"Quality Escape did not save to a record URL after Save & Close (url was: {page.url})."
         )
-    except PlaywrightTimeoutError as e:
-        raise RuntimeError("Quality Escape did not save to a record URL after Save & Close; stopped before continuing.") from e
-    log("  Quality Escape saved.")
+    log(f"  Quality Escape saved: {quality_escape_id}")
 
 
 # ---------- Step 4: Quality Escape Item ----------
@@ -544,6 +636,7 @@ def fill_quality_escape_item(page, qei, quality_escape_description):
             f"Quality Escape Item link {quality_escape_description!r} did not appear after validation."
         )
 
+    fill_textbox(page, "Title", "T/S_P/V CDA leak")
     select_option(page, "Replaced/Removed Type", qei.get("replacedRemovedType"))
     select_option(page, "Module Type", qei.get("moduleType"))
     select_option(page, "Damage Code Group", qei.get("damageCodeGroup"))
@@ -551,34 +644,131 @@ def fill_quality_escape_item(page, qei, quality_escape_description):
     select_option(page, "Symptom Detail", qei.get("symptomDetail"))
 
     problem_description = (
-        f"What (Object) is causing the problem? {qei.get('causingProblem', '')}\n"
-        f"What is the deviation? {qei.get('deviation', '')}\n"
-        f"What is it supposed to be (Specification)? {qei.get('specification', '')}\n"
+        f"What (Object) is causing the problem?{qei.get('causingProblem', '')}\n"
+        f"What is the deviation?{qei.get('deviation', '')}\n"
+        f"What is it supposed to be (Specification)?{qei.get('specification', '')}\n"
         "If known\n"
-        "     How much is the Deviation? (for those items working but not meeting a spec)\n"
-        "     What troubleshooting was done? (A-B-A testing, power checks, calibrations, etc.)\n"
-        "     For this FID, when in the process of running the recipe is the problem seen and at what frequency?"
+        "How much is the Deviation? (for those items working but not meeting a spec)\n"
+        "What troubleshooting was done? (A-B-A testing, power checks, calibrations, etc.)\n"
+        "For this FID, when in the process of running the recipe is the problem seen and at what frequency?"
     )
     additional_notes = qei.get("additionalNotes")
     if additional_notes:
         problem_description += f"\n\n{additional_notes}"
 
     log("Filling Quality Escape Item Problem Description...")
-    fill_textbox(page, "Problem Description", problem_description)
+    problem_box = page.get_by_role("textbox", name="Problem Description", exact=True)
+    problem_box.click(timeout=15000)
+    problem_box.press("ControlOrMeta+A")
+    problem_box.fill(problem_description)
+    log("Enhancing Quality Escape Item description with AI...")
+    ai_frame = page.locator('iframe[title="aigenerator"]').content_frame
+    ai_frame.get_by_role("img", name="Right Arrow").click(timeout=15000)
+    log("Accepting the AI-enhanced replacement...")
+    ai_frame.get_by_role("img", name="Left Arrow").click(timeout=15000)
     page.get_by_role("menuitem", name="Save & Close Save and close").click()
     log("  Quality Escape Item saved and closed.")
 
 
+def get_pending_parts_grid(page):
+    candidates = [
+        page.get_by_role("region", name="Work Order Parts - Pending"),
+        page.locator("[aria-label='Work Order Parts - Pending']"),
+        page.locator("[aria-label*='Work Order Parts - Pending']"),
+    ]
+    for candidate in candidates:
+        if candidate.count() > 0:
+            return candidate.first
+    pending_title = page.get_by_text("Work Order Parts - Pending", exact=True).first
+    if pending_title.count() > 0:
+        return pending_title.locator("xpath=..")
+    return page.locator("body")
+
+
 def select_pending_part(page, part_no):
-    pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
     part_identifier = part_no.split("-", 1)[-1]
-    part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
-    part_row.get_by_role("gridcell", name="Select row").click(timeout=15000)
+    pending_parts = get_pending_parts_grid(page)
+
+    log("  Using global Select row locator from recorded Parts flow...")
+    direct_select_cell = page.get_by_role("gridcell", name="Select row")
+    try:
+        direct_select_cell.first.click(timeout=30000)
+        return pending_parts
+    except Exception as e:
+        log(f"  global Select row was not clickable ({e.__class__.__name__}); trying scoped lookup...")
+
+    matching_rows = pending_parts.locator("[role='row'], tr").filter(has_text=part_no)
+    if not matching_rows.count():
+        matching_rows = pending_parts.locator("[role='row'], tr").filter(has_text=part_identifier)
+    if not matching_rows.count():
+        part_text = pending_parts.get_by_text(part_no, exact=False).first
+        if part_text.count():
+            matching_rows = part_text.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+    if not matching_rows.count():
+        matching_rows = page.locator("[role='row'], tr").filter(has_text=part_no)
+    if not matching_rows.count():
+        part_text = page.get_by_text(part_no, exact=False).first
+        if part_text.count():
+            matching_rows = part_text.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+    if not matching_rows.count():
+        part_cell = page.locator(f"[aria-label*='{part_no}']:visible").first
+        if part_cell.count():
+            matching_rows = part_cell.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+    part_row = None
+    for index in range(matching_rows.count()):
+        candidate = matching_rows.nth(index)
+        if candidate.is_visible(timeout=2000):
+            part_row = candidate
+            break
+    if not part_row:
+        page.wait_for_timeout(5000)
+        matching_rows = pending_parts.locator("[role='row'], tr").filter(has_text=part_no)
+        if not matching_rows.count():
+            matching_rows = pending_parts.locator("[role='row'], tr").filter(has_text=part_identifier)
+        if not matching_rows.count():
+            part_text = pending_parts.get_by_text(part_no, exact=False).first
+            if part_text.count():
+                matching_rows = part_text.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+        if not matching_rows.count():
+            matching_rows = page.locator("[role='row'], tr").filter(has_text=part_no)
+        if not matching_rows.count():
+            part_text = page.get_by_text(part_no, exact=False).first
+            if part_text.count():
+                matching_rows = part_text.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+        if not matching_rows.count():
+            part_cell = page.locator(f"[aria-label*='{part_no}']:visible").first
+            if part_cell.count():
+                matching_rows = part_cell.locator("xpath=ancestor::*[@role='row' or self::tr][1]")
+        for index in range(matching_rows.count()):
+            candidate = matching_rows.nth(index)
+            if candidate.is_visible(timeout=2000):
+                part_row = candidate
+                break
+    if not part_row:
+        raise RuntimeError(
+            f"Could not find Work Order Part '{part_no}' in the Pending grid after waiting for 30s."
+        )
+
+    part_row.scroll_into_view_if_needed(timeout=15000)
+    select_cell = part_row.locator("[role='gridcell'][aria-label='Select row'], [aria-label='Select row']").first
+    if select_cell.count() and select_cell.is_visible(timeout=3000):
+        select_cell.click(timeout=15000)
+        return pending_parts
+
+    part_row.click(timeout=15000)
     return pending_parts
 
 
 def click_ready_validate(page):
-    validate_command = page.get_by_role("menuitem", name="Validate", exact=True)
+    def get_validate_command():
+        command = page.locator(
+            '[data-id="msdyn_workorder|NoRelationship|Form|lam.msdyn_workorder.Validate.Button"]'
+        ).first
+        if command.count() == 0:
+            command = page.get_by_role("menuitem", name="Validate", exact=True).first
+        return command
+
+    validate_command = get_validate_command()
     validate_command.wait_for(state="visible", timeout=30000)
     for attempt in range(1, 13):
         if validate_command.is_enabled():
@@ -592,24 +782,58 @@ def click_ready_validate(page):
     # reports enabled, the same behavior observed for Submit-to-SAP.
     log("  Validate is enabled; waiting 15 seconds for the D365 command to settle...")
     page.wait_for_timeout(15000)
-    validate_command = page.get_by_role("menuitem", name="Validate", exact=True)
+    validate_command = get_validate_command()
     if not validate_command.is_enabled():
         raise RuntimeError("Validate became disabled while D365 was synchronizing the selected Part.")
     log(f"  Validate locator count: {validate_command.count()}")
     log(f"  Validate element: {validate_command.evaluate('(element) => element.outerHTML')}")
-    validate_command.hover(timeout=15000)
-    validate_command.click(timeout=15000)
+    log(f"  Validate button box: {validate_command.bounding_box()}")
+    for click_attempt in range(1, 4):
+        validate_command = get_validate_command()
+        validate_command.wait_for(state="visible", timeout=15000)
+        if not validate_command.is_enabled():
+            page.wait_for_timeout(3000)
+            continue
+        validate_command.hover(timeout=15000)
+        validate_command.click(timeout=15000)
+        page.screenshot(path=os.path.join(DEFAULT_USER_DATA_DIR, f"after-validate-click-{click_attempt}.png"))
+        log(f"  Validate command clicked (attempt {click_attempt}/3); waiting for status change...")
+        page.wait_for_timeout(5000)
+        completed_dialog = page.get_by_text("Completed Validation Process", exact=True)
+        if completed_dialog.count() and completed_dialog.first.is_visible(timeout=2000):
+            log("  Validation process completed; closing the result window.")
+            for close_locator in [
+                page.get_by_role("button", name="Close", exact=True).first,
+                page.locator('[aria-label="Close"]:visible').first,
+                page.locator('[title="Close"]:visible').first,
+            ]:
+                if close_locator.count():
+                    try:
+                        close_locator.click(timeout=5000)
+                        break
+                    except Exception:
+                        pass
+            return True
+        valid_indicator = page.get_by_role("img", name="Valid")
+        if valid_indicator.count() and valid_indicator.first.is_visible(timeout=2000):
+            log("  Validate produced a visible Valid indicator.")
+            return True
+        if click_attempt < 3:
+            log("  Validate produced no Valid indicator; retrying the command...")
+    return False
 
 
 def wait_for_part_validated(page, part_no):
     part_identifier = part_no.split("-", 1)[-1]
     valid_indicator = page.get_by_role("img", name="Valid")
     for attempt in range(1, 13):
-        pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
-        part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
+        pending_parts = get_pending_parts_grid(page)
+        part_row = pending_parts.locator("[role='row'], tr").filter(has_text=part_identifier).first
         if valid_indicator.count() and valid_indicator.first.is_visible():
             log("  Work Order Part validation completed (Valid indicator is green).")
             return
+        if part_row.count() and part_row.get_attribute("aria-selected") == "true":
+            log(f"  Selected row still visible for '{part_no}', waiting on the Valid indicator.")
         page.wait_for_timeout(5000)
         log(f"  Validation still pending after {attempt * 5} seconds.")
     raise RuntimeError(f"Part '{part_no}' did not reach Validation Status 'Validated' within 60 seconds.")
@@ -619,24 +843,98 @@ def include_and_submit_part(page, wo_id, part_no):
     log("Including the validated Work Order Part...")
     select_pending_part(page, part_no)
     page.get_by_role("menuitem", name="Include", exact=True).click()
-    page.get_by_role("button", name="OK", exact=True).click()
+    # Some D365 sessions show an Include confirmation dialog; others apply
+    # Include immediately and leave the row's Include value as Yes.
+    try:
+        page.get_by_role("button", name="OK", exact=True).click(timeout=5000)
+        log("  Include confirmation accepted.")
+    except PlaywrightTimeoutError:
+        log("  Include applied without a confirmation dialog.")
 
     page.wait_for_timeout(1000)
     select_pending_part(page, part_no)
-    page.get_by_role("menuitem", name="Submit", exact=True).click()
-    page.wait_for_timeout(20000)
+    work_order_submit = page.locator(
+        '[data-id="msdyn_workorder|NoRelationship|Form|lam.msdyn_workorder.SubmitToSap.Button"]'
+    ).first
+    if work_order_submit.count() == 0:
+        work_order_submit = page.get_by_role("menuitem", name="Submit", exact=True).first
+    work_order_submit.wait_for(state="visible", timeout=30000)
+    log("  Clicking Work Order Submit to SAP...")
+    work_order_submit.click(timeout=15000)
+    log("  Submit clicked; waiting for the upload process to complete...")
+    submission_overlay = page.locator("#appProgressIndicatorMessage")
+    try:
+        submission_overlay.wait_for(state="visible", timeout=30000)
+        log("  Upload progress appeared; waiting until it finishes...")
+        submission_overlay.wait_for(state="hidden", timeout=120000)
+        log("  Upload process completed.")
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError(
+            "Submit upload did not complete within the expected time; leaving the result window open."
+        ) from e
 
+    # The progress overlay disappearing is not sufficient proof that the
+    # Work Order Submit result is ready. Wait for a completion message in the
+    # visible result window before closing it.
+    completion_pattern = re.compile(r"complete|success|finished|submitted|成功|完成", re.I)
+    completion_deadline = time.time() + 60000 / 1000
+    result_text = ""
+    while time.time() < completion_deadline:
+        visible_dialogs = page.get_by_role("dialog").all_inner_texts()
+        result_text = "\n".join(visible_dialogs)
+        if result_text and completion_pattern.search(result_text):
+            log(f"  Submit result completed: {result_text!r}")
+            break
+        page.wait_for_timeout(1000)
+    else:
+        raise RuntimeError(
+            f"Submit progress ended but no completion result was shown; leaving the window open."
+            f" Dialog text: {result_text!r}"
+        )
+
+    for close_locator in [
+        page.get_by_role("button", name="Close", exact=True).first,
+        page.locator('[aria-label="Close"]:visible').first,
+        page.locator('[title="Close"]:visible').first,
+    ]:
+        if close_locator.count():
+            try:
+                close_locator.click(timeout=5000)
+                log("  Submit result window closed.")
+                break
+            except Exception:
+                pass
+
+    log("Refreshing Pending until the Part disappears...")
     for attempt in range(1, 13):
-        pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
-        pending_parts.get_by_label("Refresh").click(timeout=15000)
+        pending_parts = get_pending_parts_grid(page)
+        refresh = pending_parts.get_by_label("Refresh").first
+        if refresh.count():
+            refresh.click(timeout=15000)
         page.wait_for_timeout(10000)
-        ordered_parts = page.get_by_role("region", name="Work Order Parts - Ordered")
-        if ordered_parts.get_by_text(part_no, exact=False).count():
-            log(f"  Work Order Part '{part_no}' is now ordered.")
-            return
-        log(f"  Part not ordered after refresh {attempt}/12; waiting...")
+        if not pending_parts.get_by_text(part_no, exact=False).count():
+            log(f"  Work Order Part disappeared from Pending after refresh {attempt}.")
+            break
+        log(f"  Part still visible after Pending refresh {attempt}/12; waiting...")
+    else:
+        raise RuntimeError(f"Part '{part_no}' did not disappear from Pending after Submit within 120 seconds.")
 
-    raise RuntimeError(f"Part '{part_no}' did not move to Work Order Parts - Ordered within 120 seconds.")
+    log("Refreshing Ordered until the Part appears...")
+    ordered_parts = page.get_by_role("region", name="Work Order Parts - Ordered")
+    if not ordered_parts.count():
+        ordered_parts = page.locator("[aria-label*='Work Order Parts - Ordered']").first
+    ordered_parts.wait_for(state="visible", timeout=30000)
+    for attempt in range(1, 13):
+        refresh = ordered_parts.get_by_label("Refresh").first
+        if refresh.count():
+            refresh.click(timeout=15000)
+        page.wait_for_timeout(10000)
+        if ordered_parts.get_by_text(part_no, exact=False).count():
+            log(f"  Work Order Part '{part_no}' appeared in Ordered after refresh {attempt}.")
+            return
+        log(f"  Part not yet visible in Ordered after refresh {attempt}/12; waiting...")
+
+    raise RuntimeError(f"Part '{part_no}' did not appear in Ordered after Submit within 120 seconds.")
 
 
 # ---------- Step 5: Work Order Part ----------
@@ -680,9 +978,16 @@ def add_and_validate_work_order_part(page, wo_id, product):
         page.get_by_role("button", name=day_button).click(timeout=15000)
         page.wait_for_timeout(500)
         expected_date = f"{parsed_date.month}/{parsed_date.day}/{parsed_date.year}"
-        if not date_box.input_value():
-            date_box.fill(expected_date)
+        for date_attempt in range(1, 4):
+            date_box = page.get_by_role("combobox", name="Date Needed")
+            if expected_date in date_box.input_value():
+                break
+            date_box.click(timeout=10000)
+            date_box.press("Control+A")
+            date_box.fill(expected_date, timeout=10000)
             date_box.press("Tab")
+            page.wait_for_timeout(750)
+        date_box = page.get_by_role("combobox", name="Date Needed")
         date_state = date_box.evaluate("(element) => ({ value: element.value, html: element.outerHTML })")
         log(f"  Date Needed control value: {date_state['value']!r}")
         log(f"  Date Needed control: {date_state['html']}")
@@ -708,23 +1013,18 @@ def add_and_validate_work_order_part(page, wo_id, product):
     fill_textbox(page, "Delivery Instruction Detail (", delivery_text)
     page.get_by_role("menuitem", name="Save & Close Save and close").click()
 
-    page.get_by_text("New Work Order Product", exact=True).first.wait_for(state="hidden", timeout=30000)
-    pending_parts = page.get_by_role("region", name="Work Order Parts - Pending")
-    part_identifier = part_no.split("-", 1)[-1]
-    part_row = pending_parts.get_by_role("row").filter(has_text=part_identifier).first
-    try:
-        part_row.wait_for(state="visible", timeout=30000)
-    except PlaywrightTimeoutError as e:
-        raise RuntimeError(
-            f"Work Order Part '{part_no}' did not appear in Pending after Save & Close; it was not saved."
-        ) from e
-    part_row.get_by_role("gridcell", name="Select row").click()
-    click_ready_validate(page)
+    # The saved row is rendered by a virtualized grid and may not be exposed
+    # under the Pending container locator. Reuse the same direct Select row
+    # action as the verified recording instead of waiting on row text.
+    page.wait_for_timeout(2000)
+    select_pending_part(page, part_no)
+    validation_completed = click_ready_validate(page)
     try:
         page.get_by_role("button", name="Close", exact=True).click(timeout=5000)
     except PlaywrightTimeoutError:
         log("  Validate completed without a results dialog.")
-    wait_for_part_validated(page, part_no)
+    if not validation_completed:
+        wait_for_part_validated(page, part_no)
     log("  Work Order Part saved and validated.")
 
 
@@ -734,15 +1034,33 @@ def validate_existing_work_order_part(page, wo_id, part_no):
     page.wait_for_load_state("domcontentloaded")
     page.get_by_role("tab", name="Parts").click()
     select_pending_part(page, part_no)
-    click_ready_validate(page)
+    validation_completed = click_ready_validate(page)
     try:
         page.get_by_role("button", name="Close", exact=True).click(timeout=5000)
     except PlaywrightTimeoutError:
         log("  Validate completed without a results dialog.")
-    wait_for_part_validated(page, part_no)
+    if not validation_completed:
+        wait_for_part_validated(page, part_no)
     log("  Existing Work Order Part validated.")
 
 # ---------- Submit / SAP Service Order ----------
+
+def read_sap_service_order(page):
+    """Read the SAP Service Order value from its labeled header control.
+
+    D365 can renumber headerControlsList_* after a refresh, so the numeric
+    suffix is not a stable identity for this field.
+    """
+    controls = page.locator("[id^='headerControlsList_']:visible")
+    for index in range(controls.count()):
+        control = controls.nth(index)
+        text = (control.inner_text() or "").strip()
+        if "SAP Service Order" not in text:
+            continue
+        values = re.findall(r"\b\d{6,}\b", text)
+        if values:
+            return values[0]
+    return ""
 
 def submit_existing_work_order(page, wo_id, user_data_dir):
     """Submits an already-prepared Work Order and waits for D365 to replace
@@ -751,9 +1069,8 @@ def submit_existing_work_order(page, wo_id, user_data_dir):
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
 
-    sap_order_header = page.locator("#headerControlsList_0")
-    sap_order_header.wait_for(state="visible", timeout=30000)
-    initial_value = (sap_order_header.inner_text() or "").strip().splitlines()[0].strip()
+    page.get_by_text("SAP Service Order", exact=True).first.wait_for(state="visible", timeout=30000)
+    initial_value = read_sap_service_order(page)
     if initial_value and initial_value != "---":
         raise RuntimeError(
             f"Work Order already has a SAP Service Order ({initial_value!r}); refusing to submit it again."
@@ -811,22 +1128,9 @@ def submit_existing_work_order(page, wo_id, user_data_dir):
         ) from e
 
     def read_visible_sap_order():
-        # Refresh can recreate the form header with a different numeric DOM
-        # id, but the visible SAP Service Order label remains stable. Find
-        # the line directly before that label in its nearest header group.
-        label = page.get_by_text("SAP Service Order", exact=True).first
         try:
-            label.wait_for(state="visible", timeout=30000)
-            return label.evaluate(
-                """(element) => {
-                    for (let node = element.parentElement; node && node !== document.body; node = node.parentElement) {
-                        const lines = (node.innerText || '').split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
-                        const labelIndex = lines.indexOf('SAP Service Order');
-                        if (labelIndex > 0) return lines[labelIndex - 1];
-                    }
-                    return '';
-                }"""
-            ).strip()
+            page.get_by_text("SAP Service Order", exact=True).first.wait_for(state="visible", timeout=30000)
+            return read_sap_service_order(page)
         except PlaywrightTimeoutError:
             return ""
 
@@ -855,9 +1159,8 @@ def submit_existing_work_order(page, wo_id, user_data_dir):
 def get_existing_sap_service_order(page, wo_id):
     page.goto(record_url("msdyn_workorder", wo_id))
     page.wait_for_load_state("domcontentloaded")
-    header = page.locator("#headerControlsList_0")
-    header.wait_for(state="visible", timeout=30000)
-    return (header.inner_text() or "").strip().splitlines()[0].strip()
+    page.get_by_text("SAP Service Order", exact=True).first.wait_for(state="visible", timeout=30000)
+    return read_sap_service_order(page)
 
 
 # ---------- Browser launch ----------
@@ -952,6 +1255,62 @@ def run(payload, user_data_dir):
                 log("Parts and Quality Escape Item-only test completed.")
                 return
 
+            if work_order.get("partValidationOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.partValidationOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Work Order Part.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                add_and_validate_work_order_part(page, wo_id, payload.get("product", {}))
+                log("Part validation-only test completed.")
+                return
+
+            if work_order.get("qualityEscapeAndPartValidationOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError(
+                        "workOrder.qualityEscapeAndPartValidationOnly requires workOrder.existingWorkOrderId."
+                    )
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Quality Escape.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                add_quality_escape(page, wo_id, payload.get("qualityEscape", {}))
+                add_and_validate_work_order_part(page, wo_id, payload.get("product", {}))
+                log("Quality Escape and Part validation-only test completed.")
+                return
+
+            if work_order.get("qualityItemIncludeSubmitOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError(
+                        "workOrder.qualityItemIncludeSubmitOnly requires workOrder.existingWorkOrderId."
+                    )
+                product = payload.get("product", {})
+                part_no = product.get("partNo", "")
+                if not part_no:
+                    raise RuntimeError("workOrder.qualityItemIncludeSubmitOnly requires product.partNo.")
+                fill_quality_escape_item(
+                    page,
+                    payload.get("qualityEscapeItem", {}),
+                    payload.get("qualityEscape", {}).get("problemDescription", "test full flow"),
+                )
+                include_and_submit_part(page, wo_id, part_no)
+                log("Quality Item include-and-submit-only test completed.")
+                return
+
+            if work_order.get("includeSubmitOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.includeSubmitOnly requires workOrder.existingWorkOrderId.")
+                part_no = payload.get("product", {}).get("partNo", "")
+                if not part_no:
+                    raise RuntimeError("workOrder.includeSubmitOnly requires product.partNo.")
+                page.goto(record_url("msdyn_workorder", wo_id))
+                page.wait_for_load_state("domcontentloaded")
+                page.get_by_role("tab", name="Parts", exact=True).click()
+                include_and_submit_part(page, wo_id, part_no)
+                log("Include-and-submit-only test completed.")
+                return
+
             if work_order.get("qualityEscapeToPartOnly"):
                 if not existing_wo_id:
                     raise RuntimeError("workOrder.qualityEscapeToPartOnly requires workOrder.existingWorkOrderId.")
@@ -979,6 +1338,30 @@ def run(payload, user_data_dir):
                 fill_quality_escape_item(page, payload.get("qualityEscapeItem", {}), payload.get("qualityEscape", {}).get("problemDescription", ""))
                 include_and_submit_part(page, wo_id, product.get("partNo", ""))
                 log("Existing Part completion test completed.")
+                return
+
+            if work_order.get("validateExistingPartOnly"):
+                if not existing_wo_id:
+                    raise RuntimeError("workOrder.validateExistingPartOnly requires workOrder.existingWorkOrderId.")
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to validate a Work Order Part.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                validate_existing_work_order_part(page, wo_id, payload.get("product", {}).get("partNo", ""))
+                log("Existing Part validation-only test completed.")
+                return
+
+            # When an existing Work Order is supplied without another
+            # explicit test mode, default to the safe QE-only workflow. This
+            # prevents an iterative test from creating a booking, submitting
+            # SAP again, or creating a new Work Order by accident.
+            if existing_wo_id:
+                sap_order = get_existing_sap_service_order(page, wo_id)
+                if not sap_order or sap_order == "---":
+                    raise RuntimeError("Work Order has no SAP Service Order yet; refusing to create a Quality Escape.")
+                log(f"Existing SAP Service Order confirmed: {sap_order}")
+                add_quality_escape(page, wo_id, payload.get("qualityEscape", {}))
+                log("Existing Work Order QE-only test completed.")
                 return
 
             add_bookable_resource(page, wo_id)
