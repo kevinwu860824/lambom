@@ -1,8 +1,9 @@
 "use client";
 
+import * as XLSX from "xlsx-js-style";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { fetchZbomMachineNames, fetchZbomSectionNames, fetchZbomSectionOptions, type ZbomOption } from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
@@ -29,6 +30,8 @@ const zh: Record<string, string> = {
   "Failed to load this section.": "此區段載入失敗。",
   "Option Type": "選項類型",
   "Option Selection": "選項內容",
+  "Download Excel": "下載 Excel",
+  "Downloading…": "下載中…",
 };
 
 export default function ZbomPage() {
@@ -52,6 +55,7 @@ export default function ZbomPage() {
   // fetched.
   const [sectionOrder, setSectionOrder] = useState<string[]>([]);
   const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(false);
   const [expandedIndices, setExpandedIndices] = useState<Set<number>>(new Set());
   // Keyed by section name (not index) — duplicate-named sections share one
   // fetch/cache, matching how fetchZbomSectionOptions itself groups rows
@@ -117,6 +121,43 @@ export default function ZbomPage() {
       .finally(() => setSectionsLoading(false));
   }
 
+  async function downloadExcel() {
+    if (!machine || sectionOrder.length === 0 || downloadLoading) return;
+
+    setDownloadLoading(true);
+    setError(null);
+    try {
+      const options = (
+        await Promise.all(sectionOrder.map((name) => fetchZbomSectionOptions(getSupabase(), machine, name)))
+      ).flat();
+      const workbook = XLSX.utils.book_new();
+      const summaryRows = [
+        ["Item", "Value"],
+        ["Machine", machine],
+        ["Sections", sectionOrder.length],
+        ["Options", options.length],
+      ];
+      const optionRows = [
+        ["Section", "Option Type", "Option Selection"],
+        ...options.map((option) => [option.section, option.optionType, option.optionSelection ?? ""]),
+      ];
+
+      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+      const optionsSheet = XLSX.utils.aoa_to_sheet(optionRows);
+      summarySheet["!cols"] = [{ wch: 18 }, { wch: 45 }];
+      optionsSheet["!cols"] = [{ wch: 35 }, { wch: 30 }, { wch: 60 }];
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+      XLSX.utils.book_append_sheet(workbook, optionsSheet, "ZBOM Options");
+
+      const safeMachineName = machine.replace(/[\\/:*?"<>|]+/g, "_");
+      XLSX.writeFile(workbook, `ZBOM_${safeMachineName}.xlsx`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloadLoading(false);
+    }
+  }
+
   if (groupLoading) return null;
   if (!allowedMachines) {
     return (
@@ -164,6 +205,14 @@ export default function ZbomPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {machine && sectionOrder.length > 0 && (
+                <div className="mt-3 flex justify-end">
+                  <Button variant="outline" onClick={downloadExcel} disabled={downloadLoading}>
+                    <Download className="h-4 w-4" />
+                    {downloadLoading ? t("Downloading…") : t("Download Excel")}
+                  </Button>
+                </div>
+              )}
               {!listLoading && machineNames.length === 0 && (
                 <p className="text-muted-foreground mt-1 text-sm">{t("No ZBOM data stored yet.")}</p>
               )}
