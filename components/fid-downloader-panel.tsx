@@ -121,11 +121,9 @@ class CancelledError extends Error {}
 export function FidDownloaderPanel({
   existingMachines = [],
   groupId,
-  onUploaded,
 }: {
   existingMachines?: string[];
   groupId: number | null;
-  onUploaded?: () => void;
 }) {
   const t = useTranslate(zh);
   const [available, setAvailable] = useState(false);
@@ -476,7 +474,6 @@ export function FidDownloaderPanel({
     setLog((prev) => `${prev}\n${wasCancelled ? "Cancelled, processing stopped." : "All items processed."}\n`);
     cancelRequestedRef.current = false;
     setProcessing(false);
-    onUploaded?.();
   }
 
   if (!available) return null;

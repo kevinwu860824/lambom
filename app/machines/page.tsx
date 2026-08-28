@@ -120,7 +120,7 @@ export default function MachinesPage() {
     return supabaseRef.current;
   }
 
-  const { allowedMachines, employeeId, group, notFound, loading: groupLoading, refresh: refreshGroup } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
   const t = useTranslate(zh);
 
   const [groups, setGroups] = useState<MachineGroup[]>([]);
@@ -444,7 +444,6 @@ export default function MachinesPage() {
         <FidDownloaderPanel
           existingMachines={groups.map((g) => g.machine)}
           groupId={group?.id ?? null}
-          onUploaded={refreshGroup}
         />
 
         <Card>
