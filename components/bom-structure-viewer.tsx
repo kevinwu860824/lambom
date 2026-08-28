@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { useTranslate } from "@/lib/i18n";
@@ -40,7 +40,8 @@ const zh: Record<string, string> = {
   "Expand All": "全部展開",
   "Collapse All": "全部收合",
   "Expand to level": "展開到層級",
-  "Download expanded tree": "下載展開的樹狀圖",
+  "Upload Full BOM TXT": "上傳 Full BOM TXT",
+  "Uploading…": "上傳中…",
   "Loading more… ({n} items so far)": "載入更多中…(目前已載入 {n} 筆)",
   "No items.": "無項目。",
 };
@@ -119,6 +120,7 @@ export function BomStructureViewer({
   description,
   fetchMachineNames,
   fetchSubparts,
+  onUploadFile,
 }: {
   title: string;
   description: string;
@@ -137,6 +139,7 @@ export function BomStructureViewer({
     machineName: string,
     onProgress: (partial: BomStructureSubpart[]) => void
   ) => Promise<BomStructureSubpart[]>;
+  onUploadFile?: (machineName: string, file: File) => Promise<void>;
 }) {
   const t = useTranslate(zh);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -156,6 +159,8 @@ export function BomStructureViewer({
   const [treeLoading, setTreeLoading] = useState(false);
   const [streamingMore, setStreamingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   // Rebuilt whenever visibleDocumentCodes changes — filtering the flat
   // items before buildBomTree naturally drops a hidden node's whole
@@ -437,6 +442,20 @@ export function BomStructureViewer({
     }
   }
 
+  async function handleUploadFile(file: File) {
+    if (!machine || !onUploadFile) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await onUploadFile(machine, file);
+      await handleMachineChange(machine);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className="bg-background min-h-screen">
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
@@ -467,6 +486,29 @@ export function BomStructureViewer({
                 </SelectTrigger>
                 <SelectContent>
                   {machineNames.map((name) => (
+              {onUploadFile && machine && (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={uploading || treeLoading || streamingMore}
+                  >
+                    <Upload className="h-4 w-4" />
+                    {uploading ? t("Uploading…") : t("Upload Full BOM TXT")}
+                  </Button>
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleUploadFile(file);
+                      event.target.value = "";
+                    }}
+                  />
+                </div>
+              )}
                     <SelectItem key={name} value={name}>
                       {name}
                     </SelectItem>
