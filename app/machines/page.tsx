@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase";
 import {
   fetchAllBomItems,
   fetchFidsByMachine,
-  fetchFullBomItems,
+  fetchFullBomTreeItems,
   fetchMachineGroups,
   fetchZbomSectionNames,
   fetchZbomSectionOptions,
@@ -18,6 +18,8 @@ import {
   type BomEntry,
   type MachineGroup,
   type ZbomOption,
+  buildBomTree,
+  type BomTreeNode,
 } from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
@@ -79,7 +81,8 @@ function workbookBytes(sheets: { name: string; rows: (string | number)[][] }[]):
   for (const { name, rows } of sheets) {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name.slice(0, 31));
   }
-  return XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as Uint8Array;
+  const output = XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  return new Uint8Array(output);
 }
 
 function bomRows(items: { part_no: string; description: string | null; qty: number | string | null; uom: string | null }[]) {
@@ -94,6 +97,20 @@ function zbomRows(options: ZbomOption[]) {
     ["Section", "Option Type", "Option Selection"],
     ...options.map((option) => [option.section, option.optionType, option.optionSelection ?? ""]),
   ];
+}
+
+function fullBomText(items: Parameters<typeof buildBomTree>[0]): string {
+  const lines: string[] = [];
+  function appendNode(node: BomTreeNode, depth: number) {
+    const item = node.item;
+    const details = [item.part_no, item.description ?? "", `${item.qty ?? "-"} ${item.uom ?? ""}`.trim()]
+      .filter(Boolean)
+      .join(" | ");
+    lines.push(`${"  ".repeat(depth)}${depth > 0 ? "|-- " : ""}${details}`);
+    for (const child of node.children) appendNode(child, depth + 1);
+  }
+  for (const root of buildBomTree(items)) appendNode(root, 0);
+  return `${lines.join("\n")}\n`;
 }
 
 export default function MachinesPage() {
@@ -189,8 +206,10 @@ export default function MachinesPage() {
       const folder = `${safeFilenamePart(machineName)}-${safeFilenamePart(fid)}`;
 
       if (selection.fullBom) {
-        const items = await fetchFullBomItems(supabase, machineName);
-        files[`${folder}/${folder}-Full_BOM.xlsx`] = workbookBytes([{ name: "Full BOM", rows: bomRows(items) }]);
+        const items = await fetchFullBomTreeItems(supabase, machineName);
+        files[`${folder}/${folder}-Full_BOM.txt`] = new TextEncoder().encode(
+          `Machine: ${machineName}\nFID: ${fid}\n\n${fullBomText(items)}`
+        );
       }
 
       if (selection.modules) {
