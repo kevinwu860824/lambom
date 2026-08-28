@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase";
 import { parseModulesWorkbook, parseXlsxBom, parseZbomWorkbook } from "@/lib/bom-parse";
 import {
   autoMatchKeyParts,
+  ensureMachineRecord,
   lookupFidEntry,
   saveFidEntry,
   uploadBomEntry,
@@ -399,6 +400,8 @@ export function FidDownloaderPanel({
       const buffer = await window.fidDownloader!.readFile(result.resultPath);
       const options = parseZbomWorkbook(buffer);
       await uploadZbomEntry(getSupabase(), machineName, options);
+      await ensureMachineRecord(getSupabase(), machineName);
+      if (groupId != null) await ensureMachineInGroup(getSupabase(), groupId, machineName);
       await deleteLocalFile(result.resultPath);
       setLog((prev) => `${prev}ZBOM uploaded (${options.length} option(s)).\n`);
     } catch (err) {
