@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Upload } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { useTranslate } from "@/lib/i18n";
@@ -42,6 +42,7 @@ const zh: Record<string, string> = {
   "Expand to level": "展開到層級",
   "Upload Full BOM TXT": "上傳 Full BOM TXT",
   "Uploading…": "上傳中…",
+  "Download expanded tree": "下載展開的樹狀圖",
   "Loading more… ({n} items so far)": "載入更多中…(目前已載入 {n} 筆)",
   "No items.": "無項目。",
 };
