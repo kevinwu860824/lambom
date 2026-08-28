@@ -486,6 +486,12 @@ export function BomStructureViewer({
                 </SelectTrigger>
                 <SelectContent>
                   {machineNames.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {onUploadFile && machine && (
                 <div className="mt-3 flex justify-end">
                   <Button
@@ -509,12 +515,6 @@ export function BomStructureViewer({
                   />
                 </div>
               )}
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
 
             {subpartTrees.length > 0 && (
