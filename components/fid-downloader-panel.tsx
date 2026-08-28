@@ -231,6 +231,7 @@ export function FidDownloaderPanel({
     const cached = await lookupFidEntry(supabase, fidValue);
     if (cached?.so) {
       setLog((prev) => `${prev}Using cached SO ${cached.so}.\n`);
+      await saveFidEntry(supabase, fidValue, { machineName });
       return { so: cached.so, po: cached.po ?? "" };
     }
 
@@ -244,12 +245,7 @@ export function FidDownloaderPanel({
     const po = result.po ?? "";
     setLog((prev) => `${prev}Resolved SO=${so} PO=${po || "(none)"}.\n`);
 
-    try {
-      await saveFidEntry(supabase, fidValue, { machineName, so, po });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setLog((prev) => `${prev}[Error] Failed to cache the resolved SO/PO: ${message}\n`);
-    }
+    await saveFidEntry(supabase, fidValue, { machineName, so, po });
 
     return { so, po };
   }
@@ -326,8 +322,6 @@ export function FidDownloaderPanel({
         setLog((prev) => `${prev}[Error] Failed to record group ownership: ${message}\n`);
       }
     }
-    onUploaded?.();
-
     await deleteLocalFile(result.resultPath);
     setLog((prev) => `${prev}Modules upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
   }
@@ -411,6 +405,7 @@ export function FidDownloaderPanel({
     setLog((prev) => `${prev}\n${wasCancelled ? "Cancelled, processing stopped." : "All items processed."}\n`);
     cancelRequestedRef.current = false;
     setProcessing(false);
+    onUploaded?.();
   }
 
   if (!available) return null;
