@@ -186,11 +186,11 @@ export default function MachinesPage() {
     try {
       const supabase = getSupabase();
       const files: Record<string, Uint8Array> = {};
-      const folder = safeFilenamePart(fid);
+      const folder = `${safeFilenamePart(machineName)}-${safeFilenamePart(fid)}`;
 
       if (selection.fullBom) {
         const items = await fetchFullBomItems(supabase, machineName);
-        files[`${folder}/Full_BOM.xlsx`] = workbookBytes([{ name: "Full BOM", rows: bomRows(items) }]);
+        files[`${folder}/${folder}-Full_BOM.xlsx`] = workbookBytes([{ name: "Full BOM", rows: bomRows(items) }]);
       }
 
       if (selection.modules) {
@@ -200,13 +200,13 @@ export default function MachinesPage() {
             rows: bomRows(await fetchAllBomItems(supabase, entry.bomId, entry.source_file)),
           }))
         );
-        files[`${folder}/Modules.xlsx`] = workbookBytes(sheets.length > 0 ? sheets : [{ name: "Modules", rows: [["No modules"]] }]);
+        files[`${folder}/${folder}-Modules.xlsx`] = workbookBytes(sheets.length > 0 ? sheets : [{ name: "Modules", rows: [["No modules"]] }]);
       }
 
       if (selection.zbom) {
         const sections = await fetchZbomSectionNames(supabase, machineName);
         const options = (await Promise.all(sections.map((section) => fetchZbomSectionOptions(supabase, machineName, section)))).flat();
-        files[`${folder}/ZBOM.xlsx`] = workbookBytes([{ name: "ZBOM", rows: zbomRows(options) }]);
+        files[`${folder}/${folder}-ZBOM.xlsx`] = workbookBytes([{ name: "ZBOM", rows: zbomRows(options) }]);
       }
 
       const archive = zipSync(files);
