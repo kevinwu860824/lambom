@@ -24,7 +24,9 @@ import { Label } from "@/components/ui/label";
 const zh: Record<string, string> = {
   "SAP Download": "SAP 下載",
   "Machine No.": "機台編號",
+  SO: "SO（選填）",
   "e.g. ACOXN1": "例如 ACOXN1",
+  "e.g. E0458": "例如 E0458",
   "e.g. 264059": "例如 264059",
   Add: "新增",
   "Excel Template": "Excel 範本",
@@ -73,6 +75,7 @@ interface QueueItem {
   id: string;
   fid: string;
   machineNo: string;
+  so: string;
   downloads: DownloadSelection;
   status: QueueStatus;
   error?: string;
@@ -128,6 +131,7 @@ export function FidDownloaderPanel({
   const [available, setAvailable] = useState(false);
   const [machineNo, setMachineNo] = useState("");
   const [fid, setFid] = useState("");
+  const [so, setSo] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [processing, setProcessing] = useState(false);
   const [log, setLog] = useState("");
@@ -175,12 +179,14 @@ export function FidDownloaderPanel({
         id: `${Date.now()}-${Math.random()}`,
         fid: trimmedFid,
         machineNo: trimmedMachineNo,
+        so: so.trim(),
         downloads: { ...defaultDownloadSelection },
         status: "queued",
       },
     ]);
     setMachineNo("");
     setFid("");
+    setSo("");
   }
 
   function removeFromQueue(id: string) {
@@ -189,8 +195,8 @@ export function FidDownloaderPanel({
 
   function downloadTemplate() {
     const wb = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([["Machine No.", "FID"]]);
-    sheet["!cols"] = [{ wch: 16 }, { wch: 16 }];
+    const sheet = XLSX.utils.aoa_to_sheet([["Machine No.", "FID", "SO"]]);
+    sheet["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, sheet, "SAP Download List");
     XLSX.writeFile(wb, "SAP_Download_List_Template.xlsx");
   }
@@ -206,6 +212,7 @@ export function FidDownloaderPanel({
       const header = rows[0].map((h) => (h ?? "").toString().trim());
       const machineCol = header.findIndex((h) => h.toLowerCase().includes("machine"));
       const fidCol = header.findIndex((h) => h.toUpperCase().includes("FID"));
+      const soCol = header.findIndex((h) => h.toUpperCase() === "SO" || h.toLowerCase().includes("sales order"));
 
       const newItems: QueueItem[] = [];
       let skipped = 0;
@@ -213,6 +220,7 @@ export function FidDownloaderPanel({
         const row = rows[r];
         const machineNoValue = (row[machineCol === -1 ? 0 : machineCol] ?? "").toString().trim();
         const fidValue = (row[fidCol === -1 ? 1 : fidCol] ?? "").toString().trim();
+        const soValue = soCol === -1 ? "" : (row[soCol] ?? "").toString().trim();
         if (!machineNoValue || !fidValue) {
           if (machineNoValue || fidValue) skipped++;
           continue;
@@ -221,6 +229,7 @@ export function FidDownloaderPanel({
           id: `${Date.now()}-${Math.random()}`,
           fid: fidValue,
           machineNo: machineNoValue,
+          so: soValue,
           downloads: { ...defaultDownloadSelection },
           status: "queued",
         });
@@ -283,6 +292,14 @@ export function FidDownloaderPanel({
     await saveFidEntry(supabase, fidValue, { machineName, so, po });
 
     return { so, po };
+  }
+
+  async function useSuppliedSo(fidValue: string, machineName: string, suppliedSo: string): Promise<string> {
+    const normalizedSo = suppliedSo.trim();
+    if (!normalizedSo) return "";
+    await saveFidEntry(getSupabase(), fidValue, { machineName, so: normalizedSo });
+    setLog((prev) => `${prev}Using supplied SO ${normalizedSo}.\n`);
+    return normalizedSo;
   }
 
   async function downloadFullBom(fidValue: string, machineName: string) {
@@ -432,9 +449,11 @@ export function FidDownloaderPanel({
         // uploadBomEntry insert — or the flag update silently matches zero
         // rows and Full BOM never shows up in /full-bom despite the data
         // being uploaded successfully.
-        let so = "";
+        let so = item.so.trim();
         if (item.downloads.modules || item.downloads.zbom) {
-          ({ so } = await resolveSoPo(item.fid, item.machineNo));
+          so = item.so.trim()
+            ? await useSuppliedSo(item.fid, item.machineNo, item.so)
+            : (await resolveSoPo(item.fid, item.machineNo)).so;
         }
         if (item.downloads.modules) await downloadModules(item.fid, so, item.machineNo);
         if (item.downloads.fullBom) await downloadFullBom(item.fid, item.machineNo);
@@ -489,6 +508,19 @@ export function FidDownloaderPanel({
             </datalist>
           </div>
           <div className="grid shrink-0 gap-1.5">
+            <Label className="text-xs">{t("SO")}</Label>
+            <Input
+              value={so}
+              onChange={(e) => setSo(e.target.value)}
+              placeholder={t("e.g. E0458")}
+              disabled={processing}
+              className="w-32"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addToQueue();
+              }}
+            />
+          </div>
+          <div className="grid shrink-0 gap-1.5">
             <Label className="text-xs">FID</Label>
             <Input
               value={fid}
@@ -539,7 +571,7 @@ export function FidDownloaderPanel({
                 <span className="text-muted-foreground w-5 text-xs">{idx + 1}</span>
                 <span className="min-w-48 flex-1 truncate">
                   {item.machineNo}
-                  <span className="text-muted-foreground"> — FID {item.fid}</span>
+                  <span className="text-muted-foreground"> — FID {item.fid}{item.so ? ` — SO ${item.so}` : ""}</span>
                 </span>
                 <div className="flex items-center gap-3">
                   {([
