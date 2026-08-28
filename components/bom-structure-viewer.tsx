@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { useTranslate } from "@/lib/i18n";
@@ -40,6 +40,7 @@ const zh: Record<string, string> = {
   "Expand All": "全部展開",
   "Collapse All": "全部收合",
   "Expand to level": "展開到層級",
+  "Download expanded tree": "下載展開的樹狀圖",
   "Loading more… ({n} items so far)": "載入更多中…(目前已載入 {n} 筆)",
   "No items.": "無項目。",
 };
@@ -271,6 +272,38 @@ export function BomStructureViewer({
   function collapseAll() {
     setManualExpandedIds(new Set());
     setActiveLevel(null);
+  }
+
+  function downloadExpandedTree() {
+    const lines: string[] = [title, machine ? `Machine: ${machine}` : ""];
+
+    function appendNode(node: BomTreeNode, idPrefix: string, depth: number) {
+      const item = node.item;
+      const quantity = item.qty ?? "-";
+      const unit = item.uom ?? "";
+      const details = [item.part_no, item.description ?? "", `${quantity} ${unit}`.trim()]
+        .filter(Boolean)
+        .join(" | ");
+      lines.push(`${"  ".repeat(depth)}${depth > 0 ? "|-- " : ""}${details}`);
+
+      const id = `${idPrefix}:${node.path}`;
+      if (!expandedIds.has(id)) return;
+      for (const child of node.children) appendNode(child, idPrefix, depth + 1);
+    }
+
+    for (const tree of visibleSubpartTrees) {
+      lines.push("", `[${tree.sourceFile}]`);
+      for (const root of tree.roots) appendNode(root, String(tree.bomId), 0);
+    }
+
+    const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const filename = `${(machine || "bom-tree").replace(/[\\/:*?"<>|]+/g, "_")}.txt`;
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   // Deepest level value among the currently-visible trees (root = level 0,
@@ -551,6 +584,12 @@ export function BomStructureViewer({
                 <ChevronsDownUp className="h-3.5 w-3.5" />
                 {t("Collapse All")}
               </Button>
+              {title === "Full BOM Structure Viewer" && (
+                <Button size="sm" variant="outline" onClick={downloadExpandedTree}>
+                  <Download className="h-3.5 w-3.5" />
+                  {t("Download expanded tree")}
+                </Button>
+              )}
               {maxTreeLevel > 0 && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-muted-foreground text-sm">{t("Expand to level")}</span>
