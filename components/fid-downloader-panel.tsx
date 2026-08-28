@@ -17,6 +17,7 @@ import { ensureMachineInGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -38,6 +39,10 @@ const zh: Record<string, string> = {
     "請先回首頁輸入工號,系統才知道新機台要歸屬到哪個群組。",
   "Downloading…": "下載中…",
   "Download ({count})": "下載 ({count})",
+  "Modules": "Modules",
+  "Full BOM": "完整 BOM",
+  "ZBOM": "ZBOM",
+  "Select at least one download type": "請至少選擇一種下載類型",
   Cancel: "取消",
 };
 
@@ -68,9 +73,22 @@ interface QueueItem {
   id: string;
   fid: string;
   machineNo: string;
+  downloads: DownloadSelection;
   status: QueueStatus;
   error?: string;
 }
+
+interface DownloadSelection {
+  modules: boolean;
+  fullBom: boolean;
+  zbom: boolean;
+}
+
+const defaultDownloadSelection: DownloadSelection = {
+  modules: true,
+  fullBom: true,
+  zbom: true,
+};
 
 class CancelledError extends Error {}
 
@@ -153,7 +171,13 @@ export function FidDownloaderPanel({
     if (!trimmedMachineNo || !trimmedFid || processing) return;
     setQueue((prev) => [
       ...prev,
-      { id: `${Date.now()}-${Math.random()}`, fid: trimmedFid, machineNo: trimmedMachineNo, status: "queued" },
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        fid: trimmedFid,
+        machineNo: trimmedMachineNo,
+        downloads: { ...defaultDownloadSelection },
+        status: "queued",
+      },
     ]);
     setMachineNo("");
     setFid("");
@@ -197,6 +221,7 @@ export function FidDownloaderPanel({
           id: `${Date.now()}-${Math.random()}`,
           fid: fidValue,
           machineNo: machineNoValue,
+          downloads: { ...defaultDownloadSelection },
           status: "queued",
         });
       }
@@ -212,6 +237,16 @@ export function FidDownloaderPanel({
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}\n[Error] Excel import failed: ${message}\n`);
     }
+  }
+
+  function toggleDownload(itemId: string, key: keyof DownloadSelection) {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.id === itemId
+          ? { ...item, downloads: { ...item.downloads, [key]: !item.downloads[key] } }
+          : item
+      )
+    );
   }
 
   function checkCancelled() {
@@ -387,16 +422,23 @@ export function FidDownloaderPanel({
       setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo} (FID ${item.fid}) ===\n`);
 
       try {
+        if (!item.downloads.modules && !item.downloads.fullBom && !item.downloads.zbom) {
+          throw new Error("Select at least one download type");
+        }
+
         // Modules runs before Full BOM: uploadFullBomEntry only UPDATEs
         // bom_machines.has_full_bom (not upsert), so on a machine's very
         // first run that row must already exist — created by Modules'
         // uploadBomEntry insert — or the flag update silently matches zero
         // rows and Full BOM never shows up in /full-bom despite the data
         // being uploaded successfully.
-        const { so } = await resolveSoPo(item.fid, item.machineNo);
-        await downloadModules(item.fid, so, item.machineNo);
-        await downloadFullBom(item.fid, item.machineNo);
-        await downloadZbom(so, item.machineNo);
+        let so = "";
+        if (item.downloads.modules || item.downloads.zbom) {
+          ({ so } = await resolveSoPo(item.fid, item.machineNo));
+        }
+        if (item.downloads.modules) await downloadModules(item.fid, so, item.machineNo);
+        if (item.downloads.fullBom) await downloadFullBom(item.fid, item.machineNo);
+        if (item.downloads.zbom) await downloadZbom(so, item.machineNo);
 
         setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done" } : q)));
       } catch (err) {
@@ -493,12 +535,28 @@ export function FidDownloaderPanel({
         {queue.length > 0 && (
           <div className="mb-3 grid gap-1.5">
             {queue.map((item, idx) => (
-              <div key={item.id} className="flex items-center gap-2 rounded-md border px-2 py-1 text-sm">
+              <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2 py-1 text-sm">
                 <span className="text-muted-foreground w-5 text-xs">{idx + 1}</span>
-                <span className="flex-1 truncate">
+                <span className="min-w-48 flex-1 truncate">
                   {item.machineNo}
                   <span className="text-muted-foreground"> — FID {item.fid}</span>
                 </span>
+                <div className="flex items-center gap-3">
+                  {([
+                    ["modules", "Modules"],
+                    ["fullBom", "Full BOM"],
+                    ["zbom", "ZBOM"],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-1.5 text-xs">
+                      <Checkbox
+                        checked={item.downloads[key]}
+                        onCheckedChange={() => toggleDownload(item.id, key)}
+                        disabled={processing || item.status !== "queued"}
+                      />
+                      {t(label)}
+                    </label>
+                  ))}
+                </div>
                 {item.status === "running" && <span className="text-xs text-blue-600">{t("Running…")}</span>}
                 {item.status === "done" && <span className="text-xs text-emerald-600">{t("Done")}</span>}
                 {item.status === "error" && (

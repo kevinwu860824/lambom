@@ -205,14 +205,25 @@ def export_installed_base(session, save_path, filename):
     # not on smaller ones points at the tree control simply not being ready
     # yet, rather than a wrong ID, so retry instead of grabbing it once.
     tree = None
-    for attempt in range(15):
-        try:
-            tree = session.findById("wnd[0]/shellcont/shell/shellcont[1]/shell[0]")
+    tree_ids = [
+        "wnd[0]/shellcont/shell/shellcont[1]/shell[0]",
+        "wnd[0]/shellcont/shell",
+    ]
+    for attempt in range(30):
+        for tree_id in tree_ids:
+            try:
+                tree = session.findById(tree_id)
+                log(f"IB53: installed-base tree found at {tree_id}.")
+                break
+            except Exception:
+                pass
+        if tree is not None:
             break
-        except Exception:
-            time.sleep(1)
+        time.sleep(1)
     if tree is None:
-        raise RuntimeError("Installed-base tree control not found — the equipment screen may not have finished loading.")
+        raise RuntimeError(
+            "Installed-base tree control not found after 30 seconds — check whether the IB53 equipment screen shows a tree."
+        )
     tree.pressButton("IBOCX_AUFR")
     tree.pressContextButton("&PRINT_BACK")
     tree.selectContextMenuItem("&PRINT_PREV_ALL")
