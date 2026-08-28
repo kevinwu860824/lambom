@@ -282,7 +282,17 @@ export function FidDownloaderPanel({
 
     const supabase = getSupabase();
     const buffer = await window.fidDownloader!.readFile(result.resultPath);
-    const sheets = parseModulesWorkbook(buffer);
+    let sheets: { sheetName: string; parsed: ReturnType<typeof parseModulesWorkbook>[number]["parsed"] }[];
+    try {
+      sheets = parseModulesWorkbook(buffer, (sheetName, error) => {
+        setLog((prev) => `${prev}[Warning] Skipping non-BOM sheet "${sheetName}": ${error.message}\n`);
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Warning] Modules contains no valid BOM sheets: ${message}\n`);
+      setLog((prev) => `${prev}Continuing with Full BOM and ZBOM.\n`);
+      return;
+    }
     setLog((prev) => `${prev}${sheets.length} module(s) found, uploading to machine "${machineName}"...\n`);
 
     let successCount = 0;

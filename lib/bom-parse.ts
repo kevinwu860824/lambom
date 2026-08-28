@@ -697,9 +697,13 @@ function parseModuleSheetRows(rows: string[][]): ParsedBom {
  * (its own independent BOM tree), matching how the app already treats a
  * machine's separate uploaded files as separate subparts.
  */
-export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; parsed: ParsedBom }[] {
+export function parseModulesWorkbook(
+  buffer: ArrayBuffer,
+  onSkippedSheet?: (sheetName: string, error: Error) => void
+): { sheetName: string; parsed: ParsedBom }[] {
   const workbook = XLSX.read(buffer, { type: "array" });
-  return workbook.SheetNames.map((sheetName) => {
+  const parsedSheets: { sheetName: string; parsed: ParsedBom }[] = [];
+  for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
@@ -707,19 +711,26 @@ export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; 
       defval: "",
     });
     try {
-      return { sheetName, parsed: parseModuleSheetRows(rows) };
+      parsedSheets.push({ sheetName, parsed: parseModuleSheetRows(rows) });
     } catch (err) {
-      throw new Error(
+      const parseError = new Error(
         `Failed to parse sheet "${sheetName}": ${err instanceof Error ? err.message : String(err)}`
       );
+      onSkippedSheet?.(sheetName, parseError);
     }
-  });
+  }
+
+  if (parsedSheets.length === 0) {
+    throw new Error("No valid module BOM sheets found in the downloaded workbook.");
+  }
+
+  return parsedSheets;
 }
 
 export interface ParsedZbomOption {
-  section: string;
   optionType: string;
   optionSelection: string | null;
+  section: string;
 }
 
 /**
