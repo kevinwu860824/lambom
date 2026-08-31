@@ -722,6 +722,7 @@ export async function uploadFullBomEntry(
   machineName: string,
   parsed: ParsedBom
 ): Promise<void> {
+  await ensureMachineRecord(supabase, machineName);
   const { error: deleteError } = await withRetry(() =>
     supabase.from("full_bom_items").delete().eq("machine_name", machineName)
   );
@@ -741,6 +742,32 @@ export async function uploadFullBomEntry(
     supabase.from("bom_machines").update({ has_full_bom: true }).eq("machine_name", machineName)
   );
   if (flagError) throw new Error(flagError.message);
+}
+
+/** Ensures a machine has a base bom_machines row even when Modules were not
+ * downloaded. Full BOM and ZBOM downloads still need the machine to appear in
+ * the machine-management list and group ownership checks. */
+export async function ensureMachineRecord(
+  supabase: SupabaseClient,
+  machineName: string
+): Promise<void> {
+  const { data: existing, error: findError } = await supabase
+    .from("bom_machines")
+    .select("id")
+    .eq("machine_name", machineName)
+    .limit(1)
+    .maybeSingle();
+  if (findError) throw new Error(findError.message);
+  if (existing) return;
+
+  const { error: insertError } = await supabase.from("bom_machines").insert({
+    machine_name: machineName,
+    source_file: "Full BOM",
+    root_part_no: "",
+    root_description: "",
+    has_full_bom: false,
+  });
+  if (insertError) throw new Error(insertError.message);
 }
 
 /**

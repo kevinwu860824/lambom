@@ -1,15 +1,31 @@
 "use client";
 
+import * as XLSX from "xlsx-js-style";
+import { zipSync } from "fflate";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, ChevronDown, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Download, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase";
-import { fetchFidsByMachine, fetchMachineGroups, withRetry, type BomEntry, type MachineGroup } from "@/lib/bom";
+import {
+  fetchAllBomItems,
+  fetchFidsByMachine,
+  fetchFullBomTreeItems,
+  fetchMachineGroups,
+  fetchZbomSectionNames,
+  fetchZbomSectionOptions,
+  withRetry,
+  type BomEntry,
+  type MachineGroup,
+  type ZbomOption,
+  buildBomTree,
+  type BomTreeNode,
+} from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { EditableField } from "@/components/editable-field";
 import { FidDownloaderPanel } from "@/components/fid-downloader-panel";
@@ -35,7 +51,67 @@ const zh: Record<string, string> = {
     "刪除機台「{name}」？這將同時刪除其 {count} 個子件與所有詳細資料,此操作無法復原。",
   'Delete subpart "{name}"? This will delete all its detail data — this cannot be undone.':
     "刪除子件「{name}」？這將刪除其所有詳細資料,此操作無法復原。",
+  "Full BOM": "完整 BOM",
+  Modules: "Modules",
+  ZBOM: "ZBOM",
+  "Download selected": "下載所選資料",
+  "Downloading…": "下載中…",
+  "Select at least one data type": "請至少選擇一種資料類型",
+  "FID is not available for this machine": "找不到此機台的 FID",
 };
+
+type MachineDownloadSelection = {
+  fullBom: boolean;
+  modules: boolean;
+  zbom: boolean;
+};
+
+const defaultDownloadSelection: MachineDownloadSelection = {
+  fullBom: true,
+  modules: true,
+  zbom: true,
+};
+
+function safeFilenamePart(name: string): string {
+  return name.replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function workbookBytes(sheets: { name: string; rows: (string | number)[][] }[]): Uint8Array {
+  const workbook = XLSX.utils.book_new();
+  for (const { name, rows } of sheets) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name.slice(0, 31));
+  }
+  const output = XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  return new Uint8Array(output);
+}
+
+function bomRows(items: { part_no: string; description: string | null; qty: number | string | null; uom: string | null }[]) {
+  return [
+    ["Part No.", "Description", "Qty", "Unit"],
+    ...items.map((item) => [item.part_no, item.description ?? "", item.qty ?? "", item.uom ?? ""]),
+  ];
+}
+
+function zbomRows(options: ZbomOption[]) {
+  return [
+    ["Section", "Option Type", "Option Selection"],
+    ...options.map((option) => [option.section, option.optionType, option.optionSelection ?? ""]),
+  ];
+}
+
+function fullBomText(items: Parameters<typeof buildBomTree>[0]): string {
+  const lines: string[] = [];
+  function appendNode(node: BomTreeNode, depth: number) {
+    const item = node.item;
+    const details = [item.part_no, item.description ?? "", `${item.qty ?? "-"} ${item.uom ?? ""}`.trim()]
+      .filter(Boolean)
+      .join(" | ");
+    lines.push(`${"  ".repeat(depth)}${depth > 0 ? "|-- " : ""}${details}`);
+    for (const child of node.children) appendNode(child, depth + 1);
+  }
+  for (const root of buildBomTree(items)) appendNode(root, 0);
+  return `${lines.join("\n")}\n`;
+}
 
 export default function MachinesPage() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -44,7 +120,7 @@ export default function MachinesPage() {
     return supabaseRef.current;
   }
 
-  const { allowedMachines, employeeId, group, notFound, loading: groupLoading, refresh: refreshGroup } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
   const t = useTranslate(zh);
 
   const [groups, setGroups] = useState<MachineGroup[]>([]);
@@ -55,12 +131,28 @@ export default function MachinesPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
+  const [downloadSelections, setDownloadSelections] = useState<Map<string, MachineDownloadSelection>>(new Map());
+  const [downloadingMachine, setDownloadingMachine] = useState<string | null>(null);
 
   function toggleExpanded(machine: string) {
     setExpandedMachines((prev) => {
       const next = new Set(prev);
       if (next.has(machine)) next.delete(machine);
       else next.add(machine);
+      return next;
+    });
+  }
+
+  function getDownloadSelection(machine: string): MachineDownloadSelection {
+    return downloadSelections.get(machine) ?? defaultDownloadSelection;
+  }
+
+  function toggleDownloadSelection(machine: string, key: keyof MachineDownloadSelection) {
+    setDownloadSelections((prev) => {
+      const next = new Map(prev);
+      const selection = { ...getDownloadSelection(machine) };
+      selection[key] = !selection[key];
+      next.set(machine, selection);
       return next;
     });
   }
@@ -89,6 +181,65 @@ export default function MachinesPage() {
       setFidsByMachine(await fetchFidsByMachine(getSupabase()));
     } catch {
       // leave fidsByMachine empty; machine names just render without a FID
+    }
+  }
+
+  async function downloadMachineData(machineGroup: MachineGroup) {
+    const machineName = machineGroup.machine;
+    const selection = getDownloadSelection(machineName);
+    if (!selection.fullBom && !selection.modules && !selection.zbom) {
+      setError(t("Select at least one data type"));
+      return;
+    }
+
+    const fid = fidsByMachine.get(machineName);
+    if (!fid) {
+      setError(t("FID is not available for this machine"));
+      return;
+    }
+
+    setError(null);
+    setDownloadingMachine(machineName);
+    try {
+      const supabase = getSupabase();
+      const files: Record<string, Uint8Array> = {};
+      const folder = `${safeFilenamePart(machineName)}-${safeFilenamePart(fid)}`;
+
+      if (selection.fullBom) {
+        const items = await fetchFullBomTreeItems(supabase, machineName);
+        files[`${folder}/${folder}-Full_BOM.txt`] = new TextEncoder().encode(
+          `Machine: ${machineName}\nFID: ${fid}\n\n${fullBomText(items)}`
+        );
+      }
+
+      if (selection.modules) {
+        const sheets = await Promise.all(
+          machineGroup.subparts.map(async (entry) => ({
+            name: entry.source_file,
+            rows: bomRows(await fetchAllBomItems(supabase, entry.bomId, entry.source_file)),
+          }))
+        );
+        files[`${folder}/${folder}-Modules.xlsx`] = workbookBytes(sheets.length > 0 ? sheets : [{ name: "Modules", rows: [["No modules"]] }]);
+      }
+
+      if (selection.zbom) {
+        const sections = await fetchZbomSectionNames(supabase, machineName);
+        const options = (await Promise.all(sections.map((section) => fetchZbomSectionOptions(supabase, machineName, section)))).flat();
+        files[`${folder}/${folder}-ZBOM.xlsx`] = workbookBytes([{ name: "ZBOM", rows: zbomRows(options) }]);
+      }
+
+      const archive = zipSync(files);
+      const blob = new Blob([archive], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${folder}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloadingMachine(null);
     }
   }
 
@@ -293,7 +444,6 @@ export default function MachinesPage() {
         <FidDownloaderPanel
           existingMachines={groups.map((g) => g.machine)}
           groupId={group?.id ?? null}
-          onUploaded={refreshGroup}
         />
 
         <Card>
@@ -359,6 +509,33 @@ export default function MachinesPage() {
                             <Trash2 className="text-destructive h-4 w-4" />
                           </Button>
                         )}
+                      </div>
+
+                      <Label className="mt-4 mb-1.5 block">{t("Download selected")}</Label>
+                      <div className="flex flex-wrap items-center gap-4 pl-2">
+                        {([
+                          ["fullBom", "Full BOM"],
+                          ["modules", "Modules"],
+                          ["zbom", "ZBOM"],
+                        ] as const).map(([key, label]) => (
+                          <label key={key} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={getDownloadSelection(group.machine)[key]}
+                              onCheckedChange={() => toggleDownloadSelection(group.machine, key)}
+                              disabled={downloadingMachine === group.machine}
+                            />
+                            {t(label)}
+                          </label>
+                        ))}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => downloadMachineData(group)}
+                          disabled={downloadingMachine === group.machine}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {downloadingMachine === group.machine ? t("Downloading…") : t("Download selected")}
+                        </Button>
                       </div>
 
                       <Label className="mt-4 mb-1.5 block">{t("Subparts")}</Label>

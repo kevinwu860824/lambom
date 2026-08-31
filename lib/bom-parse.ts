@@ -18,6 +18,54 @@ export interface ParsedBom {
   items: ParsedBomItem[];
 }
 
+function parseSapTabExport(text: string): ParsedBom | null {
+  const lines = text.replace(/^﻿/, "").split(/\r\n|\r|\n/);
+  const rows: { description: string; partNo: string; qty: number | null; uom: string | null; indent: number; lineNo: number }[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const tokens = line.split("\t").map((token) => token.trim()).filter(Boolean);
+    if (tokens.length !== 4) continue;
+
+    const qty = Number.parseFloat(tokens[2]);
+    rows.push({
+      description: tokens[0],
+      partNo: tokens[1],
+      qty: Number.isFinite(qty) ? qty : null,
+      uom: tokens[3] || null,
+      indent: (line.match(/^\t*/) ?? [""])[0].length,
+      lineNo: i + 1,
+    });
+  }
+
+  if (rows.length === 0) return null;
+
+  const root = rows[0];
+  const items: ParsedBomItem[] = [];
+  const stack: { indent: number; partNo: string }[] = [];
+
+  for (const row of rows) {
+    while (stack.length > 1 && stack[stack.length - 1].indent >= row.indent) stack.pop();
+    const parent = stack.length > 0 ? stack[stack.length - 1].partNo : null;
+    const parentPath = stack.map((entry) => entry.partNo).join("/");
+    const level = stack.length;
+    items.push({
+      part_no: row.partNo,
+      description: row.description || null,
+      qty: row.qty,
+      uom: row.uom,
+      level,
+      parent_part_no: parent,
+      parent_path: parentPath,
+      line_no: row.lineNo,
+    });
+    stack.push({ indent: row.indent, partNo: row.partNo });
+  }
+
+  return { rootPartNo: root.partNo, rootDescription: root.description, items };
+}
+
 function collapseSpaces(value: string): string {
   return value.replace(/\s{2,}/g, " ").trim();
 }
@@ -63,6 +111,9 @@ function splitDescriptionAndQty(remainder: string): {
  * of exactly how many characters each report uses per nesting level.
  */
 export function parseTxtBom(text: string): ParsedBom {
+  const sapTabResult = parseSapTabExport(text);
+  if (sapTabResult) return sapTabResult;
+
   const lines = text.replace(/^﻿/, "").split(/\r\n|\r|\n/);
 
   let rootLineIndex = -1;
@@ -697,9 +748,13 @@ function parseModuleSheetRows(rows: string[][]): ParsedBom {
  * (its own independent BOM tree), matching how the app already treats a
  * machine's separate uploaded files as separate subparts.
  */
-export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; parsed: ParsedBom }[] {
+export function parseModulesWorkbook(
+  buffer: ArrayBuffer,
+  onSkippedSheet?: (sheetName: string, error: Error) => void
+): { sheetName: string; parsed: ParsedBom }[] {
   const workbook = XLSX.read(buffer, { type: "array" });
-  return workbook.SheetNames.map((sheetName) => {
+  const parsedSheets: { sheetName: string; parsed: ParsedBom }[] = [];
+  for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
@@ -707,19 +762,26 @@ export function parseModulesWorkbook(buffer: ArrayBuffer): { sheetName: string; 
       defval: "",
     });
     try {
-      return { sheetName, parsed: parseModuleSheetRows(rows) };
+      parsedSheets.push({ sheetName, parsed: parseModuleSheetRows(rows) });
     } catch (err) {
-      throw new Error(
+      const parseError = new Error(
         `Failed to parse sheet "${sheetName}": ${err instanceof Error ? err.message : String(err)}`
       );
+      onSkippedSheet?.(sheetName, parseError);
     }
-  });
+  }
+
+  if (parsedSheets.length === 0) {
+    throw new Error("No valid module BOM sheets found in the downloaded workbook.");
+  }
+
+  return parsedSheets;
 }
 
 export interface ParsedZbomOption {
-  section: string;
   optionType: string;
   optionSelection: string | null;
+  section: string;
 }
 
 /**

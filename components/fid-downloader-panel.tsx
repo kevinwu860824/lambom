@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase";
 import { parseModulesWorkbook, parseXlsxBom, parseZbomWorkbook } from "@/lib/bom-parse";
 import {
   autoMatchKeyParts,
+  ensureMachineRecord,
   lookupFidEntry,
   saveFidEntry,
   uploadBomEntry,
@@ -17,13 +18,16 @@ import { ensureMachineInGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const zh: Record<string, string> = {
   "SAP Download": "SAP 下載",
   "Machine No.": "機台編號",
+  SO: "SO（選填）",
   "e.g. ACOXN1": "例如 ACOXN1",
+  "e.g. E0458": "例如 E0458",
   "e.g. 264059": "例如 264059",
   Add: "新增",
   "Excel Template": "Excel 範本",
@@ -38,6 +42,10 @@ const zh: Record<string, string> = {
     "請先回首頁輸入工號,系統才知道新機台要歸屬到哪個群組。",
   "Downloading…": "下載中…",
   "Download ({count})": "下載 ({count})",
+  "Modules": "Modules",
+  "Full BOM": "完整 BOM",
+  "ZBOM": "ZBOM",
+  "Select at least one download type": "請至少選擇一種下載類型",
   Cancel: "取消",
 };
 
@@ -68,9 +76,23 @@ interface QueueItem {
   id: string;
   fid: string;
   machineNo: string;
+  so: string;
+  downloads: DownloadSelection;
   status: QueueStatus;
   error?: string;
 }
+
+interface DownloadSelection {
+  modules: boolean;
+  fullBom: boolean;
+  zbom: boolean;
+}
+
+const defaultDownloadSelection: DownloadSelection = {
+  modules: true,
+  fullBom: true,
+  zbom: true,
+};
 
 class CancelledError extends Error {}
 
@@ -100,16 +122,15 @@ class CancelledError extends Error {}
 export function FidDownloaderPanel({
   existingMachines = [],
   groupId,
-  onUploaded,
 }: {
   existingMachines?: string[];
   groupId: number | null;
-  onUploaded?: () => void;
 }) {
   const t = useTranslate(zh);
   const [available, setAvailable] = useState(false);
   const [machineNo, setMachineNo] = useState("");
   const [fid, setFid] = useState("");
+  const [so, setSo] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [processing, setProcessing] = useState(false);
   const [log, setLog] = useState("");
@@ -153,10 +174,18 @@ export function FidDownloaderPanel({
     if (!trimmedMachineNo || !trimmedFid || processing) return;
     setQueue((prev) => [
       ...prev,
-      { id: `${Date.now()}-${Math.random()}`, fid: trimmedFid, machineNo: trimmedMachineNo, status: "queued" },
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        fid: trimmedFid,
+        machineNo: trimmedMachineNo,
+        so: so.trim(),
+        downloads: { ...defaultDownloadSelection },
+        status: "queued",
+      },
     ]);
     setMachineNo("");
     setFid("");
+    setSo("");
   }
 
   function removeFromQueue(id: string) {
@@ -165,8 +194,8 @@ export function FidDownloaderPanel({
 
   function downloadTemplate() {
     const wb = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([["Machine No.", "FID"]]);
-    sheet["!cols"] = [{ wch: 16 }, { wch: 16 }];
+    const sheet = XLSX.utils.aoa_to_sheet([["Machine No.", "FID", "SO"]]);
+    sheet["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, sheet, "SAP Download List");
     XLSX.writeFile(wb, "SAP_Download_List_Template.xlsx");
   }
@@ -182,6 +211,7 @@ export function FidDownloaderPanel({
       const header = rows[0].map((h) => (h ?? "").toString().trim());
       const machineCol = header.findIndex((h) => h.toLowerCase().includes("machine"));
       const fidCol = header.findIndex((h) => h.toUpperCase().includes("FID"));
+      const soCol = header.findIndex((h) => h.toUpperCase() === "SO" || h.toLowerCase().includes("sales order"));
 
       const newItems: QueueItem[] = [];
       let skipped = 0;
@@ -189,6 +219,7 @@ export function FidDownloaderPanel({
         const row = rows[r];
         const machineNoValue = (row[machineCol === -1 ? 0 : machineCol] ?? "").toString().trim();
         const fidValue = (row[fidCol === -1 ? 1 : fidCol] ?? "").toString().trim();
+        const soValue = soCol === -1 ? "" : (row[soCol] ?? "").toString().trim();
         if (!machineNoValue || !fidValue) {
           if (machineNoValue || fidValue) skipped++;
           continue;
@@ -197,6 +228,8 @@ export function FidDownloaderPanel({
           id: `${Date.now()}-${Math.random()}`,
           fid: fidValue,
           machineNo: machineNoValue,
+          so: soValue,
+          downloads: { ...defaultDownloadSelection },
           status: "queued",
         });
       }
@@ -212,6 +245,16 @@ export function FidDownloaderPanel({
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}\n[Error] Excel import failed: ${message}\n`);
     }
+  }
+
+  function toggleDownload(itemId: string, key: keyof DownloadSelection) {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.id === itemId
+          ? { ...item, downloads: { ...item.downloads, [key]: !item.downloads[key] } }
+          : item
+      )
+    );
   }
 
   function checkCancelled() {
@@ -231,6 +274,7 @@ export function FidDownloaderPanel({
     const cached = await lookupFidEntry(supabase, fidValue);
     if (cached?.so) {
       setLog((prev) => `${prev}Using cached SO ${cached.so}.\n`);
+      await saveFidEntry(supabase, fidValue, { machineName });
       return { so: cached.so, po: cached.po ?? "" };
     }
 
@@ -244,14 +288,17 @@ export function FidDownloaderPanel({
     const po = result.po ?? "";
     setLog((prev) => `${prev}Resolved SO=${so} PO=${po || "(none)"}.\n`);
 
-    try {
-      await saveFidEntry(supabase, fidValue, { machineName, so, po });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setLog((prev) => `${prev}[Error] Failed to cache the resolved SO/PO: ${message}\n`);
-    }
+    await saveFidEntry(supabase, fidValue, { machineName, so, po });
 
     return { so, po };
+  }
+
+  async function useSuppliedSo(fidValue: string, machineName: string, suppliedSo: string): Promise<string> {
+    const normalizedSo = suppliedSo.trim();
+    if (!normalizedSo) return "";
+    await saveFidEntry(getSupabase(), fidValue, { machineName, so: normalizedSo });
+    setLog((prev) => `${prev}Using supplied SO ${normalizedSo}.\n`);
+    return normalizedSo;
   }
 
   async function downloadFullBom(fidValue: string, machineName: string) {
@@ -286,7 +333,17 @@ export function FidDownloaderPanel({
 
     const supabase = getSupabase();
     const buffer = await window.fidDownloader!.readFile(result.resultPath);
-    const sheets = parseModulesWorkbook(buffer);
+    let sheets: { sheetName: string; parsed: ReturnType<typeof parseModulesWorkbook>[number]["parsed"] }[];
+    try {
+      sheets = parseModulesWorkbook(buffer, (sheetName, error) => {
+        setLog((prev) => `${prev}[Warning] Skipping non-BOM sheet "${sheetName}": ${error.message}\n`);
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLog((prev) => `${prev}[Warning] Modules contains no valid BOM sheets: ${message}\n`);
+      setLog((prev) => `${prev}Continuing with Full BOM and ZBOM.\n`);
+      return;
+    }
     setLog((prev) => `${prev}${sheets.length} module(s) found, uploading to machine "${machineName}"...\n`);
 
     let successCount = 0;
@@ -326,8 +383,6 @@ export function FidDownloaderPanel({
         setLog((prev) => `${prev}[Error] Failed to record group ownership: ${message}\n`);
       }
     }
-    onUploaded?.();
-
     await deleteLocalFile(result.resultPath);
     setLog((prev) => `${prev}Modules upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
   }
@@ -345,6 +400,8 @@ export function FidDownloaderPanel({
       const buffer = await window.fidDownloader!.readFile(result.resultPath);
       const options = parseZbomWorkbook(buffer);
       await uploadZbomEntry(getSupabase(), machineName, options);
+      await ensureMachineRecord(getSupabase(), machineName);
+      if (groupId != null) await ensureMachineInGroup(getSupabase(), groupId, machineName);
       await deleteLocalFile(result.resultPath);
       setLog((prev) => `${prev}ZBOM uploaded (${options.length} option(s)).\n`);
     } catch (err) {
@@ -383,16 +440,25 @@ export function FidDownloaderPanel({
       setLog((prev) => `${prev}\n=== [${i + 1}/${queue.length}] ${item.machineNo} (FID ${item.fid}) ===\n`);
 
       try {
+        if (!item.downloads.modules && !item.downloads.fullBom && !item.downloads.zbom) {
+          throw new Error("Select at least one download type");
+        }
+
         // Modules runs before Full BOM: uploadFullBomEntry only UPDATEs
         // bom_machines.has_full_bom (not upsert), so on a machine's very
         // first run that row must already exist — created by Modules'
         // uploadBomEntry insert — or the flag update silently matches zero
         // rows and Full BOM never shows up in /full-bom despite the data
         // being uploaded successfully.
-        const { so } = await resolveSoPo(item.fid, item.machineNo);
-        await downloadModules(item.fid, so, item.machineNo);
-        await downloadFullBom(item.fid, item.machineNo);
-        await downloadZbom(so, item.machineNo);
+        let so = item.so.trim();
+        if (item.downloads.modules || item.downloads.zbom) {
+          so = item.so.trim()
+            ? await useSuppliedSo(item.fid, item.machineNo, item.so)
+            : (await resolveSoPo(item.fid, item.machineNo)).so;
+        }
+        if (item.downloads.modules) await downloadModules(item.fid, so, item.machineNo);
+        if (item.downloads.fullBom) await downloadFullBom(item.fid, item.machineNo);
+        if (item.downloads.zbom) await downloadZbom(so, item.machineNo);
 
         setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done" } : q)));
       } catch (err) {
@@ -442,6 +508,19 @@ export function FidDownloaderPanel({
             </datalist>
           </div>
           <div className="grid shrink-0 gap-1.5">
+            <Label className="text-xs">{t("SO")}</Label>
+            <Input
+              value={so}
+              onChange={(e) => setSo(e.target.value)}
+              placeholder={t("e.g. E0458")}
+              disabled={processing}
+              className="w-32"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addToQueue();
+              }}
+            />
+          </div>
+          <div className="grid shrink-0 gap-1.5">
             <Label className="text-xs">FID</Label>
             <Input
               value={fid}
@@ -488,12 +567,28 @@ export function FidDownloaderPanel({
         {queue.length > 0 && (
           <div className="mb-3 grid gap-1.5">
             {queue.map((item, idx) => (
-              <div key={item.id} className="flex items-center gap-2 rounded-md border px-2 py-1 text-sm">
+              <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border px-2 py-1 text-sm">
                 <span className="text-muted-foreground w-5 text-xs">{idx + 1}</span>
-                <span className="flex-1 truncate">
+                <span className="min-w-48 flex-1 truncate">
                   {item.machineNo}
-                  <span className="text-muted-foreground"> — FID {item.fid}</span>
+                  <span className="text-muted-foreground"> — FID {item.fid}{item.so ? ` — SO ${item.so}` : ""}</span>
                 </span>
+                <div className="flex items-center gap-3">
+                  {([
+                    ["modules", "Modules"],
+                    ["fullBom", "Full BOM"],
+                    ["zbom", "ZBOM"],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-1.5 text-xs">
+                      <Checkbox
+                        checked={item.downloads[key]}
+                        onCheckedChange={() => toggleDownload(item.id, key)}
+                        disabled={processing || item.status !== "queued"}
+                      />
+                      {t(label)}
+                    </label>
+                  ))}
+                </div>
                 {item.status === "running" && <span className="text-xs text-blue-600">{t("Running…")}</span>}
                 {item.status === "done" && <span className="text-xs text-emerald-600">{t("Done")}</span>}
                 {item.status === "error" && (

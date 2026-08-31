@@ -45,6 +45,11 @@ export interface D365OrderPayload {
     specification: string;
     /** "" if none. */
     additionalNotes: string;
+    replacedRemovedType: string;
+    moduleType: string;
+    damageCodeGroup: string;
+    damageCode: string;
+    symptomDetail: string;
   };
   product: {
     partNo: string;

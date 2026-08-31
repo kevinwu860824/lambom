@@ -1,7 +1,13 @@
 "use client";
 
 import { createClient } from "@/lib/supabase";
-import { fetchFullBomMachineNames, fetchFullBomTreeItems, type BomTreeItem } from "@/lib/bom";
+import {
+  fetchFullBomTreeItems,
+  fetchMachineGroups,
+  uploadFullBomEntry,
+  type BomTreeItem,
+} from "@/lib/bom";
+import { parseTxtBom } from "@/lib/bom-parse";
 import { useEmployeeGroup } from "@/lib/groups";
 import { BomStructureViewer, type BomStructureSubpart } from "@/components/bom-structure-viewer";
 import { RequireGroupPrompt } from "@/components/require-group";
@@ -25,8 +31,8 @@ export default function FullBomPage() {
       title="Full BOM Structure Viewer"
       description="Pick a machine to view its complete BOM hierarchically, expand/collapse as needed."
       fetchMachineNames={async (supabase: SupabaseClient) => {
-        const names = await fetchFullBomMachineNames(supabase);
-        return names.filter((name) => allowedMachines.has(name));
+        const { machineGroups } = await fetchMachineGroups(supabase);
+        return machineGroups.map((group) => group.machine).filter((name) => allowedMachines.has(name));
       }}
       fetchSubparts={async (
         supabase: SupabaseClient,
@@ -46,6 +52,10 @@ export default function FullBomPage() {
           onProgress([{ bomId: 0, sourceFile: "Full BOM", items: accumulated.slice() }]);
         });
         return [{ bomId: 0, sourceFile: "Full BOM", items: accumulated }];
+      }}
+      onUploadFile={async (machineName, file) => {
+        const parsed = parseTxtBom(await file.text());
+        await uploadFullBomEntry(createClient(), machineName, parsed);
       }}
     />
   );

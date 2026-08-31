@@ -6,7 +6,7 @@ REM playwright 這個套件公司內部的 pip 鏡像（Artifactory）沒有代�
 REM requirements.txt 裡已經加了 --index-url 直接接官方 PyPI，兩個套件一起裝。
 pip install -r requirements.txt
 playwright install msedge
-pyinstaller --onefile --console --name d365_order_cli d365_order_cli.py
+pyinstaller --noconfirm --clean --noupx --onefile --console --name d365_order_cli d365_order_cli.py
 
 echo.
 echo 完成！exe 在 dist\d365_order_cli.exe

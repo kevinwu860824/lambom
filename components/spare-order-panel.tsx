@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
 const zh: Record<string, string> = {
@@ -45,6 +46,11 @@ const zh: Record<string, string> = {
   "What is the deviation?": "偏差是什麼?",
   "What is it supposed to be (Specification)?": "應該要是什麼(規格)?",
   "Additional notes (optional)": "補充說明(選填)",
+  "Replaced/Removed Type": "Replaced/Removed Type",
+  "Module Type": "Module Type",
+  "Damage Code Group": "Damage Code Group",
+  "Damage Code": "Damage Code",
+  "Symptom Detail": "Symptom Detail",
   "Product / Delivery": "料號 / 交期",
   "Part No.": "料號",
   "Priority Code": "優先碼",
@@ -90,6 +96,11 @@ const DEFAULT_PAYLOAD: D365OrderPayload = {
     deviation: "",
     specification: "",
     additionalNotes: "",
+    replacedRemovedType: "Same as Ordered Part #",
+    moduleType: "PM",
+    damageCodeGroup: "PERF - Performance Quality",
+    damageCode: "RAM",
+    symptomDetail: "Leak - ELF/RAM",
   },
   product: {
     partNo: "",
@@ -352,6 +363,47 @@ export function SpareOrderPanel() {
           <CardTitle className="text-base">{t("Quality Escape Item")}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>{t("Replaced/Removed Type")}</Label>
+              <Select
+                value={payload.qualityEscapeItem.replacedRemovedType}
+                onValueChange={(value) => updateSection("qualityEscapeItem", "replacedRemovedType", value)}
+                disabled={disabled}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="Same as Ordered Part #">Same as Ordered Part #</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>{t("Module Type")}</Label>
+              <Select value={payload.qualityEscapeItem.moduleType} onValueChange={(value) => updateSection("qualityEscapeItem", "moduleType", value)} disabled={disabled}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="PM">PM</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>{t("Damage Code Group")}</Label>
+              <Select value={payload.qualityEscapeItem.damageCodeGroup} onValueChange={(value) => updateSection("qualityEscapeItem", "damageCodeGroup", value)} disabled={disabled}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="PERF - Performance Quality">PERF - Performance Quality</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>{t("Damage Code")}</Label>
+              <Select value={payload.qualityEscapeItem.damageCode} onValueChange={(value) => updateSection("qualityEscapeItem", "damageCode", value)} disabled={disabled}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="RAM">RAM</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>{t("Symptom Detail")}</Label>
+              <Select value={payload.qualityEscapeItem.symptomDetail} onValueChange={(value) => updateSection("qualityEscapeItem", "symptomDetail", value)} disabled={disabled}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="Leak - ELF/RAM">Leak - ELF/RAM</SelectItem></SelectContent>
+              </Select>
+            </div>
+          </div>
           <div className="grid gap-1.5">
             <Label>{t("What (Object) is causing the problem?")}</Label>
             <Input
