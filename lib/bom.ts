@@ -913,6 +913,119 @@ export async function fetchZbomSectionOptions(
   }));
 }
 
+/** Every ZBOM option stored for one machine, across all sections in one
+ * request — unlike the single-machine viewer (which loads section-by-
+ * section on demand), comparing two machines needs everything up front.
+ * Safe as a single unpaginated query: zbom_options tops out at hundreds of
+ * rows per machine (see fetchZbomMachineNames' doc comment), nowhere near
+ * bom_items/full_bom_items' scale. */
+export async function fetchAllZbomOptions(supabase: SupabaseClient, machineName: string): Promise<ZbomOption[]> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("zbom_options")
+      .select("section,option_type,option_selection")
+      .eq("machine_name", machineName)
+      .order("id", { ascending: true })
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    section: row.section as string,
+    optionType: row.option_type as string,
+    optionSelection: row.option_selection as string | null,
+  }));
+}
+
+export interface ZbomMismatch {
+  section: string;
+  optionType: string;
+  /** Values seen for this (section, optionType) in machine A but not B. */
+  onlyInA: string[];
+  /** Values seen for this (section, optionType) in machine B but not A. */
+  onlyInB: string[];
+}
+
+export interface ZbomCompareResult {
+  onlyA: ZbomOption[];
+  onlyB: ZbomOption[];
+  mismatched: ZbomMismatch[];
+  matchedCount: number;
+}
+
+/** Compares two machines' full ZBOM option sets, keyed by (section,
+ * optionType) — same "Only in A/B + mismatch" shape as compareBoms, just
+ * keyed on the option identity instead of part_no.
+ *
+ * A (section, optionType) key is NOT 1:1 with a single row in practice —
+ * verified against real data: some option types are genuinely multi-valued
+ * (e.g. one machine's "Non-Standard PM Options" had 10 separate rows), and
+ * some settings are stored twice under the same key, once as a short SAP
+ * code and once as its decoded text (e.g. "E6" and "2300e6" both under
+ * "Platform Type"). So each key maps to a *set* of option_selection values
+ * per machine rather than one scalar — two machines "match" on a key when
+ * their value sets are equal, not just when a single value string is
+ * equal. A key present in both with different sets is a "mismatch" (the
+ * ZBOM equivalent of compareBoms' qty mismatch), reported as the set
+ * difference in each direction; present in only one machine goes to
+ * onlyA/onlyB (one row per distinct value, matching the raw display
+ * shape); identical sets in both is just counted. */
+export function compareZbomOptions(optionsA: ZbomOption[], optionsB: ZbomOption[]): ZbomCompareResult {
+  interface KeyGroup {
+    section: string;
+    optionType: string;
+    values: Set<string | null>;
+  }
+
+  function groupByKey(options: ZbomOption[]): Map<string, KeyGroup> {
+    const map = new Map<string, KeyGroup>();
+    for (const opt of options) {
+      const key = `${opt.section} ${opt.optionType}`;
+      let group = map.get(key);
+      if (!group) {
+        group = { section: opt.section, optionType: opt.optionType, values: new Set() };
+        map.set(key, group);
+      }
+      group.values.add(opt.optionSelection);
+    }
+    return map;
+  }
+
+  const mapA = groupByKey(optionsA);
+  const mapB = groupByKey(optionsB);
+
+  const onlyA: ZbomOption[] = [];
+  const onlyB: ZbomOption[] = [];
+  const mismatched: ZbomMismatch[] = [];
+  let matchedCount = 0;
+
+  for (const [key, groupA] of mapA) {
+    const groupB = mapB.get(key);
+    if (!groupB) {
+      for (const v of groupA.values) onlyA.push({ section: groupA.section, optionType: groupA.optionType, optionSelection: v });
+      continue;
+    }
+    const onlyInA = [...groupA.values].filter((v) => !groupB.values.has(v)).map((v) => v ?? "-");
+    const onlyInB = [...groupB.values].filter((v) => !groupA.values.has(v)).map((v) => v ?? "-");
+    if (onlyInA.length === 0 && onlyInB.length === 0) {
+      matchedCount++;
+    } else {
+      mismatched.push({ section: groupA.section, optionType: groupA.optionType, onlyInA, onlyInB });
+    }
+  }
+  for (const [key, groupB] of mapB) {
+    if (!mapA.has(key)) {
+      for (const v of groupB.values) onlyB.push({ section: groupB.section, optionType: groupB.optionType, optionSelection: v });
+    }
+  }
+
+  const bySectionThenType = (a: { section: string; optionType: string }, b: { section: string; optionType: string }) =>
+    a.section === b.section ? a.optionType.localeCompare(b.optionType) : a.section.localeCompare(b.section);
+  onlyA.sort(bySectionThenType);
+  onlyB.sort(bySectionThenType);
+  mismatched.sort(bySectionThenType);
+
+  return { onlyA, onlyB, mismatched, matchedCount };
+}
+
 export interface DocumentPartPrefix {
   code: string;
   label: string;

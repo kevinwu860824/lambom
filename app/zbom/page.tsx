@@ -4,10 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { fetchZbomMachineNames, fetchZbomSectionNames, fetchZbomSectionOptions, type ZbomOption } from "@/lib/bom";
+import {
+  compareZbomOptions,
+  fetchAllZbomOptions,
+  fetchZbomMachineNames,
+  fetchZbomSectionNames,
+  fetchZbomSectionOptions,
+  type ZbomCompareResult,
+  type ZbomOption,
+} from "@/lib/bom";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RequireGroupPrompt } from "@/components/require-group";
@@ -29,6 +38,22 @@ const zh: Record<string, string> = {
   "Failed to load this section.": "此區段載入失敗。",
   "Option Type": "選項類型",
   "Option Selection": "選項內容",
+  "View Single Machine": "檢視單一機台",
+  "Compare Two Machines": "比對兩台機台",
+  "Machine A": "機台 A",
+  "Machine B": "機台 B",
+  "Start Comparison": "開始比對",
+  "Comparing…": "比對中…",
+  "Comparison failed": "比對失敗",
+  Matching: "相同",
+  "Only in A": "僅 A 有",
+  "Only in B": "僅 B 有",
+  Mismatched: "不一致",
+  Section: "區段",
+  "A's Selection": "A 的內容",
+  "B's Selection": "B 的內容",
+  "No comparison data yet.": "尚未有比對結果。",
+  "No differences here.": "這裡沒有差異。",
 };
 
 export default function ZbomPage() {
@@ -59,6 +84,30 @@ export default function ZbomPage() {
   // fetchZbomOptions grouping.
   const [sectionData, setSectionData] = useState<Map<string, SectionState>>(new Map());
   const requestedSectionsRef = useRef<Set<string>>(new Set());
+
+  const [viewMode, setViewMode] = useState<"single" | "compare">("single");
+  const [machineA, setMachineA] = useState("");
+  const [machineB, setMachineB] = useState("");
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [compareResult, setCompareResult] = useState<ZbomCompareResult | null>(null);
+
+  async function handleCompareClick() {
+    if (!machineA || !machineB) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    try {
+      const [optionsA, optionsB] = await Promise.all([
+        fetchAllZbomOptions(getSupabase(), machineA),
+        fetchAllZbomOptions(getSupabase(), machineB),
+      ]);
+      setCompareResult(compareZbomOptions(optionsA, optionsB));
+    } catch (err) {
+      setCompareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCompareLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!allowedMachines) return;
@@ -146,104 +195,293 @@ export default function ZbomPage() {
           </div>
         </div>
 
+        <div className="mb-6 flex items-center gap-2">
+          <div className="inline-flex rounded-md border p-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant={viewMode === "single" ? "default" : "ghost"}
+              className="h-7"
+              onClick={() => setViewMode("single")}
+            >
+              {t("View Single Machine")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={viewMode === "compare" ? "default" : "ghost"}
+              className="h-7"
+              onClick={() => setViewMode("compare")}
+            >
+              {t("Compare Two Machines")}
+            </Button>
+          </div>
+        </div>
+
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
-        <Card className="mb-6">
-          <CardContent>
-            <div className="grid gap-1.5">
-              <label className="text-sm font-medium">{t("Machine")}</label>
-              <Select value={machine} onValueChange={handleMachineChange} disabled={listLoading}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {machineNames.map((name) => (
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!listLoading && machineNames.length === 0 && (
-                <p className="text-muted-foreground mt-1 text-sm">{t("No ZBOM data stored yet.")}</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {viewMode === "single" && (
+          <>
+            <Card className="mb-6">
+              <CardContent>
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Machine")}</label>
+                  <Select value={machine} onValueChange={handleMachineChange} disabled={listLoading}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {machineNames.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!listLoading && machineNames.length === 0 && (
+                    <p className="text-muted-foreground mt-1 text-sm">{t("No ZBOM data stored yet.")}</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
-        {sectionsLoading && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
+            {sectionsLoading && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
 
-        {!sectionsLoading && machine && sectionOrder.length === 0 && !error && (
-          <p className="text-muted-foreground text-sm">{t("No ZBOM options stored for this machine.")}</p>
+            {!sectionsLoading && machine && sectionOrder.length === 0 && !error && (
+              <p className="text-muted-foreground text-sm">{t("No ZBOM options stored for this machine.")}</p>
+            )}
+
+            {!sectionsLoading && sectionOrder.length > 0 && (
+              <div className="flex flex-col gap-6 md:flex-row md:items-start">
+                <nav className="bg-background top-8 shrink-0 self-start md:sticky md:w-56">
+                  <ul className="space-y-0.5">
+                    {sectionOrder.map((name, index) => (
+                      <li key={index}>
+                        <button
+                          type="button"
+                          onClick={() => jumpToSection(index)}
+                          className="hover:bg-accent w-full truncate rounded-sm px-2 py-1 text-left text-sm"
+                          title={name}
+                        >
+                          {name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+
+                <div className="grid min-w-0 flex-1 gap-4">
+                  {sectionOrder.map((name, index) => {
+                    const expanded = expandedIndices.has(index);
+                    const data = sectionData.get(name);
+                    return (
+                      <Card key={index} id={`zbom-section-${index}`}>
+                        <CardContent>
+                          <button
+                            type="button"
+                            onClick={() => toggleSection(index)}
+                            className="hover:bg-accent -mx-2 flex w-[calc(100%+1rem)] items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm font-medium"
+                          >
+                            <ChevronRight
+                              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-90")}
+                            />
+                            {name}
+                          </button>
+
+                          {expanded && (
+                            <div className="mt-3">
+                              {data === "loading" && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
+                              {data === "error" && (
+                                <p className="text-destructive text-sm">{t("Failed to load this section.")}</p>
+                              )}
+                              {data && data !== "loading" && data !== "error" && (
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>{t("Option Type")}</TableHead>
+                                      <TableHead>{t("Option Selection")}</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {data.map((opt, idx) => (
+                                      <TableRow key={`${opt.optionType}-${idx}`}>
+                                        <TableCell>{opt.optionType}</TableCell>
+                                        <TableCell>{opt.optionSelection ?? "-"}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
-        {!sectionsLoading && sectionOrder.length > 0 && (
-          <div className="flex flex-col gap-6 md:flex-row md:items-start">
-            <nav className="bg-background top-8 shrink-0 self-start md:sticky md:w-56">
-              <ul className="space-y-0.5">
-                {sectionOrder.map((name, index) => (
-                  <li key={index}>
-                    <button
-                      type="button"
-                      onClick={() => jumpToSection(index)}
-                      className="hover:bg-accent w-full truncate rounded-sm px-2 py-1 text-left text-sm"
-                      title={name}
-                    >
-                      {name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </nav>
+        {viewMode === "compare" && (
+          <>
+            <Card className="mb-6">
+              <CardContent>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Machine A")}</label>
+                    <Select value={machineA} onValueChange={setMachineA} disabled={listLoading}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {machineNames.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Machine B")}</label>
+                    <Select value={machineB} onValueChange={setMachineB} disabled={listLoading}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={listLoading ? t("Loading…") : t("Select machine")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {machineNames.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Button className="mt-4" onClick={handleCompareClick} disabled={compareLoading || !machineA || !machineB}>
+                  {compareLoading ? t("Comparing…") : t("Start Comparison")}
+                </Button>
+              </CardContent>
+            </Card>
 
-            <div className="grid min-w-0 flex-1 gap-4">
-              {sectionOrder.map((name, index) => {
-                const expanded = expandedIndices.has(index);
-                const data = sectionData.get(name);
-                return (
-                  <Card key={index} id={`zbom-section-${index}`}>
+            {compareError && (
+              <p className="text-destructive mb-4 text-sm">
+                {t("Comparison failed")}: {compareError}
+              </p>
+            )}
+
+            {!compareResult && !compareLoading && !compareError && (
+              <p className="text-muted-foreground text-sm">{t("No comparison data yet.")}</p>
+            )}
+
+            {compareResult && (
+              <div className="grid gap-6">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">
+                    {t("Matching")} {compareResult.matchedCount}
+                  </Badge>
+                  <Badge variant={compareResult.mismatched.length > 0 ? "destructive" : "secondary"}>
+                    {t("Mismatched")} {compareResult.mismatched.length}
+                  </Badge>
+                  <Badge variant="outline">
+                    {t("Only in A")} {compareResult.onlyA.length}
+                  </Badge>
+                  <Badge variant="outline">
+                    {t("Only in B")} {compareResult.onlyB.length}
+                  </Badge>
+                </div>
+
+                <Card>
+                  <CardContent>
+                    <h2 className="mb-2 text-sm font-medium">{t("Mismatched")}</h2>
+                    {compareResult.mismatched.length === 0 ? (
+                      <p className="text-muted-foreground text-sm italic">{t("No differences here.")}</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t("Section")}</TableHead>
+                            <TableHead>{t("Option Type")}</TableHead>
+                            <TableHead>{t("A's Selection")}</TableHead>
+                            <TableHead>{t("B's Selection")}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {compareResult.mismatched.map((m, idx) => (
+                            <TableRow key={idx} className="text-red-600 dark:text-red-400">
+                              <TableCell>{m.section}</TableCell>
+                              <TableCell>{m.optionType}</TableCell>
+                              <TableCell>{m.onlyInA.join(", ") || "-"}</TableCell>
+                              <TableCell>{m.onlyInB.join(", ") || "-"}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Card>
                     <CardContent>
-                      <button
-                        type="button"
-                        onClick={() => toggleSection(index)}
-                        className="hover:bg-accent -mx-2 flex w-[calc(100%+1rem)] items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm font-medium"
-                      >
-                        <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-90")} />
-                        {name}
-                      </button>
-
-                      {expanded && (
-                        <div className="mt-3">
-                          {data === "loading" && <p className="text-muted-foreground text-sm">{t("Loading…")}</p>}
-                          {data === "error" && (
-                            <p className="text-destructive text-sm">{t("Failed to load this section.")}</p>
-                          )}
-                          {data && data !== "loading" && data !== "error" && (
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>{t("Option Type")}</TableHead>
-                                  <TableHead>{t("Option Selection")}</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {data.map((opt, idx) => (
-                                  <TableRow key={`${opt.optionType}-${idx}`}>
-                                    <TableCell>{opt.optionType}</TableCell>
-                                    <TableCell>{opt.optionSelection ?? "-"}</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </div>
+                      <h2 className="mb-2 text-sm font-medium">{t("Only in A")}</h2>
+                      {compareResult.onlyA.length === 0 ? (
+                        <p className="text-muted-foreground text-sm italic">{t("No differences here.")}</p>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>{t("Section")}</TableHead>
+                              <TableHead>{t("Option Type")}</TableHead>
+                              <TableHead>{t("Option Selection")}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {compareResult.onlyA.map((opt, idx) => (
+                              <TableRow key={idx}>
+                                <TableCell>{opt.section}</TableCell>
+                                <TableCell>{opt.optionType}</TableCell>
+                                <TableCell>{opt.optionSelection ?? "-"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       )}
                     </CardContent>
                   </Card>
-                );
-              })}
-            </div>
-          </div>
+                  <Card>
+                    <CardContent>
+                      <h2 className="mb-2 text-sm font-medium">{t("Only in B")}</h2>
+                      {compareResult.onlyB.length === 0 ? (
+                        <p className="text-muted-foreground text-sm italic">{t("No differences here.")}</p>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>{t("Section")}</TableHead>
+                              <TableHead>{t("Option Type")}</TableHead>
+                              <TableHead>{t("Option Selection")}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {compareResult.onlyB.map((opt, idx) => (
+                              <TableRow key={idx}>
+                                <TableCell>{opt.section}</TableCell>
+                                <TableCell>{opt.optionType}</TableCell>
+                                <TableCell>{opt.optionSelection ?? "-"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
