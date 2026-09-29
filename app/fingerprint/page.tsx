@@ -352,19 +352,49 @@ export default function FingerprintPage() {
       setSlots(slotRows);
 
       if (machineNames.length > 0 && slotRows.length > 0) {
-        const { data: keyPartRows, error: keyPartsError } = await supabase
-          .from("key_parts")
-          .select("id,part_no,machine_name,slot_id,found_in_modules")
-          .in("machine_name", machineNames);
-        if (keyPartsError) throw new Error(keyPartsError.message);
+        const slotIds = slotRows.map((s) => s.id);
+        // Keyset-paginated, and scoped to this tool type's own slot_ids (not
+        // just machine_name) — confirmed against real data that without
+        // both of these, this query silently drops rows once a tool type's
+        // machines collectively pass Supabase's 1000-row-per-request cap
+        // (a machine can belong to more than one tool type, so an
+        // unscoped machine_name-only fetch pulls in every OTHER tool
+        // type's rows for it too, inflating the count well past what this
+        // table actually needs). Rows past the cap don't error, they just
+        // vanish from the result — which read as "some part numbers
+        // randomly go blank as more machines are added" before this fix.
+        const keyPartRows: {
+          id: number;
+          part_no: string | null;
+          machine_name: string;
+          slot_id: number | null;
+          found_in_modules: string[] | null;
+        }[] = [];
+        let afterId = 0;
+        const pageSize = 1000;
+        for (;;) {
+          const { data, error: keyPartsError } = await supabase
+            .from("key_parts")
+            .select("id,part_no,machine_name,slot_id,found_in_modules")
+            .in("machine_name", machineNames)
+            .in("slot_id", slotIds)
+            .gt("id", afterId)
+            .order("id", { ascending: true })
+            .limit(pageSize);
+          if (keyPartsError) throw new Error(keyPartsError.message);
+          if (!data || data.length === 0) break;
+          keyPartRows.push(...data);
+          afterId = data[data.length - 1].id as number;
+          if (data.length < pageSize) break;
+        }
 
         const map = new Map<string, CellValue>();
-        for (const row of keyPartRows ?? []) {
+        for (const row of keyPartRows) {
           if (row.slot_id == null) continue; // legacy rows not linked to a slot aren't shown here
-          map.set(cellKey(row.slot_id as number, row.machine_name as string), {
-            id: row.id as number,
-            part_no: (row.part_no as string) ?? "",
-            foundInModules: (row.found_in_modules as string[] | null) ?? null,
+          map.set(cellKey(row.slot_id, row.machine_name), {
+            id: row.id,
+            part_no: row.part_no ?? "",
+            foundInModules: row.found_in_modules ?? null,
           });
         }
         setCells(map);
@@ -659,9 +689,35 @@ export default function FingerprintPage() {
     }
 
     if (toInsert.length === 0) return 0;
-    const { error: insertErr } = await supabase.from("key_parts").insert(toInsert);
+
+    // Re-check right before writing, not just against the existingRows
+    // fetched at the top of this function — fetchAllBomItems/
+    // fetchFullBomItems above can take a while for a machine with a large
+    // BOM, leaving a real window where another call (a second click, a
+    // concurrent Excel upload, another tab) could insert a row for the same
+    // (machine_name, slot_id) in the meantime. Without this, that race
+    // produces genuine duplicate key_parts rows for the same cell — found
+    // exactly that in production data (one machine had 3 separate rows for
+    // the same slot). key_parts has no unique constraint on
+    // (machine_name, slot_id) to rely on instead, so this narrows the
+    // window at the application level, same as applyUploadPlan's
+    // insert-or-update check does for the Excel upload path.
+    const { data: freshExisting, error: freshErr } = await supabase
+      .from("key_parts")
+      .select("slot_id")
+      .eq("machine_name", machineName)
+      .in(
+        "slot_id",
+        toInsert.map((r) => r.slot_id)
+      );
+    if (freshErr) throw new Error(freshErr.message);
+    const freshlyFilledSlotIds = new Set((freshExisting ?? []).map((r) => r.slot_id as number));
+    const safeToInsert = toInsert.filter((r) => !freshlyFilledSlotIds.has(r.slot_id));
+
+    if (safeToInsert.length === 0) return 0;
+    const { error: insertErr } = await supabase.from("key_parts").insert(safeToInsert);
     if (insertErr) throw new Error(insertErr.message);
-    return toInsert.length;
+    return safeToInsert.length;
   }
 
   async function addMachine() {
