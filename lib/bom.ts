@@ -199,15 +199,29 @@ export async function fetchMachineGroups(supabase: SupabaseClient): Promise<{
   machineGroups: MachineGroup[];
   bomData: BomEntry[];
 }> {
-  const { data: machines, error } = await supabase
-    .from("bom_machines")
-    .select("id,machine_name,source_file");
+  const machines: { id: number; machine_name: string; source_file: string }[] = [];
+  const pageSize = 500;
+  let afterId = 0;
 
-  if (error) {
-    throw new Error(`Failed to load data: ${error.message}`);
+  for (;;) {
+    const { data, error } = await withRetry(() =>
+      supabase
+        .from("bom_machines")
+        .select("id,machine_name,source_file")
+        .gt("id", afterId)
+        .order("id", { ascending: true })
+        .limit(pageSize)
+    );
+    if (error) {
+      throw new Error(`Failed to load data: ${error.message}`);
+    }
+    if (!data || data.length === 0) break;
+
+    machines.push(...data);
+    afterId = data[data.length - 1].id;
   }
 
-  if (!machines || machines.length === 0) {
+  if (machines.length === 0) {
     throw new Error("No BOM records found.");
   }
 
