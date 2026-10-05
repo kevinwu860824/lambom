@@ -23,7 +23,7 @@ const zh: Record<string, string> = {
   "Please enter your employee ID first": "請先輸入工號",
   "BOM Comparison Tool": "BOM 比對工具",
   "F22 VXT Daily Passdown": "F22 VXT 交接紀錄",
-  "D365 Order Automation": "D365 訂料自動化",
+  "Spare Parts Inventory": "備品庫存管理",
 };
 
 const apps = [
@@ -42,9 +42,9 @@ const apps = [
     gradient: "from-amber-400 to-orange-600",
   },
   {
-    href: "/spare-order",
-    label: "Spare Order",
-    description: "D365 Order Automation",
+    href: "/inventory",
+    label: "Spare",
+    description: "Spare Parts Inventory",
     icon: Package,
     gradient: "from-emerald-400 to-teal-600",
   },
