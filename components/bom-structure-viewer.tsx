@@ -187,6 +187,19 @@ export function BomStructureViewer({
   // pinned open, and never touches state the user set themselves.
   const [manualExpandedIds, setManualExpandedIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  // matches (below) walks every currently-visible node to find hits, which
+  // for a large Full BOM tree (tens of thousands of items) is expensive
+  // enough to make typing itself feel laggy if it re-runs on every
+  // keystroke. Debouncing just the search-triggering value — not the
+  // input's own displayed text — keeps typing instant while the actual
+  // (re-render-heavy) search only fires once the user pauses, same
+  // debounce pattern already used by the Part No. / Description Search on
+  // the home page.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
 
   const visibleSubpartTrees = useMemo(
@@ -194,7 +207,7 @@ export function BomStructureViewer({
     [subpartTrees, selectedSourceFiles]
   );
 
-  const normalizedQuery = normalizeSearchText(query);
+  const normalizedQuery = normalizeSearchText(debouncedQuery);
   const matches = useMemo(
     () => collectMatches(visibleSubpartTrees, normalizedQuery),
     [visibleSubpartTrees, normalizedQuery]
