@@ -245,7 +245,7 @@ export default function GroupsPage() {
   async function handleRemoveMember(groupId: number, employeeId: string) {
     setError(null);
     try {
-      await removeGroupMember(getSupabase(), employeeId);
+      await removeGroupMember(getSupabase(), employeeId, groupId);
       await loadDetail(groupId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

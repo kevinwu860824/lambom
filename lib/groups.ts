@@ -35,17 +35,25 @@ export async function deleteGroup(supabase: SupabaseClient, id: number): Promise
   if (error) throw new Error(error.message);
 }
 
-export async function resolveGroupForEmployee(
+/** Every group this employee belongs to — an employee can now belong to
+ * more than one (group_members' primary key is (employee_id, group_id),
+ * not employee_id alone), so this returns an array rather than assuming
+ * exactly one. */
+export async function resolveGroupsForEmployee(
   supabase: SupabaseClient,
   employeeId: string
-): Promise<Group | null> {
+): Promise<Group[]> {
   const { data, error } = await withRetry(() =>
-    supabase.from("group_members").select("group_id,groups(id,name)").eq("employee_id", employeeId).maybeSingle()
+    supabase.from("group_members").select("group_id,groups(id,name)").eq("employee_id", employeeId)
   );
   if (error) throw new Error(error.message);
-  if (!data) return null;
-  const group = (data as { groups: Group | Group[] | null }).groups;
-  return Array.isArray(group) ? (group[0] ?? null) : group;
+  return (data ?? [])
+    .map((row) => {
+      const group = (row as { groups: Group | Group[] | null }).groups;
+      return Array.isArray(group) ? (group[0] ?? null) : group;
+    })
+    .filter((g): g is Group => g !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function fetchAllowedMachineNames(
@@ -92,9 +100,10 @@ export async function fetchGroupMembers(supabase: SupabaseClient, groupId: numbe
   }));
 }
 
-/** Adds an employee to a group, or moves them if they already belong to a
- * different one — employee_id is the primary key, so this is a plain
- * upsert. */
+/** Adds an employee to a group — a no-op if they're already a member of
+ * this specific group (upserts on the (employee_id, group_id) primary
+ * key), and doesn't touch their membership in any other group, since an
+ * employee can belong to more than one. */
 export async function upsertGroupMember(
   supabase: SupabaseClient,
   employeeId: string,
@@ -109,9 +118,12 @@ export async function upsertGroupMember(
   if (error) throw new Error(error.message);
 }
 
-export async function removeGroupMember(supabase: SupabaseClient, employeeId: string): Promise<void> {
+/** Removes an employee from one specific group — scoped by groupId (not
+ * just employeeId) so removing them from one group doesn't also remove
+ * any other group they belong to. */
+export async function removeGroupMember(supabase: SupabaseClient, employeeId: string, groupId: number): Promise<void> {
   const { error } = await withRetry(() =>
-    supabase.from("group_members").delete().eq("employee_id", employeeId)
+    supabase.from("group_members").delete().eq("employee_id", employeeId).eq("group_id", groupId)
   );
   if (error) throw new Error(error.message);
 }
@@ -150,37 +162,52 @@ export async function removeMachineFromGroup(
 }
 
 const EMPLOYEE_ID_STORAGE_KEY = "lambom_employee_id";
+const GROUP_ID_STORAGE_KEY = "lambom_selected_group_id";
 
 /**
- * Reads/resolves the current employee's group from localStorage, mirroring
- * the raw-localStorage pattern app/passdown/page.tsx uses for "who am I"
- * (see passdown_me) — shared here as a hook since six pages need the exact
- * same "read id -> resolve group -> load allowed machine names" sequence.
+ * Reads/resolves the current employee's group(s) from localStorage,
+ * mirroring the raw-localStorage pattern app/passdown/page.tsx uses for
+ * "who am I" (see passdown_me) — shared here as a hook since many pages
+ * need the exact same "read id -> resolve group(s) -> load allowed
+ * machine names" sequence.
+ *
+ * An employee can belong to more than one group. `group` is whichever one
+ * is currently active (persisted separately from employeeId, so it
+ * survives navigating between pages) — `groups` is every group they
+ * belong to, for a caller (the home page) to render a picker when there's
+ * more than one. When the previously-selected group is no longer one of
+ * theirs (or none was ever selected), the first group (alphabetically) is
+ * used as the default without needing to persist that choice — only an
+ * explicit setGroupId call writes to localStorage.
  */
 export function useEmployeeGroup(): {
   employeeId: string | null;
+  groups: Group[];
   group: Group | null;
   allowedMachines: Set<string> | null;
   loading: boolean;
   notFound: boolean;
   setEmployeeId: (id: string | null) => void;
+  setGroupId: (id: number) => void;
   refresh: () => void;
 } {
   const [employeeId, setEmployeeIdState] = useState<string | null>(null);
-  const [group, setGroup] = useState<Group | null>(null);
+  const [selectedGroupId, setSelectedGroupIdState] = useState<number | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [allowedMachines, setAllowedMachines] = useState<Set<string> | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
-    const saved = localStorage.getItem(EMPLOYEE_ID_STORAGE_KEY);
-    setEmployeeIdState(saved);
+    setEmployeeIdState(localStorage.getItem(EMPLOYEE_ID_STORAGE_KEY));
+    const savedGroupId = localStorage.getItem(GROUP_ID_STORAGE_KEY);
+    setSelectedGroupIdState(savedGroupId ? Number(savedGroupId) : null);
   }, []);
 
   useEffect(() => {
     if (!employeeId) {
-      setGroup(null);
+      setGroups([]);
       setAllowedMachines(null);
       setLoading(false);
       return;
@@ -189,17 +216,18 @@ export function useEmployeeGroup(): {
     setLoading(true);
     setNotFound(false);
     const supabase = createClient();
-    resolveGroupForEmployee(supabase, employeeId)
+    resolveGroupsForEmployee(supabase, employeeId)
       .then(async (resolved) => {
         if (cancelled) return;
-        if (!resolved) {
-          setGroup(null);
+        if (resolved.length === 0) {
+          setGroups([]);
           setAllowedMachines(null);
           setNotFound(true);
           return;
         }
-        setGroup(resolved);
-        const allowed = await fetchAllowedMachineNames(supabase, resolved.id);
+        setGroups(resolved);
+        const active = resolved.find((g) => g.id === selectedGroupId) ?? resolved[0];
+        const allowed = await fetchAllowedMachineNames(supabase, active.id);
         if (!cancelled) setAllowedMachines(allowed);
       })
       .finally(() => {
@@ -208,7 +236,9 @@ export function useEmployeeGroup(): {
     return () => {
       cancelled = true;
     };
-  }, [employeeId, refreshTick]);
+  }, [employeeId, selectedGroupId, refreshTick]);
+
+  const group = groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null;
 
   const setEmployeeId = useCallback((id: string | null) => {
     if (id) localStorage.setItem(EMPLOYEE_ID_STORAGE_KEY, id);
@@ -216,10 +246,20 @@ export function useEmployeeGroup(): {
     setEmployeeIdState(id);
   }, []);
 
-  // Re-resolves group + allowed machines without touching localStorage —
+  // Only called when the user explicitly picks from the group dropdown —
+  // the default (first group) above is never written to localStorage on
+  // its own, so a second employee using the same browser without a saved
+  // preference always sees their own default, not whatever the previous
+  // person last picked.
+  const setGroupId = useCallback((id: number) => {
+    localStorage.setItem(GROUP_ID_STORAGE_KEY, String(id));
+    setSelectedGroupIdState(id);
+  }, []);
+
+  // Re-resolves group(s) + allowed machines without touching localStorage —
   // needed after a SAP download adds a new machine to the current group, so
   // it shows up without the user having to re-enter their employee ID.
   const refresh = useCallback(() => setRefreshTick((t) => t + 1), []);
 
-  return { employeeId, group, allowedMachines, loading, notFound, setEmployeeId, refresh };
+  return { employeeId, groups, group, allowedMachines, loading, notFound, setEmployeeId, setGroupId, refresh };
 }

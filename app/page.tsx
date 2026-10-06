@@ -7,6 +7,7 @@ import { useEmployeeGroup, type Group } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
 const zh: Record<string, string> = {
@@ -52,16 +53,20 @@ const apps = [
 
 function EmployeeIdBar({
   employeeId,
+  groups,
   group,
   loading,
   notFound,
   setEmployeeId,
+  setGroupId,
 }: {
   employeeId: string | null;
+  groups: Group[];
   group: Group | null;
   loading: boolean;
   notFound: boolean;
   setEmployeeId: (id: string | null) => void;
+  setGroupId: (id: number) => void;
 }) {
   const [draft, setDraft] = useState("");
   const t = useTranslate(zh);
@@ -97,11 +102,30 @@ function EmployeeIdBar({
           )}
         </span>
       ) : (
-        <span>
-          {t("{group} · Employee ID {id}")
-            .replace("{group}", group?.name ?? "")
-            .replace("{id}", employeeId ?? "")}
-        </span>
+        <>
+          {/* Only shown when this employee ID belongs to more than one
+           * group — the common single-group case looks exactly like
+           * before. */}
+          {groups.length > 1 && (
+            <Select value={group ? String(group.id) : ""} onValueChange={(v) => setGroupId(Number(v))}>
+              <SelectTrigger className="h-8 w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {groups.map((g) => (
+                  <SelectItem key={g.id} value={String(g.id)}>
+                    {g.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <span>
+            {t("{group} · Employee ID {id}")
+              .replace("{group}", group?.name ?? "")
+              .replace("{id}", employeeId ?? "")}
+          </span>
+        </>
       )}
       <Button variant="ghost" size="sm" onClick={() => setEmployeeId(null)}>
         {t("Change")}
@@ -111,7 +135,7 @@ function EmployeeIdBar({
 }
 
 export default function Home() {
-  const { employeeId, group, loading, notFound, setEmployeeId } = useEmployeeGroup();
+  const { employeeId, groups, group, loading, notFound, setEmployeeId, setGroupId } = useEmployeeGroup();
   const t = useTranslate(zh);
   const locked = !loading && !employeeId;
 
@@ -120,10 +144,12 @@ export default function Home() {
       <div className="absolute right-4 top-4 flex items-center gap-3">
         <EmployeeIdBar
           employeeId={employeeId}
+          groups={groups}
           group={group}
           loading={loading}
           notFound={notFound}
           setEmployeeId={setEmployeeId}
+          setGroupId={setGroupId}
         />
         <LanguageSwitcher />
         <Button variant="outline" size="icon" asChild>
