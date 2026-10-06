@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   ArrowLeft,
   CircleAlert,
@@ -9,21 +8,17 @@ import {
   Loader2,
   PackageCheck,
   RotateCcw,
-  Settings,
   ShoppingCart,
   Truck,
 } from "lucide-react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase";
-import { fetchFullBomItemByPartNo, type BomItem } from "@/lib/bom";
+import { fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
 import {
   createLog,
   fetchLogs,
-  fetchMachineModelLinks,
-  fetchModels,
   updateLogStatus,
   type InventoryLog,
-  type InventoryModel,
-  type MachineModelLink,
 } from "@/lib/inventory";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
@@ -42,19 +37,13 @@ const zh: Record<string, string> = {
   "Report missing/loaned parts and track them through to completion — everyone can see and update every record.":
     "回報缺料或借出零件,並追蹤到結案——所有人都能看到並更新所有紀錄。",
   "Back to Internal Tools": "回內部工具首頁",
-  "Machine Settings": "機台設定",
   "Report a Part": "回報零件",
   Machine: "機台",
   "Select machine": "選擇機台",
   "(none)": "(不選)",
   "Part Name": "零件名稱",
-  "Select from BOM…": "從 BOM 表中選擇…",
-  "No model linked to this machine": "這台機台尚未連結機型",
-  "This model has no BOM data yet": "這個機型還沒有 BOM 資料",
   "Select a machine first": "請先選擇機台",
-  "Enter custom part…": "手動輸入自定義零件",
-  "Type the part name/spec…": "輸入零件名稱/規格…",
-  "Back to BOM list": "返回 BOM 清單",
+  "Type a part number or description…": "輸入料號或說明…",
   "Found in Full BOM": "在完整 BOM 表中找到",
   "Not found in this machine's Full BOM — double-check the part number.": "在這台機台的完整 BOM 表中找不到——請再次確認料號是否正確。",
   Qty: "數量",
@@ -101,8 +90,6 @@ export default function InventoryPage() {
 
   const { employeeId, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
 
-  const [models, setModels] = useState<InventoryModel[]>([]);
-  const [machineModelLinks, setMachineModelLinks] = useState<MachineModelLink[]>([]);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,25 +99,58 @@ export default function InventoryPage() {
   // Report form state
   const [selectedMachineName, setSelectedMachineName] = useState("");
   const [partName, setPartName] = useState("");
-  const [customPart, setCustomPart] = useState(false);
   const [isLoan, setIsLoan] = useState(false);
   const [borrower, setBorrower] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Full BOM lookup for whatever's currently typed into the custom part
-  // name field — only meaningful while typing (not the BOM-dropdown pick,
-  // since those values are "name (spec)" strings from the model's own
-  // imported BOM list, not real Full BOM part numbers, so looking them up
-  // against Full BOM would almost always and misleadingly say "not
-  // found"). Cleared below whenever the machine/part text changes, so a
-  // stale result never lingers past the input it described.
-  const [partLookup, setPartLookup] = useState<{ item: BomItem } | { item: null } | null>(null);
+  // Live autocomplete against the selected machine's real Full BOM as the
+  // user types — debounced (network call, not just an expensive render)
+  // so it doesn't fire on every keystroke.
+  const [debouncedPartName, setDebouncedPartName] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedPartName(partName), 300);
+    return () => clearTimeout(timer);
+  }, [partName]);
+
+  const [suggestions, setSuggestions] = useState<BomItem[]>([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const searchQuery = debouncedPartName.trim();
+  const searchEligible = Boolean(selectedMachineName) && searchQuery.length >= 2;
+  // Derived at render time rather than reset via a synchronous setState in
+  // the effect below — once the query no longer qualifies for a search
+  // (cleared, too short, or the machine changed), the last-fetched
+  // suggestions are simply not shown, without needing an extra render
+  // just to clear them out.
+  const visibleSuggestions = searchEligible ? suggestions : [];
+
+  useEffect(() => {
+    if (!searchEligible) return;
+    let cancelled = false;
+    searchFullBomItems(getSupabase(), selectedMachineName, searchQuery)
+      .then((items) => {
+        if (!cancelled) setSuggestions(items);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchEligible, selectedMachineName, searchQuery]);
+
+  // Whatever the Full BOM lookup last found (or didn't) for the exact text
+  // currently in the part name field — set either by clicking a
+  // suggestion directly (already known), or on blur for whatever was
+  // typed without picking one. Cleared whenever the machine/part text
+  // changes, so a stale result never lingers past the input it described.
+  const [partLookup, setPartLookup] = useState<{ item: BomItem | null } | null>(null);
   const [partLookupLoading, setPartLookupLoading] = useState(false);
 
   async function handlePartNameBlur() {
+    setSuggestionsOpen(false);
     const trimmed = partName.trim();
-    if (!customPart || !selectedMachineName || !trimmed) return;
+    if (!selectedMachineName || !trimmed) return;
     setPartLookupLoading(true);
     try {
       const item = await fetchFullBomItemByPartNo(getSupabase(), selectedMachineName, trimmed);
@@ -143,19 +163,18 @@ export default function InventoryPage() {
     }
   }
 
+  function selectSuggestion(item: BomItem) {
+    setPartName(item.part_no);
+    setPartLookup({ item });
+    setSuggestions([]);
+    setSuggestionsOpen(false);
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      const supabase = getSupabase();
-      const [mo, links, l] = await Promise.all([
-        fetchModels(supabase),
-        fetchMachineModelLinks(supabase),
-        fetchLogs(supabase),
-      ]);
-      setModels(mo);
-      setMachineModelLinks(links);
-      setLogs(l);
+      setLogs(await fetchLogs(getSupabase()));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -170,9 +189,6 @@ export default function InventoryPage() {
   }, [employeeId]);
 
   const machineNames = Array.from(allowedMachines ?? []).sort();
-  const selectedModelId = machineModelLinks.find((l) => l.machineName === selectedMachineName)?.modelId ?? null;
-  const selectedModel = selectedModelId ? models.find((mo) => mo.id === selectedModelId) ?? null : null;
-  const bomList = selectedModel?.bomData ?? [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -192,8 +208,8 @@ export default function InventoryPage() {
       setMessage(isLoan ? t("Loan recorded.") : t("Part reported."));
       setSelectedMachineName("");
       setPartName("");
-      setCustomPart(false);
       setPartLookup(null);
+      setSuggestions([]);
       setIsLoan(false);
       setBorrower("");
       await loadAll();
@@ -242,11 +258,6 @@ export default function InventoryPage() {
           </div>
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Button variant="outline" size="icon" asChild aria-label={t("Machine Settings")}>
-              <Link href="/inventory/machines">
-                <Settings className="h-4 w-4" />
-              </Link>
-            </Button>
             <Button variant="outline" size="icon" asChild aria-label={t("Back to Internal Tools")}>
               <Link href="/">
                 <ArrowLeft className="h-4 w-4" />
@@ -270,8 +281,8 @@ export default function InventoryPage() {
                   onValueChange={(v) => {
                     setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
                     setPartName("");
-                    setCustomPart(false);
                     setPartLookup(null);
+                    setSuggestions([]);
                   }}
                 >
                   <SelectTrigger className="w-full">
@@ -290,116 +301,73 @@ export default function InventoryPage() {
 
               <div className="grid gap-1.5">
                 <label className="text-sm font-medium">{t("Part Name")}</label>
-                {!customPart ? (
-                  <div className="flex gap-2">
-                    <Select
-                      value={partName}
-                      onValueChange={(v) => setPartName(v)}
-                      disabled={!selectedMachineName}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue
-                          placeholder={
-                            !selectedMachineName
-                              ? t("Select a machine first")
-                              : bomList.length > 0
-                                ? t("Select from BOM…")
-                                : !selectedModel
-                                  ? t("No model linked to this machine")
-                                  : t("This model has no BOM data yet")
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {bomList.map((item) => (
-                          <SelectItem key={item} value={item}>
-                            {item}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="shrink-0"
-                      disabled={!selectedMachineName}
-                      onClick={() => {
-                        setCustomPart(true);
-                        setPartName("");
-                        setPartLookup(null);
-                      }}
-                    >
-                      {t("Enter custom part…")}
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="grid gap-2">
-                    <div className="flex gap-2">
-                      <Input
-                        autoFocus
-                        required
-                        placeholder={t("Type the part name/spec…")}
-                        value={partName}
-                        onChange={(e) => {
-                          setPartName(e.target.value);
-                          setPartLookup(null);
-                        }}
-                        onBlur={handlePartNameBlur}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="shrink-0"
-                        onClick={() => {
-                          setCustomPart(false);
-                          setPartName("");
-                          setPartLookup(null);
-                        }}
-                      >
-                        {t("Back to BOM list")}
-                      </Button>
+                <div className="relative">
+                  <Input
+                    required
+                    disabled={!selectedMachineName}
+                    placeholder={!selectedMachineName ? t("Select a machine first") : t("Type a part number or description…")}
+                    value={partName}
+                    onChange={(e) => {
+                      setPartName(e.target.value);
+                      setPartLookup(null);
+                      setSuggestionsOpen(true);
+                    }}
+                    onFocus={() => setSuggestionsOpen(true)}
+                    onBlur={handlePartNameBlur}
+                  />
+                  {suggestionsOpen && visibleSuggestions.length > 0 && (
+                    <div className="bg-popover absolute z-10 mt-1 w-full max-h-64 overflow-y-auto rounded-md border shadow-md">
+                      {visibleSuggestions.map((item, idx) => (
+                        <button
+                          key={`${item.part_no}-${idx}`}
+                          type="button"
+                          className="hover:bg-accent block w-full px-3 py-2 text-left text-sm"
+                          onMouseDown={(e) => {
+                            // Keep the input focused through the click so
+                            // this fires instead of the input's own blur
+                            // (which would otherwise close the dropdown
+                            // before the click registers).
+                            e.preventDefault();
+                            selectSuggestion(item);
+                          }}
+                        >
+                          <div className="font-mono text-xs">{item.part_no}</div>
+                          {item.description && (
+                            <div className="text-muted-foreground truncate text-xs">{item.description}</div>
+                          )}
+                        </button>
+                      ))}
                     </div>
-                    {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
-                    {partLookup && (
-                      <div
-                        className={cn(
-                          "flex items-start gap-2 rounded-lg border p-2 text-xs",
-                          partLookup.item
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-                            : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                        )}
-                      >
-                        {partLookup.item ? (
-                          <>
-                            <CircleCheck className="h-3.5 w-3.5 shrink-0" />
-                            <div>
-                              <p className="font-medium">{t("Found in Full BOM")}</p>
-                              <p>{partLookup.item.description}</p>
-                              <p>
-                                {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <CircleAlert className="h-3.5 w-3.5 shrink-0" />
-                            <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
-                          </>
-                        )}
-                      </div>
+                  )}
+                </div>
+                {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
+                {partLookup && (
+                  <div
+                    className={cn(
+                      "flex items-start gap-2 rounded-lg border p-2 text-xs",
+                      partLookup.item
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                        : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+                    )}
+                  >
+                    {partLookup.item ? (
+                      <>
+                        <CircleCheck className="h-3.5 w-3.5 shrink-0" />
+                        <div>
+                          <p className="font-medium">{t("Found in Full BOM")}</p>
+                          <p>{partLookup.item.description}</p>
+                          <p>
+                            {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                        <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
+                      </>
                     )}
                   </div>
-                )}
-                {selectedMachineName && bomList.length === 0 && (
-                  <p className="text-muted-foreground text-xs">
-                    {!selectedModel
-                      ? t("No model linked to this machine")
-                      : t("This model has no BOM data yet")}
-                    {" — "}
-                    <Link href="/inventory/machines" className="underline underline-offset-2">
-                      {t("Machine Settings")}
-                    </Link>
-                  </p>
                 )}
               </div>
 

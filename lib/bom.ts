@@ -475,6 +475,32 @@ export async function fetchFullBomItemByPartNo(
   return (data ?? [])[0] ?? null;
 }
 
+/** Live autocomplete search within one machine's Full BOM, matching
+ * part_no or description — same ilike-based multi-column search pattern
+ * components/description-search.tsx already uses, just scoped to one
+ * machine's Full BOM instead of every machine's Modules. A single query
+ * bounded by `limit`, not a full paginated fetch — searching narrows to
+ * one machine's rows via the existing machine_name index, so this stays
+ * fast without needing to pull a machine's whole 20k+-row Full BOM
+ * client-side first. */
+export async function searchFullBomItems(
+  supabase: SupabaseClient,
+  machineName: string,
+  query: string,
+  limit = 20
+): Promise<BomItem[]> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("full_bom_items")
+      .select("part_no,description,qty,uom")
+      .eq("machine_name", machineName)
+      .or(`part_no.ilike.%${query}%,description.ilike.%${query}%`)
+      .limit(limit)
+  );
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
 export interface MachineBomLookup {
   fullBomPartNos: Set<string>;
   /** part_no -> every module (bom_machines.source_file) it appears in for
