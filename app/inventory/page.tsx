@@ -7,12 +7,12 @@ import { createClient } from "@/lib/supabase";
 import {
   createLog,
   fetchLogs,
-  fetchMachines,
+  fetchMachineModelLinks,
   fetchModels,
   updateLogStatus,
   type InventoryLog,
-  type InventoryMachine,
   type InventoryModel,
+  type MachineModelLink,
 } from "@/lib/inventory";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
@@ -43,7 +43,7 @@ const zh: Record<string, string> = {
   "Type the part name/spec…": "輸入零件名稱/規格…",
   "Back to BOM list": "返回 BOM 清單",
   "Mark as a loan (not a repair)": "標記為零件借出(非報修)",
-  "Borrower": "借用人",
+  Borrower: "借用人",
   "Who's taking this part?": "是誰領走這個零件?",
   Submit: "提交",
   Submitting: "提交中…",
@@ -76,10 +76,10 @@ export default function InventoryPage() {
     return supabaseRef.current;
   }
 
-  const { employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { employeeId, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
 
-  const [machines, setMachines] = useState<InventoryMachine[]>([]);
   const [models, setModels] = useState<InventoryModel[]>([]);
+  const [machineModelLinks, setMachineModelLinks] = useState<MachineModelLink[]>([]);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,7 +87,7 @@ export default function InventoryPage() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   // Report form state
-  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [selectedMachineName, setSelectedMachineName] = useState("");
   const [partName, setPartName] = useState("");
   const [customPart, setCustomPart] = useState(false);
   const [isLoan, setIsLoan] = useState(false);
@@ -100,9 +100,13 @@ export default function InventoryPage() {
     setError(null);
     try {
       const supabase = getSupabase();
-      const [m, mo, l] = await Promise.all([fetchMachines(supabase), fetchModels(supabase), fetchLogs(supabase)]);
-      setMachines(m);
+      const [mo, links, l] = await Promise.all([
+        fetchModels(supabase),
+        fetchMachineModelLinks(supabase),
+        fetchLogs(supabase),
+      ]);
       setModels(mo);
+      setMachineModelLinks(links);
       setLogs(l);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -117,29 +121,28 @@ export default function InventoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeId]);
 
-  const selectedMachine = machines.find((m) => String(m.id) === selectedMachineId) ?? null;
-  const selectedModel = selectedMachine?.modelId
-    ? models.find((mo) => mo.id === selectedMachine.modelId) ?? null
-    : null;
+  const machineNames = Array.from(allowedMachines ?? []).sort();
+  const selectedModelId = machineModelLinks.find((l) => l.machineName === selectedMachineName)?.modelId ?? null;
+  const selectedModel = selectedModelId ? models.find((mo) => mo.id === selectedModelId) ?? null : null;
   const bomList = selectedModel?.bomData ?? [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedMachine || !partName.trim()) return;
+    if (!selectedMachineName || !partName.trim()) return;
 
     setSubmitting(true);
     setMessage(null);
     setError(null);
     try {
       await createLog(getSupabase(), {
-        machineId: selectedMachine.id,
+        machineName: selectedMachineName,
         partName: partName.trim(),
         isLoan,
         borrower: isLoan ? borrower.trim() || null : null,
         reporterEmployeeId: employeeId,
       });
       setMessage(isLoan ? t("Loan recorded.") : t("Part reported."));
-      setSelectedMachineId("");
+      setSelectedMachineName("");
       setPartName("");
       setCustomPart(false);
       setIsLoan(false);
@@ -214,9 +217,9 @@ export default function InventoryPage() {
               <div className="grid gap-1.5">
                 <label className="text-sm font-medium">{t("Machine")}</label>
                 <Select
-                  value={selectedMachineId}
+                  value={selectedMachineName}
                   onValueChange={(v) => {
-                    setSelectedMachineId(v);
+                    setSelectedMachineName(v);
                     setPartName("");
                     setCustomPart(false);
                   }}
@@ -225,9 +228,9 @@ export default function InventoryPage() {
                     <SelectValue placeholder={t("Select machine")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {machines.map((m) => (
-                      <SelectItem key={m.id} value={String(m.id)}>
-                        {m.code} - {m.name}
+                    {machineNames.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -241,12 +244,12 @@ export default function InventoryPage() {
                     <Select
                       value={partName}
                       onValueChange={(v) => setPartName(v)}
-                      disabled={!selectedMachine}
+                      disabled={!selectedMachineName}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue
                           placeholder={
-                            !selectedMachine
+                            !selectedMachineName
                               ? t("Select a machine first")
                               : bomList.length > 0
                                 ? t("Select from BOM…")
@@ -266,7 +269,7 @@ export default function InventoryPage() {
                       type="button"
                       variant="outline"
                       className="shrink-0"
-                      disabled={!selectedMachine}
+                      disabled={!selectedMachineName}
                       onClick={() => {
                         setCustomPart(true);
                         setPartName("");
@@ -319,7 +322,7 @@ export default function InventoryPage() {
 
               {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
 
-              <Button type="submit" disabled={submitting || !selectedMachineId || !partName.trim()}>
+              <Button type="submit" disabled={submitting || !selectedMachineName || !partName.trim()}>
                 {submitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -369,9 +372,7 @@ export default function InventoryPage() {
                         <Badge variant={statusBadgeVariant(log.status)}>{t(log.status)}</Badge>
                         <span className="font-medium">{log.partName}</span>
                       </div>
-                      <p className="text-muted-foreground text-xs">
-                        {log.machineCode} · {log.machineName}
-                      </p>
+                      <p className="text-muted-foreground text-xs">{log.machineName}</p>
                       {log.isLoan && log.borrower && (
                         <p className="text-muted-foreground text-xs">
                           {t("Borrower")}: {log.borrower}

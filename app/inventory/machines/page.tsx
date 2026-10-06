@@ -3,23 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx-js-style";
-import { ArrowLeft, Plus, Trash2, Upload, X as XIcon } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import {
-  addMachine,
   addModel,
-  addPredefinedCodes,
-  deleteMachine,
   deleteModel,
-  deletePredefinedCode,
-  fetchMachines,
+  fetchMachineModelLinks,
   fetchModels,
-  fetchPredefinedCodes,
+  setMachineModelLink,
   setModelBomData,
-  updateMachine,
-  type InventoryMachine,
   type InventoryModel,
-  type PredefinedCode,
+  type MachineModelLink,
 } from "@/lib/inventory";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
@@ -33,8 +27,8 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 
 const zh: Record<string, string> = {
   "Machine Settings": "機台設定",
-  "Manage machine models, BOM data, serial numbers, and the machine list.":
-    "管理機型、BOM 資料、序號,以及機台清單。",
+  "Manage machine models, BOM data, and which model each machine uses.":
+    "管理機型、BOM 資料,以及每台機台對應哪個機型。",
   "Back to Inventory": "回庫存管理",
   "Machine Models": "機型",
   "New model name…": "新機型名稱…",
@@ -45,23 +39,15 @@ const zh: Record<string, string> = {
     "會尋找「Object description」/ 品名 欄位(零件名稱)跟選填的「Component」/ 規格 欄位,跟原工具解析邏輯一致。",
   "Could not find an \"Object description\" / 品名 column in this file.": "在這個檔案裡找不到「Object description」/ 品名 欄位。",
   "Imported {n} BOM parts.": "已匯入 {n} 個 BOM 零件。",
-  "Reserved Serial Numbers": "預定義機台序號",
-  "Add serial numbers — comma or newline separated…": "輸入序號(可用逗號或換行分隔多個)…",
-  "Select a model to manage its BOM/serial numbers.": "選一個機型來管理它的 BOM / 序號。",
+  "Select a model to manage its BOM.": "選一個機型來管理它的 BOM。",
   "No models yet.": "尚無機型。",
-  "Delete this model? Its BOM and reserved serial numbers will be deleted too.":
-    "刪除這個機型?它的 BOM 資料跟預定義序號也會一起刪除。",
-  Machines: "機台",
-  "Add Machine": "新增機台",
+  "Delete this model? Machines linked to it will lose that link too.":
+    "刪除這個機型?連結到它的機台也會一併解除連結。",
+  "Machines in Your Group": "你的群組機台",
+  "Pick which model each machine uses, so Report a Part can show its BOM list.":
+    "設定每台機台對應哪個機型,回報零件時就能帶出該機型的 BOM 清單。",
   "No model": "無機型",
-  Code: "編號",
-  Name: "名稱",
-  Model: "機型",
-  Save: "儲存",
-  Cancel: "取消",
-  Edit: "編輯",
-  "Delete this machine? Its report history will be deleted too.": "刪除這台機台?它的報修紀錄也會一起刪除。",
-  "No machines yet.": "尚無機台。",
+  "No machines in your group yet.": "你的群組目前沒有機台。",
 };
 
 export default function InventoryMachinesPage() {
@@ -72,37 +58,25 @@ export default function InventoryMachinesPage() {
     return supabaseRef.current;
   }
 
-  const { employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { employeeId, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
 
   const [models, setModels] = useState<InventoryModel[]>([]);
-  const [codes, setCodes] = useState<PredefinedCode[]>([]);
-  const [machines, setMachines] = useState<InventoryMachine[]>([]);
+  const [links, setLinks] = useState<MachineModelLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [newModelName, setNewModelName] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
-  const [newCodeInput, setNewCodeInput] = useState("");
   const [importMessage, setImportMessage] = useState<string | null>(null);
-
-  const [showAddMachine, setShowAddMachine] = useState(false);
-  const [newMachine, setNewMachine] = useState({ code: "", name: "", modelId: "" });
-  const [editingMachineId, setEditingMachineId] = useState<number | null>(null);
-  const [editMachine, setEditMachine] = useState({ code: "", name: "", modelId: "" });
 
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
       const supabase = getSupabase();
-      const [mo, c, m] = await Promise.all([
-        fetchModels(supabase),
-        fetchPredefinedCodes(supabase),
-        fetchMachines(supabase),
-      ]);
+      const [mo, l] = await Promise.all([fetchModels(supabase), fetchMachineModelLinks(supabase)]);
       setModels(mo);
-      setCodes(c);
-      setMachines(m);
+      setLinks(l);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -129,7 +103,7 @@ export default function InventoryMachinesPage() {
   }
 
   async function handleDeleteModel(id: number) {
-    if (!window.confirm(t("Delete this model? Its BOM and reserved serial numbers will be deleted too."))) return;
+    if (!window.confirm(t("Delete this model? Machines linked to it will lose that link too."))) return;
     try {
       await deleteModel(getSupabase(), id);
       if (selectedModelId === id) setSelectedModelId(null);
@@ -188,64 +162,9 @@ export default function InventoryMachinesPage() {
     });
   }
 
-  async function handleAddCodes() {
-    if (!selectedModelId || !newCodeInput.trim()) return;
-    const codeList = newCodeInput
-      .split(/[,，\n]/)
-      .map((c) => c.trim())
-      .filter(Boolean);
+  async function handleLinkChange(machineName: string, modelIdValue: string) {
     try {
-      await addPredefinedCodes(getSupabase(), selectedModelId, codeList);
-      setNewCodeInput("");
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleDeleteCode(id: number) {
-    try {
-      await deletePredefinedCode(getSupabase(), id);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleAddMachine(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      await addMachine(getSupabase(), {
-        code: newMachine.code.trim(),
-        name: newMachine.name.trim(),
-        modelId: newMachine.modelId ? Number(newMachine.modelId) : null,
-      });
-      setShowAddMachine(false);
-      setNewMachine({ code: "", name: "", modelId: "" });
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleSaveMachineEdit(id: number) {
-    try {
-      await updateMachine(getSupabase(), id, {
-        code: editMachine.code.trim(),
-        name: editMachine.name.trim(),
-        modelId: editMachine.modelId ? Number(editMachine.modelId) : null,
-      });
-      setEditingMachineId(null);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleDeleteMachine(id: number) {
-    if (!window.confirm(t("Delete this machine? Its report history will be deleted too."))) return;
-    try {
-      await deleteMachine(getSupabase(), id);
+      await setMachineModelLink(getSupabase(), machineName, modelIdValue ? Number(modelIdValue) : null);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -262,7 +181,8 @@ export default function InventoryMachinesPage() {
   }
 
   const selectedModel = models.find((m) => m.id === selectedModelId) ?? null;
-  const codesForSelectedModel = codes.filter((c) => c.modelId === selectedModelId);
+  const machineNames = Array.from(allowedMachines ?? []).sort();
+  const linkByMachine = new Map(links.map((l) => [l.machineName, l.modelId]));
 
   return (
     <div className="bg-background min-h-screen">
@@ -271,7 +191,7 @@ export default function InventoryMachinesPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{t("Machine Settings")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              {t("Manage machine models, BOM data, serial numbers, and the machine list.")}
+              {t("Manage machine models, BOM data, and which model each machine uses.")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -338,20 +258,15 @@ export default function InventoryMachinesPage() {
               <CardContent>
                 {!selectedModel ? (
                   <p className="text-muted-foreground py-10 text-center text-sm">
-                    {t("Select a model to manage its BOM/serial numbers.")}
+                    {t("Select a model to manage its BOM.")}
                   </p>
                 ) : (
                   <div className="grid gap-6">
                     <div>
                       <h2 className="mb-2 text-lg font-semibold">{selectedModel.name}</h2>
-                      <div className="flex gap-2">
-                        <Badge variant="outline">
-                          {t("BOM Parts")} {selectedModel.bomData.length}
-                        </Badge>
-                        <Badge variant="outline">
-                          {t("Reserved Serial Numbers")} {codesForSelectedModel.length}
-                        </Badge>
-                      </div>
+                      <Badge variant="outline">
+                        {t("BOM Parts")} {selectedModel.bomData.length}
+                      </Badge>
                     </div>
 
                     <div>
@@ -373,33 +288,6 @@ export default function InventoryMachinesPage() {
                       </div>
                       {importMessage && <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">{importMessage}</p>}
                     </div>
-
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium">{t("Reserved Serial Numbers")}</label>
-                      <div className="mb-2 flex flex-wrap gap-1.5">
-                        {codesForSelectedModel.map((c) => (
-                          <span
-                            key={c.id}
-                            className="bg-muted inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                          >
-                            {c.code}
-                            <button type="button" onClick={() => handleDeleteCode(c.id)} aria-label="Delete code">
-                              <XIcon className="text-muted-foreground hover:text-destructive h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder={t("Add serial numbers — comma or newline separated…")}
-                          value={newCodeInput}
-                          onChange={(e) => setNewCodeInput(e.target.value)}
-                        />
-                        <Button variant="outline" onClick={handleAddCodes}>
-                          {t("Add")}
-                        </Button>
-                      </div>
-                    </div>
                   </div>
                 )}
               </CardContent>
@@ -408,115 +296,35 @@ export default function InventoryMachinesPage() {
         )}
 
         <Card className="mt-6">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">{t("Machines")}</CardTitle>
-            <Button size="sm" onClick={() => setShowAddMachine((v) => !v)}>
-              <Plus className="h-4 w-4" /> {t("Add Machine")}
-            </Button>
+          <CardHeader>
+            <CardTitle className="text-base">{t("Machines in Your Group")}</CardTitle>
+            <p className="text-muted-foreground text-sm">
+              {t("Pick which model each machine uses, so Report a Part can show its BOM list.")}
+            </p>
           </CardHeader>
           <CardContent>
-            {showAddMachine && (
-              <form onSubmit={handleAddMachine} className="mb-4 grid gap-3 rounded-lg border p-4 md:grid-cols-4">
-                <Input
-                  required
-                  placeholder={t("Code")}
-                  value={newMachine.code}
-                  onChange={(e) => setNewMachine({ ...newMachine, code: e.target.value })}
-                />
-                <Input
-                  required
-                  placeholder={t("Name")}
-                  value={newMachine.name}
-                  onChange={(e) => setNewMachine({ ...newMachine, name: e.target.value })}
-                />
-                <Select
-                  value={newMachine.modelId}
-                  onValueChange={(v) => setNewMachine({ ...newMachine, modelId: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t("Model")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m.id} value={String(m.id)}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button type="submit">{t("Save")}</Button>
-              </form>
-            )}
-
-            {machines.length === 0 ? (
-              <p className="text-muted-foreground text-sm italic">{t("No machines yet.")}</p>
+            {machineNames.length === 0 ? (
+              <p className="text-muted-foreground text-sm italic">{t("No machines in your group yet.")}</p>
             ) : (
               <div className="grid gap-2">
-                {machines.map((m) => (
-                  <div key={m.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    {editingMachineId === m.id ? (
-                      <div className="grid flex-1 gap-2 md:grid-cols-4">
-                        <Input
-                          value={editMachine.code}
-                          onChange={(e) => setEditMachine({ ...editMachine, code: e.target.value })}
-                        />
-                        <Input
-                          value={editMachine.name}
-                          onChange={(e) => setEditMachine({ ...editMachine, name: e.target.value })}
-                        />
-                        <Select
-                          value={editMachine.modelId}
-                          onValueChange={(v) => setEditMachine({ ...editMachine, modelId: v })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={t("Model")} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {models.map((mo) => (
-                              <SelectItem key={mo.id} value={String(mo.id)}>
-                                {mo.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={() => handleSaveMachineEdit(m.id)}>
-                            {t("Save")}
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => setEditingMachineId(null)}>
-                            {t("Cancel")}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div>
-                          <p className="font-medium">
-                            {m.code} <span className="text-muted-foreground">— {m.name}</span>
-                          </p>
-                          <p className="text-muted-foreground text-xs">{m.modelName ?? t("No model")}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setEditingMachineId(m.id);
-                              setEditMachine({
-                                code: m.code,
-                                name: m.name,
-                                modelId: m.modelId ? String(m.modelId) : "",
-                              });
-                            }}
-                          >
-                            {t("Edit")}
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => handleDeleteMachine(m.id)}>
-                            <Trash2 className="text-destructive h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </>
-                    )}
+                {machineNames.map((name) => (
+                  <div key={name} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                    <p className="font-medium">{name}</p>
+                    <Select
+                      value={linkByMachine.get(name) ? String(linkByMachine.get(name)) : ""}
+                      onValueChange={(v) => handleLinkChange(name, v)}
+                    >
+                      <SelectTrigger className="w-56">
+                        <SelectValue placeholder={t("No model")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {models.map((m) => (
+                          <SelectItem key={m.id} value={String(m.id)}>
+                            {m.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 ))}
               </div>
