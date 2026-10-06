@@ -452,6 +452,29 @@ export async function fetchFullBomPartNos(supabase: SupabaseClient, machineName:
   return partNos;
 }
 
+/** Looks up one exact part_no within one machine's Full BOM — a single
+ * targeted query (not a full paginated fetch like fetchFullBomPartNos),
+ * for on-demand "does this part exist, what is it" lookups of a single
+ * value rather than bulk validation. Returns the first matching row's
+ * part_no/description/qty/uom, or null if that part isn't in this
+ * machine's Full BOM at all. */
+export async function fetchFullBomItemByPartNo(
+  supabase: SupabaseClient,
+  machineName: string,
+  partNo: string
+): Promise<BomItem | null> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("full_bom_items")
+      .select("part_no,description,qty,uom")
+      .eq("machine_name", machineName)
+      .eq("part_no", partNo)
+      .limit(1)
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? [])[0] ?? null;
+}
+
 export interface MachineBomLookup {
   fullBomPartNos: Set<string>;
   /** part_no -> every module (bom_machines.source_file) it appears in for

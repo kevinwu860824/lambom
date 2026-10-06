@@ -2,8 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, PackageCheck, RotateCcw, Settings, ShoppingCart, Truck } from "lucide-react";
+import {
+  ArrowLeft,
+  CircleAlert,
+  CircleCheck,
+  Loader2,
+  PackageCheck,
+  RotateCcw,
+  Settings,
+  ShoppingCart,
+  Truck,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { fetchFullBomItemByPartNo, type BomItem } from "@/lib/bom";
 import {
   createLog,
   fetchLogs,
@@ -35,6 +46,7 @@ const zh: Record<string, string> = {
   "Report a Part": "回報零件",
   Machine: "機台",
   "Select machine": "選擇機台",
+  "(none)": "(不選)",
   "Part Name": "零件名稱",
   "Select from BOM…": "從 BOM 表中選擇…",
   "No BOM data for this model": "此機型暫無 BOM 資料",
@@ -42,6 +54,10 @@ const zh: Record<string, string> = {
   "Enter custom part…": "手動輸入自定義零件",
   "Type the part name/spec…": "輸入零件名稱/規格…",
   "Back to BOM list": "返回 BOM 清單",
+  "Found in Full BOM": "在完整 BOM 表中找到",
+  "Not found in this machine's Full BOM — double-check the part number.": "在這台機台的完整 BOM 表中找不到——請再次確認料號是否正確。",
+  Qty: "數量",
+  Unit: "單位",
   "Mark as a loan (not a repair)": "標記為零件借出(非報修)",
   Borrower: "借用人",
   "Who's taking this part?": "是誰領走這個零件?",
@@ -67,6 +83,12 @@ const zh: Record<string, string> = {
   loaned: "借出中",
   returned: "已歸還",
 };
+
+// Radix Select reserves an empty string value for "nothing selected"
+// internally, so a real, clickable "blank" list item needs its own
+// sentinel value rather than value="" — selecting it just resets
+// selectedMachineName back to "".
+const NONE_MACHINE_VALUE = "__none__";
 
 export default function InventoryPage() {
   const t = useTranslate(zh);
@@ -94,6 +116,31 @@ export default function InventoryPage() {
   const [borrower, setBorrower] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  // Full BOM lookup for whatever's currently typed into the custom part
+  // name field — only meaningful while typing (not the BOM-dropdown pick,
+  // since those values are "name (spec)" strings from the model's own
+  // imported BOM list, not real Full BOM part numbers, so looking them up
+  // against Full BOM would almost always and misleadingly say "not
+  // found"). Cleared below whenever the machine/part text changes, so a
+  // stale result never lingers past the input it described.
+  const [partLookup, setPartLookup] = useState<{ item: BomItem } | { item: null } | null>(null);
+  const [partLookupLoading, setPartLookupLoading] = useState(false);
+
+  async function handlePartNameBlur() {
+    const trimmed = partName.trim();
+    if (!customPart || !selectedMachineName || !trimmed) return;
+    setPartLookupLoading(true);
+    try {
+      const item = await fetchFullBomItemByPartNo(getSupabase(), selectedMachineName, trimmed);
+      setPartLookup({ item });
+    } catch {
+      // Best-effort — a failed lookup shouldn't block filling out the form.
+      setPartLookup(null);
+    } finally {
+      setPartLookupLoading(false);
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -145,6 +192,7 @@ export default function InventoryPage() {
       setSelectedMachineName("");
       setPartName("");
       setCustomPart(false);
+      setPartLookup(null);
       setIsLoan(false);
       setBorrower("");
       await loadAll();
@@ -219,15 +267,17 @@ export default function InventoryPage() {
                 <Select
                   value={selectedMachineName}
                   onValueChange={(v) => {
-                    setSelectedMachineName(v);
+                    setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
                     setPartName("");
                     setCustomPart(false);
+                    setPartLookup(null);
                   }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={t("Select machine")} />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NONE_MACHINE_VALUE}>{t("(none)")}</SelectItem>
                     {machineNames.map((name) => (
                       <SelectItem key={name} value={name}>
                         {name}
@@ -273,31 +323,68 @@ export default function InventoryPage() {
                       onClick={() => {
                         setCustomPart(true);
                         setPartName("");
+                        setPartLookup(null);
                       }}
                     >
                       {t("Enter custom part…")}
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex gap-2">
-                    <Input
-                      autoFocus
-                      required
-                      placeholder={t("Type the part name/spec…")}
-                      value={partName}
-                      onChange={(e) => setPartName(e.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={() => {
-                        setCustomPart(false);
-                        setPartName("");
-                      }}
-                    >
-                      {t("Back to BOM list")}
-                    </Button>
+                  <div className="grid gap-2">
+                    <div className="flex gap-2">
+                      <Input
+                        autoFocus
+                        required
+                        placeholder={t("Type the part name/spec…")}
+                        value={partName}
+                        onChange={(e) => {
+                          setPartName(e.target.value);
+                          setPartLookup(null);
+                        }}
+                        onBlur={handlePartNameBlur}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => {
+                          setCustomPart(false);
+                          setPartName("");
+                          setPartLookup(null);
+                        }}
+                      >
+                        {t("Back to BOM list")}
+                      </Button>
+                    </div>
+                    {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
+                    {partLookup && (
+                      <div
+                        className={cn(
+                          "flex items-start gap-2 rounded-lg border p-2 text-xs",
+                          partLookup.item
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                            : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+                        )}
+                      >
+                        {partLookup.item ? (
+                          <>
+                            <CircleCheck className="h-3.5 w-3.5 shrink-0" />
+                            <div>
+                              <p className="font-medium">{t("Found in Full BOM")}</p>
+                              <p>{partLookup.item.description}</p>
+                              <p>
+                                {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                            <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
