@@ -49,7 +49,8 @@ const zh: Record<string, string> = {
   "(none)": "(不選)",
   "Part Name": "零件名稱",
   "Select from BOM…": "從 BOM 表中選擇…",
-  "No BOM data for this model": "此機型暫無 BOM 資料",
+  "No model linked to this machine": "這台機台尚未連結機型",
+  "This model has no BOM data yet": "這個機型還沒有 BOM 資料",
   "Select a machine first": "請先選擇機台",
   "Enter custom part…": "手動輸入自定義零件",
   "Type the part name/spec…": "輸入零件名稱/規格…",
@@ -265,7 +266,7 @@ export default function InventoryPage() {
               <div className="grid gap-1.5">
                 <label className="text-sm font-medium">{t("Machine")}</label>
                 <Select
-                  value={selectedMachineName}
+                  value={selectedMachineName || NONE_MACHINE_VALUE}
                   onValueChange={(v) => {
                     setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
                     setPartName("");
@@ -303,7 +304,9 @@ export default function InventoryPage() {
                               ? t("Select a machine first")
                               : bomList.length > 0
                                 ? t("Select from BOM…")
-                                : t("No BOM data for this model")
+                                : !selectedModel
+                                  ? t("No model linked to this machine")
+                                  : t("This model has no BOM data yet")
                           }
                         />
                       </SelectTrigger>
@@ -386,6 +389,17 @@ export default function InventoryPage() {
                       </div>
                     )}
                   </div>
+                )}
+                {selectedMachineName && bomList.length === 0 && (
+                  <p className="text-muted-foreground text-xs">
+                    {!selectedModel
+                      ? t("No model linked to this machine")
+                      : t("This model has no BOM data yet")}
+                    {" — "}
+                    <Link href="/inventory/machines" className="underline underline-offset-2">
+                      {t("Machine Settings")}
+                    </Link>
+                  </p>
                 )}
               </div>
 
