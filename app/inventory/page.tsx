@@ -44,6 +44,7 @@ const zh: Record<string, string> = {
   "Part Name": "零件名稱",
   "Type a part number or description…": "輸入料號或說明…",
   "Type a part number or name…": "輸入料號或零件名稱…",
+  "+{count} more match — type more to narrow down": "還有 {count} 筆相符,請輸入更多字元縮小範圍",
   "Found in Full BOM": "在完整 BOM 表中找到",
   "Not found in this machine's Full BOM — double-check the part number.": "在這台機台的完整 BOM 表中找不到——請再次確認料號是否正確。",
   Qty: "數量",
@@ -114,6 +115,7 @@ export default function InventoryPage() {
   }, [partName]);
 
   const [suggestions, setSuggestions] = useState<BomItem[]>([]);
+  const [suggestionsTotal, setSuggestionsTotal] = useState(0);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const searchQuery = debouncedPartName.trim();
   const searchEligible = Boolean(selectedMachineName) && searchQuery.length >= 2;
@@ -123,16 +125,23 @@ export default function InventoryPage() {
   // suggestions are simply not shown, without needing an extra render
   // just to clear them out.
   const visibleSuggestions = searchEligible ? suggestions : [];
+  const truncatedCount = searchEligible ? Math.max(0, suggestionsTotal - suggestions.length) : 0;
 
   useEffect(() => {
     if (!searchEligible) return;
     let cancelled = false;
     searchFullBomItems(getSupabase(), selectedMachineName, searchQuery)
-      .then((items) => {
-        if (!cancelled) setSuggestions(items);
+      .then((result) => {
+        if (!cancelled) {
+          setSuggestions(result.items);
+          setSuggestionsTotal(result.totalMatches);
+        }
       })
       .catch(() => {
-        if (!cancelled) setSuggestions([]);
+        if (!cancelled) {
+          setSuggestions([]);
+          setSuggestionsTotal(0);
+        }
       });
     return () => {
       cancelled = true;
@@ -338,6 +347,14 @@ export default function InventoryPage() {
                           )}
                         </button>
                       ))}
+                      {truncatedCount > 0 && (
+                        <p className="text-muted-foreground border-t px-3 py-1.5 text-xs">
+                          {t("+{count} more match — type more to narrow down").replace(
+                            "{count}",
+                            String(truncatedCount)
+                          )}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

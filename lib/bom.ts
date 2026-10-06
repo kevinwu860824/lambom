@@ -475,6 +475,14 @@ export async function fetchFullBomItemByPartNo(
   return (data ?? [])[0] ?? null;
 }
 
+export interface BomSearchResult {
+  items: BomItem[];
+  /** How many distinct parts matched in total, even when `items` was
+   * capped at `limit` — lets the UI tell the user there's more to narrow
+   * down to instead of silently truncating. */
+  totalMatches: number;
+}
+
 /** Live autocomplete search within one machine's Full BOM, matching
  * part_no or description — scoped to one machine's Full BOM instead of
  * every machine's Modules. Calls the search_full_bom_items() RPC (scripts/
@@ -485,13 +493,20 @@ export async function fetchFullBomItemByPartNo(
  * reach other genuinely different matches — verified against real data,
  * where a 110-row match collapsed to just 12 distinct parts under the old
  * query. Doing the DISTINCT ON (part_no) in Postgres keeps the response
- * capped at `limit` distinct parts instead of `limit` rows. */
+ * capped at `limit` distinct parts instead of `limit` rows.
+ *
+ * Even after deduping, a short/common query can still have more distinct
+ * matches than `limit` — e.g. "104" matched 23 distinct parts on a real
+ * machine, and the one the user wanted sorted alphabetically just past the
+ * old limit of 20 with no sign anything had been cut off. totalMatches
+ * (via the RPC's count(*) over()) lets the caller surface that instead of
+ * silently dropping it. */
 export async function searchFullBomItems(
   supabase: SupabaseClient,
   machineName: string,
   query: string,
-  limit = 20
-): Promise<BomItem[]> {
+  limit = 50
+): Promise<BomSearchResult> {
   const { data, error } = await withRetry(() =>
     supabase.rpc("search_full_bom_items", {
       p_machine_name: machineName,
@@ -500,7 +515,11 @@ export async function searchFullBomItems(
     })
   );
   if (error) throw new Error(error.message);
-  return data ?? [];
+  const rows = (data ?? []) as (BomItem & { total_matches: number })[];
+  return {
+    items: rows.map(({ part_no, description, qty, uom }) => ({ part_no, description, qty, uom })),
+    totalMatches: rows[0]?.total_matches ?? rows.length,
+  };
 }
 
 export interface MachineBomLookup {
