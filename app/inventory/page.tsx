@@ -42,8 +42,8 @@ const zh: Record<string, string> = {
   "Select machine": "選擇機台",
   "(none)": "(不選)",
   "Part Name": "零件名稱",
-  "Select a machine first": "請先選擇機台",
   "Type a part number or description…": "輸入料號或說明…",
+  "Type a part number or name…": "輸入料號或零件名稱…",
   "Found in Full BOM": "在完整 BOM 表中找到",
   "Not found in this machine's Full BOM — double-check the part number.": "在這台機台的完整 BOM 表中找不到——請再次確認料號是否正確。",
   Qty: "數量",
@@ -192,7 +192,7 @@ export default function InventoryPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedMachineName || !partName.trim()) return;
+    if (!partName.trim()) return;
 
     setSubmitting(true);
     setMessage(null);
@@ -304,8 +304,9 @@ export default function InventoryPage() {
                 <div className="relative">
                   <Input
                     required
-                    disabled={!selectedMachineName}
-                    placeholder={!selectedMachineName ? t("Select a machine first") : t("Type a part number or description…")}
+                    placeholder={
+                      selectedMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
+                    }
                     value={partName}
                     onChange={(e) => {
                       setPartName(e.target.value);
@@ -391,7 +392,7 @@ export default function InventoryPage() {
 
               {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
 
-              <Button type="submit" disabled={submitting || !selectedMachineName || !partName.trim()}>
+              <Button type="submit" disabled={submitting || !partName.trim()}>
                 {submitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -441,7 +442,7 @@ export default function InventoryPage() {
                         <Badge variant={statusBadgeVariant(log.status)}>{t(log.status)}</Badge>
                         <span className="font-medium">{log.partName}</span>
                       </div>
-                      <p className="text-muted-foreground text-xs">{log.machineName}</p>
+                      <p className="text-muted-foreground text-xs">{log.machineName || t("(none)")}</p>
                       {log.isLoan && log.borrower && (
                         <p className="text-muted-foreground text-xs">
                           {t("Borrower")}: {log.borrower}
