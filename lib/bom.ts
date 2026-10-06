@@ -476,13 +476,16 @@ export async function fetchFullBomItemByPartNo(
 }
 
 /** Live autocomplete search within one machine's Full BOM, matching
- * part_no or description — same ilike-based multi-column search pattern
- * components/description-search.tsx already uses, just scoped to one
- * machine's Full BOM instead of every machine's Modules. A single query
- * bounded by `limit`, not a full paginated fetch — searching narrows to
- * one machine's rows via the existing machine_name index, so this stays
- * fast without needing to pull a machine's whole 20k+-row Full BOM
- * client-side first. */
+ * part_no or description — scoped to one machine's Full BOM instead of
+ * every machine's Modules. Calls the search_full_bom_items() RPC (scripts/
+ * full-bom-search-distinct-schema.sql) rather than a plain select: the same
+ * part_no legitimately repeats many times in one machine's Full BOM (once
+ * per sub-assembly it's used under), so a plain `ilike ... limit N` can
+ * fill the entire N-row budget with repeats of one common part and never
+ * reach other genuinely different matches — verified against real data,
+ * where a 110-row match collapsed to just 12 distinct parts under the old
+ * query. Doing the DISTINCT ON (part_no) in Postgres keeps the response
+ * capped at `limit` distinct parts instead of `limit` rows. */
 export async function searchFullBomItems(
   supabase: SupabaseClient,
   machineName: string,
@@ -490,12 +493,11 @@ export async function searchFullBomItems(
   limit = 20
 ): Promise<BomItem[]> {
   const { data, error } = await withRetry(() =>
-    supabase
-      .from("full_bom_items")
-      .select("part_no,description,qty,uom")
-      .eq("machine_name", machineName)
-      .or(`part_no.ilike.%${query}%,description.ilike.%${query}%`)
-      .limit(limit)
+    supabase.rpc("search_full_bom_items", {
+      p_machine_name: machineName,
+      p_query: query,
+      p_limit: limit,
+    })
   );
   if (error) throw new Error(error.message);
   return data ?? [];
