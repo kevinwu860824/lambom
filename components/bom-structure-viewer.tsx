@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
@@ -200,6 +200,15 @@ export function BomStructureViewer({
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(timer);
   }, [query]);
+  // The debounce above only delays *when* the expensive work runs — it
+  // still lands as one big synchronous computation + re-render right when
+  // the user pauses, which is exactly when the freeze was felt. Deferring
+  // the debounced value too lets React run that computation/render as a
+  // low-priority, interruptible update (and time-slice the resulting
+  // large re-render across frames) instead of blocking the main thread in
+  // one shot, and lets a freshly-typed keystroke preempt a still-running
+  // stale search rather than queuing behind it.
+  const deferredQuery = useDeferredValue(debouncedQuery);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
 
   const visibleSubpartTrees = useMemo(
@@ -207,7 +216,7 @@ export function BomStructureViewer({
     [subpartTrees, selectedSourceFiles]
   );
 
-  const normalizedQuery = normalizeSearchText(debouncedQuery);
+  const normalizedQuery = normalizeSearchText(deferredQuery);
   const matches = useMemo(
     () => collectMatches(visibleSubpartTrees, normalizedQuery),
     [visibleSubpartTrees, normalizedQuery]
