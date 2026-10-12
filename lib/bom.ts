@@ -500,7 +500,12 @@ export interface BomSearchResult {
  * machine, and the one the user wanted sorted alphabetically just past the
  * old limit of 20 with no sign anything had been cut off. totalMatches
  * (via the RPC's count(*) over()) lets the caller surface that instead of
- * silently dropping it. */
+ * silently dropping it.
+ *
+ * machineName is required, not optional: dropping the machine_name filter
+ * removes the only index-assisted narrowing ILIKE gets, and a search
+ * across every machine at once (~159 machines, 3M+ rows) reliably hits
+ * Postgres' statement timeout — confirmed against real data. */
 export async function searchFullBomItems(
   supabase: SupabaseClient,
   machineName: string,

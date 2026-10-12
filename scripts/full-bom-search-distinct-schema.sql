@@ -18,6 +18,15 @@
 -- machine had 23 distinct matches for "104" and the part the user wanted
 -- sorted alphabetically just past the old limit of 20, with no indication
 -- anything had been cut off.
+--
+-- p_machine_name must be a real machine, not null: without the
+-- `machine_name = ...` filter to narrow the scan first, ILIKE has no
+-- usable index over the ~159 machines x ~20k rows (3M+ total) in
+-- full_bom_items, and reliably hits the statement timeout — confirmed
+-- against real data (an attempted machine-less search of a single exact
+-- part_no timed out outright). A cross-machine search would need a
+-- pg_trgm GIN index first; not worth it unless something actually needs
+-- that scope.
 drop function if exists search_full_bom_items(text, text, int);
 
 create or replace function search_full_bom_items(

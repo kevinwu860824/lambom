@@ -83,3 +83,56 @@ export async function updateLogStatus(
   );
   if (error) throw new Error(error.message);
 }
+
+// On-hand parts list (inv_stock) — separate from inv_logs, which tracks
+// missing/loan requests rather than actual stock levels. Global, not
+// machine-scoped: see scripts/inventory-stock-schema.sql.
+export interface StockItem {
+  id: number;
+  partNo: string;
+  description: string | null;
+  qty: number;
+  note: string | null;
+  updatedAt: string;
+}
+
+export async function fetchStock(supabase: SupabaseClient): Promise<StockItem[]> {
+  const { data, error } = await withRetry(() =>
+    supabase.from("inv_stock").select("id,part_no,description,qty,note,updated_at").order("part_no", { ascending: true })
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id as number,
+    partNo: row.part_no as string,
+    description: row.description as string | null,
+    qty: row.qty as number,
+    note: row.note as string | null,
+    updatedAt: row.updated_at as string,
+  }));
+}
+
+/** Insert-or-overwrite one part's stock row, keyed by part_no — editing an
+ * existing part re-saves the same row instead of accumulating duplicates. */
+export async function upsertStockItem(
+  supabase: SupabaseClient,
+  input: { partNo: string; description: string | null; qty: number; note: string | null }
+): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("inv_stock").upsert(
+      {
+        part_no: input.partNo,
+        description: input.description,
+        qty: input.qty,
+        note: input.note,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "part_no" }
+    )
+  );
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteStockItem(supabase: SupabaseClient, id: number): Promise<void> {
+  const { error } = await withRetry(() => supabase.from("inv_stock").delete().eq("id", id));
+  if (error) throw new Error(error.message);
+}

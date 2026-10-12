@@ -16,9 +16,13 @@ import { createClient } from "@/lib/supabase";
 import { fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
 import {
   createLog,
+  deleteStockItem,
   fetchLogs,
+  fetchStock,
   updateLogStatus,
+  upsertStockItem,
   type InventoryLog,
+  type StockItem,
 } from "@/lib/inventory";
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
@@ -58,6 +62,7 @@ const zh: Record<string, string> = {
   "Loan recorded.": "已記錄借出。",
   Active: "處理中",
   Archive: "已結案",
+  Stock: "庫存",
   "No records.": "沒有紀錄。",
   Reported: "回報人",
   "Mark as ordered": "標記為已下訂",
@@ -73,6 +78,17 @@ const zh: Record<string, string> = {
   completed: "已結案",
   loaned: "借出中",
   returned: "已歸還",
+  "Add / Update Stock": "新增/更新庫存",
+  "Part Number": "料號",
+  "Type a part number…": "輸入料號…",
+  Description: "說明",
+  Quantity: "數量",
+  Note: "備註",
+  Save: "儲存",
+  Edit: "編輯",
+  Delete: "刪除",
+  "No stock recorded yet.": "目前沒有庫存紀錄。",
+  "Delete this stock item?": "確定要刪除這筆庫存紀錄嗎?",
 };
 
 // Radix Select reserves an empty string value for "nothing selected"
@@ -81,9 +97,133 @@ const zh: Record<string, string> = {
 // selectedMachineName back to "".
 const NONE_MACHINE_VALUE = "__none__";
 
+type SupabaseClient = ReturnType<typeof createClient>;
+
+/** Debounced live autocomplete against one machine's real Full BOM, for
+ * the Report form's Part Name field. `enabled` gates the case where no
+ * machine has been chosen yet — searching requires a machine_name filter
+ * to stay fast (see searchFullBomItems), so there's nothing to search
+ * against until one is picked. */
+function usePartSearch(supabase: SupabaseClient, machineName: string, enabled: boolean) {
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const [suggestions, setSuggestions] = useState<BomItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [open, setOpen] = useState(false);
+  const trimmed = debounced.trim();
+  const eligible = enabled && trimmed.length >= 2;
+  // Derived at render time rather than reset via a synchronous setState in
+  // the effect below — once the query no longer qualifies for a search,
+  // the last-fetched suggestions are simply not shown.
+  const visible = eligible ? suggestions : [];
+  const truncatedCount = eligible ? Math.max(0, total - suggestions.length) : 0;
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    searchFullBomItems(supabase, machineName, trimmed)
+      .then((result) => {
+        if (!cancelled) {
+          setSuggestions(result.items);
+          setTotal(result.totalMatches);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuggestions([]);
+          setTotal(0);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [eligible, machineName, trimmed, supabase]);
+
+  return {
+    query,
+    setQuery,
+    open,
+    setOpen,
+    suggestions: visible,
+    truncatedCount,
+    reset: () => {
+      setQuery("");
+      setSuggestions([]);
+      setTotal(0);
+      setOpen(false);
+    },
+  };
+}
+
+type PartSearchState = ReturnType<typeof usePartSearch>;
+
+/** The combobox UI shared by the Report form's Part Name field and the
+ * Stock tab's Part Number field — same input-plus-dropdown markup, same
+ * onMouseDown+preventDefault trick (so a suggestion click registers before
+ * the input's own blur would otherwise close the dropdown first). */
+function PartSearchCombobox({
+  search,
+  onChange,
+  onSelect,
+  onBlur,
+  placeholder,
+  t,
+}: {
+  search: PartSearchState;
+  onChange: (value: string) => void;
+  onSelect: (item: BomItem) => void;
+  onBlur?: () => void;
+  placeholder: string;
+  t: (text: string) => string;
+}) {
+  return (
+    <div className="relative">
+      <Input
+        required
+        placeholder={placeholder}
+        value={search.query}
+        onChange={(e) => {
+          onChange(e.target.value);
+          search.setOpen(true);
+        }}
+        onFocus={() => search.setOpen(true)}
+        onBlur={onBlur}
+      />
+      {search.open && search.suggestions.length > 0 && (
+        <div className="bg-popover absolute z-10 mt-1 w-full max-h-64 overflow-y-auto rounded-md border shadow-md">
+          {search.suggestions.map((item, idx) => (
+            <button
+              key={`${item.part_no}-${idx}`}
+              type="button"
+              className="hover:bg-accent block w-full px-3 py-2 text-left text-sm"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onSelect(item);
+              }}
+            >
+              <div className="font-mono text-xs">{item.part_no}</div>
+              {item.description && <div className="text-muted-foreground truncate text-xs">{item.description}</div>}
+            </button>
+          ))}
+          {search.truncatedCount > 0 && (
+            <p className="text-muted-foreground border-t px-3 py-1.5 text-xs">
+              {t("+{count} more match — type more to narrow down").replace("{count}", String(search.truncatedCount))}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function InventoryPage() {
   const t = useTranslate(zh);
-  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const supabaseRef = useRef<SupabaseClient | null>(null);
   function getSupabase() {
     if (!supabaseRef.current) supabaseRef.current = createClient();
     return supabaseRef.current;
@@ -92,61 +232,20 @@ export default function InventoryPage() {
   const { employeeId, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
 
   const [logs, setLogs] = useState<InventoryLog[]>([]);
+  const [stock, setStock] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"active" | "archive">("active");
+  const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   // Report form state
   const [selectedMachineName, setSelectedMachineName] = useState("");
-  const [partName, setPartName] = useState("");
   const [isLoan, setIsLoan] = useState(false);
   const [borrower, setBorrower] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Live autocomplete against the selected machine's real Full BOM as the
-  // user types — debounced (network call, not just an expensive render)
-  // so it doesn't fire on every keystroke.
-  const [debouncedPartName, setDebouncedPartName] = useState("");
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedPartName(partName), 300);
-    return () => clearTimeout(timer);
-  }, [partName]);
-
-  const [suggestions, setSuggestions] = useState<BomItem[]>([]);
-  const [suggestionsTotal, setSuggestionsTotal] = useState(0);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const searchQuery = debouncedPartName.trim();
-  const searchEligible = Boolean(selectedMachineName) && searchQuery.length >= 2;
-  // Derived at render time rather than reset via a synchronous setState in
-  // the effect below — once the query no longer qualifies for a search
-  // (cleared, too short, or the machine changed), the last-fetched
-  // suggestions are simply not shown, without needing an extra render
-  // just to clear them out.
-  const visibleSuggestions = searchEligible ? suggestions : [];
-  const truncatedCount = searchEligible ? Math.max(0, suggestionsTotal - suggestions.length) : 0;
-
-  useEffect(() => {
-    if (!searchEligible) return;
-    let cancelled = false;
-    searchFullBomItems(getSupabase(), selectedMachineName, searchQuery)
-      .then((result) => {
-        if (!cancelled) {
-          setSuggestions(result.items);
-          setSuggestionsTotal(result.totalMatches);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSuggestions([]);
-          setSuggestionsTotal(0);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [searchEligible, selectedMachineName, searchQuery]);
+  const reportSearch = usePartSearch(getSupabase(), selectedMachineName, Boolean(selectedMachineName));
 
   // Whatever the Full BOM lookup last found (or didn't) for the exact text
   // currently in the part name field — set either by clicking a
@@ -157,8 +256,8 @@ export default function InventoryPage() {
   const [partLookupLoading, setPartLookupLoading] = useState(false);
 
   async function handlePartNameBlur() {
-    setSuggestionsOpen(false);
-    const trimmed = partName.trim();
+    reportSearch.setOpen(false);
+    const trimmed = reportSearch.query.trim();
     if (!selectedMachineName || !trimmed) return;
     setPartLookupLoading(true);
     try {
@@ -172,18 +271,73 @@ export default function InventoryPage() {
     }
   }
 
-  function selectSuggestion(item: BomItem) {
-    setPartName(item.part_no);
+  function selectReportSuggestion(item: BomItem) {
+    reportSearch.setQuery(item.part_no);
     setPartLookup({ item });
-    setSuggestions([]);
-    setSuggestionsOpen(false);
+    reportSearch.setOpen(false);
+  }
+
+  // Stock form state — plain manual entry, not a Full BOM search. Stock
+  // spans every machine (~159 of them, 3M+ Full BOM rows total), and
+  // searchFullBomItems requires a single machine_name to stay fast (see
+  // its doc comment), so there's no machine to scope an autocomplete to
+  // here.
+  const [stockPartNo, setStockPartNo] = useState("");
+  const [stockDescription, setStockDescription] = useState("");
+  const [stockQty, setStockQty] = useState("1");
+  const [stockNote, setStockNote] = useState("");
+  const [stockSubmitting, setStockSubmitting] = useState(false);
+
+  function editStockItem(item: StockItem) {
+    setStockPartNo(item.partNo);
+    setStockDescription(item.description ?? "");
+    setStockQty(String(item.qty));
+    setStockNote(item.note ?? "");
+  }
+
+  async function handleStockSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const partNo = stockPartNo.trim();
+    if (!partNo) return;
+
+    setStockSubmitting(true);
+    setError(null);
+    try {
+      await upsertStockItem(getSupabase(), {
+        partNo,
+        description: stockDescription.trim() || null,
+        qty: Math.max(0, Math.round(Number(stockQty) || 0)),
+        note: stockNote.trim() || null,
+      });
+      setStockPartNo("");
+      setStockDescription("");
+      setStockQty("1");
+      setStockNote("");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStockSubmitting(false);
+    }
+  }
+
+  async function handleDeleteStock(id: number) {
+    if (!window.confirm(t("Delete this stock item?"))) return;
+    try {
+      await deleteStockItem(getSupabase(), id);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      setLogs(await fetchLogs(getSupabase()));
+      const [logsData, stockData] = await Promise.all([fetchLogs(getSupabase()), fetchStock(getSupabase())]);
+      setLogs(logsData);
+      setStock(stockData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -201,7 +355,7 @@ export default function InventoryPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!partName.trim()) return;
+    if (!reportSearch.query.trim()) return;
 
     setSubmitting(true);
     setMessage(null);
@@ -209,16 +363,15 @@ export default function InventoryPage() {
     try {
       await createLog(getSupabase(), {
         machineName: selectedMachineName,
-        partName: partName.trim(),
+        partName: reportSearch.query.trim(),
         isLoan,
         borrower: isLoan ? borrower.trim() || null : null,
         reporterEmployeeId: employeeId,
       });
       setMessage(isLoan ? t("Loan recorded.") : t("Part reported."));
       setSelectedMachineName("");
-      setPartName("");
+      reportSearch.reset();
       setPartLookup(null);
-      setSuggestions([]);
       setIsLoan(false);
       setBorrower("");
       await loadAll();
@@ -277,151 +430,117 @@ export default function InventoryPage() {
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>{t("Report a Part")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="grid gap-4">
-              <div className="grid gap-1.5">
-                <label className="text-sm font-medium">{t("Machine")}</label>
-                <Select
-                  value={selectedMachineName || NONE_MACHINE_VALUE}
-                  onValueChange={(v) => {
-                    setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
-                    setPartName("");
-                    setPartLookup(null);
-                    setSuggestions([]);
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder={t("Select machine")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE_MACHINE_VALUE}>{t("(none)")}</SelectItem>
-                    {machineNames.map((name) => (
-                      <SelectItem key={name} value={name}>
-                        {name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+        {tab !== "stock" && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>{t("Report a Part")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="grid gap-4">
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Machine")}</label>
+                  <Select
+                    value={selectedMachineName || NONE_MACHINE_VALUE}
+                    onValueChange={(v) => {
+                      setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
+                      reportSearch.reset();
+                      setPartLookup(null);
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={t("Select machine")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE_MACHINE_VALUE}>{t("(none)")}</SelectItem>
+                      {machineNames.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm font-medium">{t("Part Name")}</label>
-                <div className="relative">
-                  <Input
-                    required
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Part Name")}</label>
+                  <PartSearchCombobox
+                    search={reportSearch}
+                    onChange={(v) => {
+                      reportSearch.setQuery(v);
+                      setPartLookup(null);
+                    }}
+                    onSelect={selectReportSuggestion}
+                    onBlur={handlePartNameBlur}
                     placeholder={
                       selectedMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
                     }
-                    value={partName}
-                    onChange={(e) => {
-                      setPartName(e.target.value);
-                      setPartLookup(null);
-                      setSuggestionsOpen(true);
-                    }}
-                    onFocus={() => setSuggestionsOpen(true)}
-                    onBlur={handlePartNameBlur}
+                    t={t}
                   />
-                  {suggestionsOpen && visibleSuggestions.length > 0 && (
-                    <div className="bg-popover absolute z-10 mt-1 w-full max-h-64 overflow-y-auto rounded-md border shadow-md">
-                      {visibleSuggestions.map((item, idx) => (
-                        <button
-                          key={`${item.part_no}-${idx}`}
-                          type="button"
-                          className="hover:bg-accent block w-full px-3 py-2 text-left text-sm"
-                          onMouseDown={(e) => {
-                            // Keep the input focused through the click so
-                            // this fires instead of the input's own blur
-                            // (which would otherwise close the dropdown
-                            // before the click registers).
-                            e.preventDefault();
-                            selectSuggestion(item);
-                          }}
-                        >
-                          <div className="font-mono text-xs">{item.part_no}</div>
-                          {item.description && (
-                            <div className="text-muted-foreground truncate text-xs">{item.description}</div>
-                          )}
-                        </button>
-                      ))}
-                      {truncatedCount > 0 && (
-                        <p className="text-muted-foreground border-t px-3 py-1.5 text-xs">
-                          {t("+{count} more match — type more to narrow down").replace(
-                            "{count}",
-                            String(truncatedCount)
-                          )}
-                        </p>
+                  {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
+                  {partLookup && (
+                    <div
+                      className={cn(
+                        "flex items-start gap-2 rounded-lg border p-2 text-xs",
+                        partLookup.item
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                          : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+                      )}
+                    >
+                      {partLookup.item ? (
+                        <>
+                          <CircleCheck className="h-3.5 w-3.5 shrink-0" />
+                          <div>
+                            <p className="font-medium">{t("Found in Full BOM")}</p>
+                            <p>{partLookup.item.description}</p>
+                            <p>
+                              {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
+                            </p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                          <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
+                        </>
                       )}
                     </div>
                   )}
                 </div>
-                {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
-                {partLookup && (
-                  <div
-                    className={cn(
-                      "flex items-start gap-2 rounded-lg border p-2 text-xs",
-                      partLookup.item
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-                        : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                    )}
-                  >
-                    {partLookup.item ? (
-                      <>
-                        <CircleCheck className="h-3.5 w-3.5 shrink-0" />
-                        <div>
-                          <p className="font-medium">{t("Found in Full BOM")}</p>
-                          <p>{partLookup.item.description}</p>
-                          <p>
-                            {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
-                          </p>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <CircleAlert className="h-3.5 w-3.5 shrink-0" />
-                        <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
 
-              <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <Checkbox checked={isLoan} onCheckedChange={(v) => setIsLoan(v === true)} />
-                  {t("Mark as a loan (not a repair)")}
-                </label>
-                {isLoan && (
-                  <div className="grid gap-1.5">
-                    <label className="text-sm font-medium">{t("Borrower")}</label>
-                    <Input
-                      required
-                      placeholder={t("Who's taking this part?")}
-                      value={borrower}
-                      onChange={(e) => setBorrower(e.target.value)}
-                    />
-                  </div>
-                )}
-              </div>
+                <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <Checkbox checked={isLoan} onCheckedChange={(v) => setIsLoan(v === true)} />
+                    {t("Mark as a loan (not a repair)")}
+                  </label>
+                  {isLoan && (
+                    <div className="grid gap-1.5">
+                      <label className="text-sm font-medium">{t("Borrower")}</label>
+                      <Input
+                        required
+                        placeholder={t("Who's taking this part?")}
+                        value={borrower}
+                        onChange={(e) => setBorrower(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
 
-              {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
+                {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
 
-              <Button type="submit" disabled={submitting || !partName.trim()}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {t("Submitting")}
-                  </>
-                ) : (
-                  t("Submit")
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+                <Button type="submit" disabled={submitting || !reportSearch.query.trim()}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("Submitting")}
+                    </>
+                  ) : (
+                    t("Submit")
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="mb-4 inline-flex rounded-md border p-0.5">
           <Button
@@ -442,9 +561,109 @@ export default function InventoryPage() {
           >
             {t("Archive")} {archivedLogs.length}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={tab === "stock" ? "default" : "ghost"}
+            className="h-7"
+            onClick={() => setTab("stock")}
+          >
+            {t("Stock")} {stock.length}
+          </Button>
         </div>
 
-        {loading ? (
+        {tab === "stock" ? (
+          <>
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>{t("Add / Update Stock")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleStockSubmit} className="grid gap-4">
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Part Number")}</label>
+                    <Input
+                      required
+                      placeholder={t("Type a part number…")}
+                      value={stockPartNo}
+                      onChange={(e) => setStockPartNo(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Description")}</label>
+                    <Input value={stockDescription} onChange={(e) => setStockDescription(e.target.value)} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-1.5">
+                      <label className="text-sm font-medium">{t("Quantity")}</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={stockQty}
+                        onChange={(e) => setStockQty(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <label className="text-sm font-medium">{t("Note")}</label>
+                      <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <Button type="submit" disabled={stockSubmitting || !stockPartNo.trim()}>
+                    {stockSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t("Submitting")}
+                      </>
+                    ) : (
+                      t("Save")
+                    )}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            {loading ? (
+              <p className="text-muted-foreground text-sm">…</p>
+            ) : stock.length === 0 ? (
+              <p className="text-muted-foreground text-sm italic">{t("No stock recorded yet.")}</p>
+            ) : (
+              <div className="grid gap-3">
+                {stock.map((item) => (
+                  <Card key={item.id}>
+                    <CardContent className="flex items-start justify-between gap-3">
+                      <div className="grid gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-medium">{item.partNo}</span>
+                          <Badge variant="outline">
+                            {t("Qty")} {item.qty}
+                          </Badge>
+                        </div>
+                        {item.description && <p className="text-muted-foreground text-xs">{item.description}</p>}
+                        {item.note && (
+                          <p className="text-muted-foreground text-xs">
+                            {t("Note")}: {item.note}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => editStockItem(item)}>
+                          {t("Edit")}
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => handleDeleteStock(item.id)}>
+                          {t("Delete")}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </>
+        ) : loading ? (
           <p className="text-muted-foreground text-sm">…</p>
         ) : visibleLogs.length === 0 ? (
           <p className="text-muted-foreground text-sm italic">{t("No records.")}</p>
