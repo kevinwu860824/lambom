@@ -80,7 +80,6 @@ const zh: Record<string, string> = {
   returned: "已歸還",
   "Add / Update Stock": "新增/更新庫存",
   "Part Number": "料號",
-  "Type a part number…": "輸入料號…",
   Description: "說明",
   Quantity: "數量",
   Note: "備註",
@@ -221,6 +220,85 @@ function PartSearchCombobox({
   );
 }
 
+/** Machine picker shared by the Report form and the Stock form — both let
+ * "(none)" stay selected (searchFullBomItems then stays disabled rather
+ * than falling back to an unscoped, unsafely-slow search). */
+function MachineSelect({
+  value,
+  onChange,
+  machineNames,
+  t,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  machineNames: string[];
+  t: (text: string) => string;
+}) {
+  return (
+    <Select value={value || NONE_MACHINE_VALUE} onValueChange={(v) => onChange(v === NONE_MACHINE_VALUE ? "" : v)}>
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder={t("Select machine")} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NONE_MACHINE_VALUE}>{t("(none)")}</SelectItem>
+        {machineNames.map((name) => (
+          <SelectItem key={name} value={name}>
+            {name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** The "found in this machine's Full BOM" / "not found" banner shared by
+ * the Report form and the Stock form — same green/amber treatment either
+ * way, so a part that isn't actually on the selected machine is flagged
+ * consistently no matter which form it's typed into. */
+function PartLookupBanner({
+  lookup,
+  loading,
+  t,
+}: {
+  lookup: { item: BomItem | null } | null;
+  loading: boolean;
+  t: (text: string) => string;
+}) {
+  return (
+    <>
+      {loading && <p className="text-muted-foreground text-xs">…</p>}
+      {lookup && (
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-lg border p-2 text-xs",
+            lookup.item
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+              : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+          )}
+        >
+          {lookup.item ? (
+            <>
+              <CircleCheck className="h-3.5 w-3.5 shrink-0" />
+              <div>
+                <p className="font-medium">{t("Found in Full BOM")}</p>
+                <p>{lookup.item.description}</p>
+                <p>
+                  {t("Qty")} {lookup.item.qty ?? "-"} · {t("Unit")} {lookup.item.uom ?? "-"}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+              <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function InventoryPage() {
   const t = useTranslate(zh);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -277,19 +355,45 @@ export default function InventoryPage() {
     reportSearch.setOpen(false);
   }
 
-  // Stock form state — plain manual entry, not a Full BOM search. Stock
-  // spans every machine (~159 of them, 3M+ Full BOM rows total), and
-  // searchFullBomItems requires a single machine_name to stay fast (see
-  // its doc comment), so there's no machine to scope an autocomplete to
-  // here.
-  const [stockPartNo, setStockPartNo] = useState("");
+  // Stock form state — mirrors the Report form exactly: a machine picker
+  // (optional, defaults to none) drives the same Full BOM search/
+  // suggestions/found-banner, and the chosen machine is saved on the row
+  // as which machine this stock entry was requested because of.
+  const [stockMachineName, setStockMachineName] = useState("");
+  const stockSearch = usePartSearch(getSupabase(), stockMachineName, Boolean(stockMachineName));
+  const [stockPartLookup, setStockPartLookup] = useState<{ item: BomItem | null } | null>(null);
+  const [stockPartLookupLoading, setStockPartLookupLoading] = useState(false);
   const [stockDescription, setStockDescription] = useState("");
   const [stockQty, setStockQty] = useState("1");
   const [stockNote, setStockNote] = useState("");
   const [stockSubmitting, setStockSubmitting] = useState(false);
 
+  async function handleStockPartBlur() {
+    stockSearch.setOpen(false);
+    const trimmed = stockSearch.query.trim();
+    if (!stockMachineName || !trimmed) return;
+    setStockPartLookupLoading(true);
+    try {
+      const item = await fetchFullBomItemByPartNo(getSupabase(), stockMachineName, trimmed);
+      setStockPartLookup({ item });
+    } catch {
+      setStockPartLookup(null);
+    } finally {
+      setStockPartLookupLoading(false);
+    }
+  }
+
+  function selectStockSuggestion(item: BomItem) {
+    stockSearch.setQuery(item.part_no);
+    setStockDescription(item.description ?? "");
+    setStockPartLookup({ item });
+    stockSearch.setOpen(false);
+  }
+
   function editStockItem(item: StockItem) {
-    setStockPartNo(item.partNo);
+    setStockMachineName(item.machineName);
+    stockSearch.setQuery(item.partNo);
+    setStockPartLookup(null);
     setStockDescription(item.description ?? "");
     setStockQty(String(item.qty));
     setStockNote(item.note ?? "");
@@ -297,7 +401,7 @@ export default function InventoryPage() {
 
   async function handleStockSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const partNo = stockPartNo.trim();
+    const partNo = stockSearch.query.trim();
     if (!partNo) return;
 
     setStockSubmitting(true);
@@ -305,11 +409,14 @@ export default function InventoryPage() {
     try {
       await upsertStockItem(getSupabase(), {
         partNo,
+        machineName: stockMachineName,
         description: stockDescription.trim() || null,
         qty: Math.max(0, Math.round(Number(stockQty) || 0)),
         note: stockNote.trim() || null,
       });
-      setStockPartNo("");
+      setStockMachineName("");
+      stockSearch.reset();
+      setStockPartLookup(null);
       setStockDescription("");
       setStockQty("1");
       setStockNote("");
@@ -439,26 +546,16 @@ export default function InventoryPage() {
               <form onSubmit={handleSubmit} className="grid gap-4">
                 <div className="grid gap-1.5">
                   <label className="text-sm font-medium">{t("Machine")}</label>
-                  <Select
-                    value={selectedMachineName || NONE_MACHINE_VALUE}
-                    onValueChange={(v) => {
-                      setSelectedMachineName(v === NONE_MACHINE_VALUE ? "" : v);
+                  <MachineSelect
+                    value={selectedMachineName}
+                    onChange={(v) => {
+                      setSelectedMachineName(v);
                       reportSearch.reset();
                       setPartLookup(null);
                     }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={t("Select machine")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE_MACHINE_VALUE}>{t("(none)")}</SelectItem>
-                      {machineNames.map((name) => (
-                        <SelectItem key={name} value={name}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    machineNames={machineNames}
+                    t={t}
+                  />
                 </div>
 
                 <div className="grid gap-1.5">
@@ -476,35 +573,7 @@ export default function InventoryPage() {
                     }
                     t={t}
                   />
-                  {partLookupLoading && <p className="text-muted-foreground text-xs">…</p>}
-                  {partLookup && (
-                    <div
-                      className={cn(
-                        "flex items-start gap-2 rounded-lg border p-2 text-xs",
-                        partLookup.item
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-                          : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                      )}
-                    >
-                      {partLookup.item ? (
-                        <>
-                          <CircleCheck className="h-3.5 w-3.5 shrink-0" />
-                          <div>
-                            <p className="font-medium">{t("Found in Full BOM")}</p>
-                            <p>{partLookup.item.description}</p>
-                            <p>
-                              {t("Qty")} {partLookup.item.qty ?? "-"} · {t("Unit")} {partLookup.item.uom ?? "-"}
-                            </p>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
-                          <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  <PartLookupBanner lookup={partLookup} loading={partLookupLoading} t={t} />
                 </div>
 
                 <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
@@ -581,13 +650,35 @@ export default function InventoryPage() {
               <CardContent>
                 <form onSubmit={handleStockSubmit} className="grid gap-4">
                   <div className="grid gap-1.5">
-                    <label className="text-sm font-medium">{t("Part Number")}</label>
-                    <Input
-                      required
-                      placeholder={t("Type a part number…")}
-                      value={stockPartNo}
-                      onChange={(e) => setStockPartNo(e.target.value)}
+                    <label className="text-sm font-medium">{t("Machine")}</label>
+                    <MachineSelect
+                      value={stockMachineName}
+                      onChange={(v) => {
+                        setStockMachineName(v);
+                        stockSearch.reset();
+                        setStockPartLookup(null);
+                      }}
+                      machineNames={machineNames}
+                      t={t}
                     />
+                  </div>
+
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Part Number")}</label>
+                    <PartSearchCombobox
+                      search={stockSearch}
+                      onChange={(v) => {
+                        stockSearch.setQuery(v);
+                        setStockPartLookup(null);
+                      }}
+                      onSelect={selectStockSuggestion}
+                      onBlur={handleStockPartBlur}
+                      placeholder={
+                        stockMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
+                      }
+                      t={t}
+                    />
+                    <PartLookupBanner lookup={stockPartLookup} loading={stockPartLookupLoading} t={t} />
                   </div>
 
                   <div className="grid gap-1.5">
@@ -612,7 +703,7 @@ export default function InventoryPage() {
                     </div>
                   </div>
 
-                  <Button type="submit" disabled={stockSubmitting || !stockPartNo.trim()}>
+                  <Button type="submit" disabled={stockSubmitting || !stockSearch.query.trim()}>
                     {stockSubmitting ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -642,6 +733,7 @@ export default function InventoryPage() {
                             {t("Qty")} {item.qty}
                           </Badge>
                         </div>
+                        <p className="text-muted-foreground text-xs">{item.machineName || t("(none)")}</p>
                         {item.description && <p className="text-muted-foreground text-xs">{item.description}</p>}
                         {item.note && (
                           <p className="text-muted-foreground text-xs">

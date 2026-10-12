@@ -85,11 +85,15 @@ export async function updateLogStatus(
 }
 
 // On-hand parts list (inv_stock) — separate from inv_logs, which tracks
-// missing/loan requests rather than actual stock levels. Global, not
-// machine-scoped: see scripts/inventory-stock-schema.sql.
+// missing/loan requests rather than actual stock levels. See
+// scripts/inventory-stock-schema.sql.
 export interface StockItem {
   id: number;
   partNo: string;
+  /** Which machine's Full BOM this entry was looked up/added against — ""
+   * when not tied to a specific machine (same convention as
+   * InventoryLog.machineName). */
+  machineName: string;
   description: string | null;
   qty: number;
   note: string | null;
@@ -98,12 +102,16 @@ export interface StockItem {
 
 export async function fetchStock(supabase: SupabaseClient): Promise<StockItem[]> {
   const { data, error } = await withRetry(() =>
-    supabase.from("inv_stock").select("id,part_no,description,qty,note,updated_at").order("part_no", { ascending: true })
+    supabase
+      .from("inv_stock")
+      .select("id,part_no,machine_name,description,qty,note,updated_at")
+      .order("part_no", { ascending: true })
   );
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     id: row.id as number,
     partNo: row.part_no as string,
+    machineName: row.machine_name as string,
     description: row.description as string | null,
     qty: row.qty as number,
     note: row.note as string | null,
@@ -111,22 +119,26 @@ export async function fetchStock(supabase: SupabaseClient): Promise<StockItem[]>
   }));
 }
 
-/** Insert-or-overwrite one part's stock row, keyed by part_no — editing an
- * existing part re-saves the same row instead of accumulating duplicates. */
+/** Insert-or-overwrite one part's stock row, keyed by (part_no,
+ * machine_name) — editing an existing part+machine pair re-saves that same
+ * row instead of accumulating duplicates. A part can legitimately have
+ * separate rows under different machines (e.g. the same screw stocked
+ * because of two different machines' orders). */
 export async function upsertStockItem(
   supabase: SupabaseClient,
-  input: { partNo: string; description: string | null; qty: number; note: string | null }
+  input: { partNo: string; machineName: string; description: string | null; qty: number; note: string | null }
 ): Promise<void> {
   const { error } = await withRetry(() =>
     supabase.from("inv_stock").upsert(
       {
         part_no: input.partNo,
+        machine_name: input.machineName,
         description: input.description,
         qty: input.qty,
         note: input.note,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "part_no" }
+      { onConflict: "part_no,machine_name" }
     )
   );
   if (error) throw new Error(error.message);
