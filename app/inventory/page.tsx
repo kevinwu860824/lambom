@@ -7,8 +7,10 @@ import {
   CircleCheck,
   Loader2,
   PackageCheck,
+  Pencil,
   RotateCcw,
   ShoppingCart,
+  Trash2,
   Truck,
 } from "lucide-react";
 import Link from "next/link";
@@ -34,6 +36,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { RequireGroupPrompt } from "@/components/require-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
 const zh: Record<string, string> = {
@@ -64,6 +67,11 @@ const zh: Record<string, string> = {
   Archive: "已結案",
   Stock: "庫存",
   "No records.": "沒有紀錄。",
+  Status: "狀態",
+  Details: "詳細資訊",
+  Date: "日期",
+  Actions: "操作",
+  Updated: "更新時間",
   Reported: "回報人",
   "Mark as ordered": "標記為已下訂",
   "Mark as arrived": "標記為已到貨",
@@ -744,36 +752,62 @@ export default function InventoryPage() {
             ) : stock.length === 0 ? (
               <p className="text-muted-foreground text-sm italic">{t("No stock recorded yet.")}</p>
             ) : (
-              <div className="grid gap-3">
-                {stock.map((item) => (
-                  <Card key={item.id}>
-                    <CardContent className="flex items-start justify-between gap-3">
-                      <div className="grid gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-medium">{item.partNo}</span>
-                          <Badge variant="outline">
-                            {t("Qty")} {item.qty}
-                          </Badge>
-                        </div>
-                        <p className="text-muted-foreground text-xs">{item.machineName || t("(none)")}</p>
-                        {item.description && <p className="text-muted-foreground text-xs">{item.description}</p>}
-                        {item.note && (
-                          <p className="text-muted-foreground text-xs">
-                            {t("Note")}: {item.note}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => editStockItem(item)}>
-                          {t("Edit")}
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => handleDeleteStock(item.id)}>
-                          {t("Delete")}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+              <div className="overflow-hidden rounded-lg border bg-card">
+                <Table className="min-w-[820px]">
+                  <TableHeader className="bg-muted/60">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="px-3">{t("Part Number")}</TableHead>
+                      <TableHead className="px-3">{t("Description")}</TableHead>
+                      <TableHead className="px-3">{t("Machine")}</TableHead>
+                      <TableHead className="px-3 text-right">{t("Quantity")}</TableHead>
+                      <TableHead className="px-3">{t("Note")}</TableHead>
+                      <TableHead className="px-3">{t("Updated")}</TableHead>
+                      <TableHead className="px-3 text-right">{t("Actions")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stock.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="px-3 font-mono text-xs font-medium">{item.partNo}</TableCell>
+                        <TableCell className="max-w-[240px] whitespace-normal px-3 text-sm">
+                          {item.description || <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell className="px-3">{item.machineName || t("(none)")}</TableCell>
+                        <TableCell className="px-3 text-right font-mono text-sm tabular-nums">{item.qty}</TableCell>
+                        <TableCell className="max-w-[200px] whitespace-normal px-3 text-sm">
+                          {item.note || <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell className="px-3 text-xs text-muted-foreground">
+                          {new Date(item.updatedAt).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="px-3">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label={t("Edit")}
+                              title={t("Edit")}
+                              onClick={() => editStockItem(item)}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label={t("Delete")}
+                              title={t("Delete")}
+                              onClick={() => handleDeleteStock(item.id)}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </>
@@ -782,41 +816,54 @@ export default function InventoryPage() {
         ) : visibleLogs.length === 0 ? (
           <p className="text-muted-foreground text-sm italic">{t("No records.")}</p>
         ) : (
-          <div className="grid gap-3">
-            {visibleLogs.map((log) => (
-              <Card key={log.id} className={cn(tab === "archive" && "opacity-70")}>
-                <CardContent>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="grid gap-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={statusBadgeVariant(log.status)}>{t(log.status)}</Badge>
-                        <span className="font-medium">{log.partName}</span>
-                      </div>
-                      <p className="text-muted-foreground text-xs">{log.machineName || t("(none)")}</p>
-                      {log.isLoan && log.borrower && (
-                        <p className="text-muted-foreground text-xs">
-                          {t("Borrower")}: {log.borrower}
-                        </p>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <Table className="min-w-[760px]">
+              <TableHeader className="bg-muted/60">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="px-3">{t("Status")}</TableHead>
+                  <TableHead className="px-3">{t("Part Name")}</TableHead>
+                  <TableHead className="px-3">{t("Machine")}</TableHead>
+                  <TableHead className="px-3">{t("Details")}</TableHead>
+                  <TableHead className="px-3">{t("Reported")}</TableHead>
+                  <TableHead className="px-3">{t("Date")}</TableHead>
+                  {tab === "active" && <TableHead className="min-w-[220px] px-3">{t("Actions")}</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleLogs.map((log) => (
+                  <TableRow key={log.id} className={cn(tab === "archive" && "text-muted-foreground")}>
+                    <TableCell className="px-3">
+                      <Badge variant={statusBadgeVariant(log.status)}>{t(log.status)}</Badge>
+                    </TableCell>
+                    <TableCell className="px-3 font-medium">{log.partName}</TableCell>
+                    <TableCell className="px-3">{log.machineName || t("(none)")}</TableCell>
+                    <TableCell className="px-3 text-sm">
+                      {log.isLoan && log.borrower ? (
+                        <span>{t("Borrower")}: {log.borrower}</span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
                       )}
-                      {log.reporterEmployeeId && (
-                        <p className="text-muted-foreground text-xs">
-                          {t("Reported")}: {log.reporterEmployeeId}
-                        </p>
-                      )}
-                    </div>
-                    <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
+                    </TableCell>
+                    <TableCell className="px-3 font-mono text-xs">
+                      {log.reporterEmployeeId || <span className="text-muted-foreground">-</span>}
+                    </TableCell>
+                    <TableCell className="px-3 text-xs text-muted-foreground">
                       {new Date(log.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
-
-                  {tab === "active" && (
-                    <div className="mt-3 border-t pt-3">
-                      <StatusAction log={log} updating={updatingId === log.id} onUpdate={handleStatusUpdate} t={t} />
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+                    </TableCell>
+                    {tab === "active" && (
+                      <TableCell className="px-3">
+                        <StatusAction
+                          log={log}
+                          updating={updatingId === log.id}
+                          onUpdate={handleStatusUpdate}
+                          t={t}
+                        />
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>
