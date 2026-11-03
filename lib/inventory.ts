@@ -16,6 +16,7 @@ export type InventoryLogStatus = (typeof INVENTORY_LOG_STATUSES)[number];
 
 export interface InventoryLog {
   id: number;
+  groupId: number;
   machineName: string;
   partName: string;
   status: InventoryLogStatus;
@@ -26,16 +27,18 @@ export interface InventoryLog {
   updatedAt: string;
 }
 
-export async function fetchLogs(supabase: SupabaseClient): Promise<InventoryLog[]> {
+export async function fetchLogs(supabase: SupabaseClient, groupId: number): Promise<InventoryLog[]> {
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_logs")
-      .select("id,machine_name,part_name,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
+      .select("id,group_id,machine_name,part_name,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
+      .eq("group_id", groupId)
       .order("created_at", { ascending: false })
   );
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     id: row.id as number,
+    groupId: row.group_id as number,
     machineName: row.machine_name as string,
     partName: row.part_name as string,
     status: row.status as InventoryLogStatus,
@@ -50,6 +53,7 @@ export async function fetchLogs(supabase: SupabaseClient): Promise<InventoryLog[
 export async function createLog(
   supabase: SupabaseClient,
   input: {
+    groupId: number;
     machineName: string;
     partName: string;
     isLoan: boolean;
@@ -59,6 +63,7 @@ export async function createLog(
 ): Promise<void> {
   const { error } = await withRetry(() =>
     supabase.from("inv_logs").insert({
+      group_id: input.groupId,
       machine_name: input.machineName,
       part_name: input.partName,
       status: input.isLoan ? "loaned" : "missing",
@@ -73,13 +78,15 @@ export async function createLog(
 export async function updateLogStatus(
   supabase: SupabaseClient,
   id: number,
-  status: InventoryLogStatus
+  status: InventoryLogStatus,
+  groupId: number
 ): Promise<void> {
   const { error } = await withRetry(() =>
     supabase
       .from("inv_logs")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id)
+      .eq("group_id", groupId)
   );
   if (error) throw new Error(error.message);
 }
@@ -89,6 +96,7 @@ export async function updateLogStatus(
 // scripts/inventory-stock-schema.sql.
 export interface StockItem {
   id: number;
+  groupId: number;
   partNo: string;
   /** Which machine's Full BOM this entry was looked up/added against — ""
    * when not tied to a specific machine (same convention as
@@ -100,16 +108,18 @@ export interface StockItem {
   updatedAt: string;
 }
 
-export async function fetchStock(supabase: SupabaseClient): Promise<StockItem[]> {
+export async function fetchStock(supabase: SupabaseClient, groupId: number): Promise<StockItem[]> {
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_stock")
-      .select("id,part_no,machine_name,description,qty,note,updated_at")
+      .select("id,group_id,part_no,machine_name,description,qty,note,updated_at")
+      .eq("group_id", groupId)
       .order("part_no", { ascending: true })
   );
   if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({
     id: row.id as number,
+    groupId: row.group_id as number,
     partNo: row.part_no as string,
     machineName: row.machine_name as string,
     description: row.description as string | null,
@@ -126,11 +136,12 @@ export async function fetchStock(supabase: SupabaseClient): Promise<StockItem[]>
  * because of two different machines' orders). */
 export async function upsertStockItem(
   supabase: SupabaseClient,
-  input: { partNo: string; machineName: string; description: string | null; qty: number; note: string | null }
+  input: { groupId: number; partNo: string; machineName: string; description: string | null; qty: number; note: string | null }
 ): Promise<void> {
   const { error } = await withRetry(() =>
     supabase.from("inv_stock").upsert(
       {
+        group_id: input.groupId,
         part_no: input.partNo,
         machine_name: input.machineName,
         description: input.description,
@@ -138,13 +149,15 @@ export async function upsertStockItem(
         note: input.note,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "part_no,machine_name" }
+      { onConflict: "group_id,part_no,machine_name" }
     )
   );
   if (error) throw new Error(error.message);
 }
 
-export async function deleteStockItem(supabase: SupabaseClient, id: number): Promise<void> {
-  const { error } = await withRetry(() => supabase.from("inv_stock").delete().eq("id", id));
+export async function deleteStockItem(supabase: SupabaseClient, id: number, groupId: number): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("inv_stock").delete().eq("id", id).eq("group_id", groupId)
+  );
   if (error) throw new Error(error.message);
 }

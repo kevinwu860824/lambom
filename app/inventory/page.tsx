@@ -38,8 +38,8 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 
 const zh: Record<string, string> = {
   "Spare Parts Inventory": "備品庫存管理",
-  "Report missing/loaned parts and track them through to completion — everyone can see and update every record.":
-    "回報缺料或借出零件,並追蹤到結案——所有人都能看到並更新所有紀錄。",
+  "Report missing/loaned parts and track them through to completion — records are shared within your active group.":
+    "回報缺料或借出零件並追蹤結案——紀錄只會在目前群組內共用。",
   "Back to Internal Tools": "回內部工具首頁",
   "Report a Part": "回報零件",
   Machine: "機台",
@@ -307,7 +307,7 @@ export default function InventoryPage() {
     return supabaseRef.current;
   }
 
-  const { employeeId, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { employeeId, group, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
 
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
@@ -402,12 +402,14 @@ export default function InventoryPage() {
   async function handleStockSubmit(e: React.FormEvent) {
     e.preventDefault();
     const partNo = stockSearch.query.trim();
-    if (!partNo) return;
+    const groupId = group?.id;
+    if (!partNo || groupId == null) return;
 
     setStockSubmitting(true);
     setError(null);
     try {
       await upsertStockItem(getSupabase(), {
+        groupId,
         partNo,
         machineName: stockMachineName,
         description: stockDescription.trim() || null,
@@ -429,9 +431,10 @@ export default function InventoryPage() {
   }
 
   async function handleDeleteStock(id: number) {
+    if (!group) return;
     if (!window.confirm(t("Delete this stock item?"))) return;
     try {
-      await deleteStockItem(getSupabase(), id);
+      await deleteStockItem(getSupabase(), id, group.id);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -439,10 +442,20 @@ export default function InventoryPage() {
   }
 
   async function loadAll() {
+    const groupId = group?.id;
+    if (groupId == null) {
+      setLogs([]);
+      setStock([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const [logsData, stockData] = await Promise.all([fetchLogs(getSupabase()), fetchStock(getSupabase())]);
+      const [logsData, stockData] = await Promise.all([
+        fetchLogs(getSupabase(), groupId),
+        fetchStock(getSupabase(), groupId),
+      ]);
       setLogs(logsData);
       setStock(stockData);
     } catch (err) {
@@ -453,22 +466,24 @@ export default function InventoryPage() {
   }
 
   useEffect(() => {
-    if (!employeeId) return;
+    if (!employeeId || !group) return;
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [employeeId]);
+  }, [employeeId, group?.id]);
 
   const machineNames = Array.from(allowedMachines ?? []).sort();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!reportSearch.query.trim()) return;
+    const groupId = group?.id;
+    if (!reportSearch.query.trim() || groupId == null) return;
 
     setSubmitting(true);
     setMessage(null);
     setError(null);
     try {
       await createLog(getSupabase(), {
+        groupId,
         machineName: selectedMachineName,
         partName: reportSearch.query.trim(),
         isLoan,
@@ -490,10 +505,11 @@ export default function InventoryPage() {
   }
 
   async function handleStatusUpdate(log: InventoryLog, status: InventoryLog["status"]) {
+    if (!group) return;
     setUpdatingId(log.id);
     setError(null);
     try {
-      await updateLogStatus(getSupabase(), log.id, status);
+      await updateLogStatus(getSupabase(), log.id, status, group.id);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -503,7 +519,7 @@ export default function InventoryPage() {
   }
 
   if (groupLoading) return null;
-  if (!employeeId || notFound) {
+  if (!employeeId || notFound || !group) {
     return (
       <div className="bg-background min-h-screen">
         <RequireGroupPrompt notFound={notFound} employeeId={employeeId} />
@@ -522,7 +538,7 @@ export default function InventoryPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{t("Spare Parts Inventory")}</h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              {t("Report missing/loaned parts and track them through to completion — everyone can see and update every record.")}
+              {t("Report missing/loaned parts and track them through to completion — records are shared within your active group.")}
             </p>
           </div>
           <div className="flex items-center gap-2">
