@@ -541,7 +541,7 @@ export default function InventoryPage() {
 
   return (
     <div className="bg-background min-h-screen">
-      <div className="mx-auto max-w-3xl px-4 py-8 md:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{t("Spare Parts Inventory")}</h1>
