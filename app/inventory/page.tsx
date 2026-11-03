@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CircleAlert,
@@ -314,6 +314,8 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const previousTabsTopRef = useRef<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   // Report form state
@@ -324,6 +326,21 @@ export default function InventoryPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const reportSearch = usePartSearch(getSupabase(), selectedMachineName, Boolean(selectedMachineName));
+
+  function changeTab(nextTab: "active" | "archive" | "stock") {
+    if (nextTab === tab) return;
+    previousTabsTopRef.current = tabsRef.current?.getBoundingClientRect().top ?? null;
+    setTab(nextTab);
+  }
+
+  useLayoutEffect(() => {
+    const previousTop = previousTabsTopRef.current;
+    const currentTop = tabsRef.current?.getBoundingClientRect().top;
+    previousTabsTopRef.current = null;
+    if (previousTop != null && currentTop != null) {
+      window.scrollBy(0, currentTop - previousTop);
+    }
+  }, [tab]);
 
   // Whatever the Full BOM lookup last found (or didn't) for the exact text
   // currently in the part name field — set either by clicking a
@@ -627,13 +644,13 @@ export default function InventoryPage() {
           </Card>
         )}
 
-        <div className="mb-4 inline-flex rounded-md border p-0.5">
+        <div ref={tabsRef} className="mb-4 inline-flex rounded-md border p-0.5">
           <Button
             type="button"
             size="sm"
             variant={tab === "active" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => setTab("active")}
+            onClick={() => changeTab("active")}
           >
             {t("Active")} {activeLogs.length}
           </Button>
@@ -642,7 +659,7 @@ export default function InventoryPage() {
             size="sm"
             variant={tab === "archive" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => setTab("archive")}
+            onClick={() => changeTab("archive")}
           >
             {t("Archive")} {archivedLogs.length}
           </Button>
@@ -651,7 +668,7 @@ export default function InventoryPage() {
             size="sm"
             variant={tab === "stock" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => setTab("stock")}
+            onClick={() => changeTab("stock")}
           >
             {t("Stock")} {stock.length}
           </Button>
