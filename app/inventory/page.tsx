@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CircleAlert,
@@ -314,8 +314,6 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const previousTabsTopRef = useRef<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   // Report form state
@@ -326,21 +324,6 @@ export default function InventoryPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const reportSearch = usePartSearch(getSupabase(), selectedMachineName, Boolean(selectedMachineName));
-
-  function changeTab(nextTab: "active" | "archive" | "stock") {
-    if (nextTab === tab) return;
-    previousTabsTopRef.current = tabsRef.current?.getBoundingClientRect().top ?? null;
-    setTab(nextTab);
-  }
-
-  useLayoutEffect(() => {
-    const previousTop = previousTabsTopRef.current;
-    const currentTop = tabsRef.current?.getBoundingClientRect().top;
-    previousTabsTopRef.current = null;
-    if (previousTop != null && currentTop != null) {
-      window.scrollBy(0, currentTop - previousTop);
-    }
-  }, [tab]);
 
   // Whatever the Full BOM lookup last found (or didn't) for the exact text
   // currently in the part name field — set either by clicking a
@@ -570,8 +553,11 @@ export default function InventoryPage() {
 
         {error && <p className="text-destructive mb-4 text-sm">{error}</p>}
 
-        {tab !== "stock" && (
-          <Card className="mb-6">
+        <div className="mb-6 grid">
+          <Card
+            aria-hidden={tab === "stock"}
+            className={cn("col-start-1 row-start-1", tab === "stock" && "invisible")}
+          >
             <CardHeader>
               <CardTitle>{t("Report a Part")}</CardTitle>
             </CardHeader>
@@ -642,15 +628,92 @@ export default function InventoryPage() {
               </form>
             </CardContent>
           </Card>
-        )}
 
-        <div ref={tabsRef} className="mb-4 inline-flex rounded-md border p-0.5">
+          <Card
+            aria-hidden={tab !== "stock"}
+            className={cn("col-start-1 row-start-1", tab !== "stock" && "invisible")}
+          >
+            <CardHeader>
+              <CardTitle>{t("Add / Update Stock")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleStockSubmit} className="grid gap-4">
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Machine")}</label>
+                  <MachineSelect
+                    value={stockMachineName}
+                    onChange={(v) => {
+                      setStockMachineName(v);
+                      stockSearch.reset();
+                      setStockPartLookup(null);
+                    }}
+                    machineNames={machineNames}
+                    t={t}
+                  />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Part Number")}</label>
+                  <PartSearchCombobox
+                    search={stockSearch}
+                    onChange={(v) => {
+                      stockSearch.setQuery(v);
+                      setStockPartLookup(null);
+                    }}
+                    onSelect={selectStockSuggestion}
+                    onBlur={handleStockPartBlur}
+                    placeholder={
+                      stockMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
+                    }
+                    t={t}
+                  />
+                  <PartLookupBanner lookup={stockPartLookup} loading={stockPartLookupLoading} t={t} />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Description")}</label>
+                  <Input value={stockDescription} onChange={(e) => setStockDescription(e.target.value)} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Quantity")}</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={stockQty}
+                      onChange={(e) => setStockQty(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Note")}</label>
+                    <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} />
+                  </div>
+                </div>
+
+                <Button type="submit" disabled={stockSubmitting || !stockSearch.query.trim()}>
+                  {stockSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("Submitting")}
+                    </>
+                  ) : (
+                    t("Save")
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="mb-4 inline-flex rounded-md border p-0.5">
           <Button
             type="button"
             size="sm"
             variant={tab === "active" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => changeTab("active")}
+            onClick={() => setTab("active")}
           >
             {t("Active")} {activeLogs.length}
           </Button>
@@ -659,7 +722,7 @@ export default function InventoryPage() {
             size="sm"
             variant={tab === "archive" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => changeTab("archive")}
+            onClick={() => setTab("archive")}
           >
             {t("Archive")} {archivedLogs.length}
           </Button>
@@ -668,7 +731,7 @@ export default function InventoryPage() {
             size="sm"
             variant={tab === "stock" ? "default" : "ghost"}
             className="h-7"
-            onClick={() => changeTab("stock")}
+            onClick={() => setTab("stock")}
           >
             {t("Stock")} {stock.length}
           </Button>
@@ -676,80 +739,6 @@ export default function InventoryPage() {
 
         {tab === "stock" ? (
           <>
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>{t("Add / Update Stock")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleStockSubmit} className="grid gap-4">
-                  <div className="grid gap-1.5">
-                    <label className="text-sm font-medium">{t("Machine")}</label>
-                    <MachineSelect
-                      value={stockMachineName}
-                      onChange={(v) => {
-                        setStockMachineName(v);
-                        stockSearch.reset();
-                        setStockPartLookup(null);
-                      }}
-                      machineNames={machineNames}
-                      t={t}
-                    />
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <label className="text-sm font-medium">{t("Part Number")}</label>
-                    <PartSearchCombobox
-                      search={stockSearch}
-                      onChange={(v) => {
-                        stockSearch.setQuery(v);
-                        setStockPartLookup(null);
-                      }}
-                      onSelect={selectStockSuggestion}
-                      onBlur={handleStockPartBlur}
-                      placeholder={
-                        stockMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
-                      }
-                      t={t}
-                    />
-                    <PartLookupBanner lookup={stockPartLookup} loading={stockPartLookupLoading} t={t} />
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <label className="text-sm font-medium">{t("Description")}</label>
-                    <Input value={stockDescription} onChange={(e) => setStockDescription(e.target.value)} />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-1.5">
-                      <label className="text-sm font-medium">{t("Quantity")}</label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={stockQty}
-                        onChange={(e) => setStockQty(e.target.value)}
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <label className="text-sm font-medium">{t("Note")}</label>
-                      <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} />
-                    </div>
-                  </div>
-
-                  <Button type="submit" disabled={stockSubmitting || !stockSearch.query.trim()}>
-                    {stockSubmitting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {t("Submitting")}
-                      </>
-                    ) : (
-                      t("Save")
-                    )}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-
             {loading ? (
               <p className="text-muted-foreground text-sm">…</p>
             ) : stock.length === 0 ? (
