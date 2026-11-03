@@ -34,6 +34,7 @@ const zh: Record<string, string> = {
   "Import Excel": "匯入 Excel",
   "Running…": "執行中…",
   Done: "完成",
+  "Partial failure": "部分失敗",
   Failed: "失敗",
   Cancelled: "已取消",
   "Please enter your employee ID on the home page first before downloading a new machine.":
@@ -70,7 +71,7 @@ declare global {
   }
 }
 
-type QueueStatus = "queued" | "running" | "done" | "error" | "cancelled";
+type QueueStatus = "queued" | "running" | "done" | "partial" | "error" | "cancelled";
 
 interface QueueItem {
   id: string;
@@ -88,6 +89,8 @@ interface DownloadSelection {
   zbom: boolean;
 }
 
+type DownloadOutcome = "success" | "partial" | "failed";
+
 const defaultDownloadSelection: DownloadSelection = {
   modules: true,
   fullBom: true,
@@ -102,22 +105,12 @@ class CancelledError extends Error {}
  * deployment (same code, opened in a regular browser) that API doesn't
  * exist, so this renders nothing.
  *
- * Each queue item runs through four steps, in order:
- *   1. Resolve SO/PO for the FID — checked against a cache first (so a given
- *      FID's SAP search only ever has to run once); on a cache miss it runs
- *      the CLI's "resolve" mode and saves the result back to the cache
- *      immediately. A failure here fails the whole item.
- *   2. Full BOM (IB53) — stored in its own table (full_bom_items), separate
- *      from Modules and not shown in the Subparts list at all.
- *      A failure here only logs a warning; the item continues.
- *   3. Modules (ZOOBOM_CE_FMT, using the SO from step 1) — each module sheet
- *      becomes its own subpart, then key-part auto-matching runs. A failure
- *      here fails the whole item (this is the core dataset).
- *   4. ZBOM (VA03 configuration options, using the SO from step 1) — stored
- *      for reference. A failure here only logs a warning.
- * Every step deletes its local file after a successful upload; if the
- * upload fails the file is left in place as a fallback and its path is
- * logged.
+ * Each selected download type is attempted independently. Modules and ZBOM
+ * share an SO/PO lookup; if that lookup fails, those types are marked failed
+ * while Full BOM can still run. The queue item is Done only if every selected
+ * type succeeds, Partial if some succeed, and Failed if none succeed.
+ * Downloaded files are deleted after successful uploads and retained when
+ * parsing or upload fails so they can be recovered.
  */
 export function FidDownloaderPanel({
   existingMachines = [],
@@ -293,7 +286,7 @@ export function FidDownloaderPanel({
     return { so, po };
   }
 
-  async function useSuppliedSo(fidValue: string, machineName: string, suppliedSo: string): Promise<string> {
+  async function saveSuppliedSo(fidValue: string, machineName: string, suppliedSo: string): Promise<string> {
     const normalizedSo = suppliedSo.trim();
     if (!normalizedSo) return "";
     await saveFidEntry(getSupabase(), fidValue, { machineName, so: normalizedSo });
@@ -301,28 +294,30 @@ export function FidDownloaderPanel({
     return normalizedSo;
   }
 
-  async function downloadFullBom(fidValue: string, machineName: string) {
+  async function downloadFullBom(fidValue: string, machineName: string): Promise<DownloadOutcome> {
     setLog((prev) => `${prev}--- Full BOM ---\n`);
     const result = await window.fidDownloader!.start({ fid: fidValue, mode: "tool" });
     checkCancelled();
     if (!result.ok || !result.resultPath) {
       setLog((prev) => `${prev}[Error] Full BOM download failed, skipping ahead.\n`);
-      return;
+      return "failed";
     }
-    setLog((prev) => `${prev}Full BOM done: ${result.resultPath}\n`);
+    setLog((prev) => `${prev}Full BOM file ready: ${result.resultPath}\n`);
     try {
       const buffer = await window.fidDownloader!.readFile(result.resultPath);
       const parsed = parseXlsxBom(buffer);
       await uploadFullBomEntry(getSupabase(), machineName, parsed);
       await deleteLocalFile(result.resultPath);
       setLog((prev) => `${prev}Full BOM uploaded (${parsed.items.length} items).\n`);
+      return "success";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}[Error] Full BOM upload failed: ${message} (kept local file: ${result.resultPath})\n`);
+      return "failed";
     }
   }
 
-  async function downloadModules(fidValue: string, so: string, machineName: string) {
+  async function downloadModules(fidValue: string, so: string, machineName: string): Promise<DownloadOutcome> {
     setLog((prev) => `${prev}--- Modules ---\n`);
     const result = await window.fidDownloader!.start({ fid: fidValue, so, mode: "modules" });
     checkCancelled();
@@ -342,7 +337,7 @@ export function FidDownloaderPanel({
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}[Warning] Modules contains no valid BOM sheets: ${message}\n`);
       setLog((prev) => `${prev}Continuing with Full BOM and ZBOM.\n`);
-      return;
+      return "failed";
     }
     setLog((prev) => `${prev}${sheets.length} module(s) found, uploading to machine "${machineName}"...\n`);
 
@@ -383,17 +378,22 @@ export function FidDownloaderPanel({
         setLog((prev) => `${prev}[Error] Failed to record group ownership: ${message}\n`);
       }
     }
-    await deleteLocalFile(result.resultPath);
+    if (failCount === 0) {
+      await deleteLocalFile(result.resultPath);
+    } else {
+      setLog((prev) => `${prev}[Warning] Kept the Modules workbook for recovery: ${result.resultPath}\n`);
+    }
     setLog((prev) => `${prev}Modules upload complete: ${successCount} succeeded, ${failCount} failed.\n`);
+    return failCount === 0 ? "success" : "partial";
   }
 
-  async function downloadZbom(so: string, machineName: string) {
+  async function downloadZbom(so: string, machineName: string): Promise<DownloadOutcome> {
     setLog((prev) => `${prev}--- ZBOM ---\n`);
     const result = await window.fidDownloader!.start({ so, mode: "zbom" });
     checkCancelled();
     if (!result.ok || !result.resultPath) {
       setLog((prev) => `${prev}[Error] ZBOM download failed, skipping.\n`);
-      return;
+      return "failed";
     }
     setLog((prev) => `${prev}ZBOM done: ${result.resultPath}\n`);
     try {
@@ -404,9 +404,11 @@ export function FidDownloaderPanel({
       if (groupId != null) await ensureMachineInGroup(getSupabase(), groupId, machineName);
       await deleteLocalFile(result.resultPath);
       setLog((prev) => `${prev}ZBOM uploaded (${options.length} option(s)).\n`);
+      return "success";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setLog((prev) => `${prev}[Error] ZBOM upload failed: ${message} (kept local file: ${result.resultPath})\n`);
+      return "failed";
     }
   }
 
@@ -444,23 +446,79 @@ export function FidDownloaderPanel({
           throw new Error("Select at least one download type");
         }
 
-        // Modules runs before Full BOM: uploadFullBomEntry only UPDATEs
-        // bom_machines.has_full_bom (not upsert), so on a machine's very
-        // first run that row must already exist — created by Modules'
-        // uploadBomEntry insert — or the flag update silently matches zero
-        // rows and Full BOM never shows up in /full-bom despite the data
-        // being uploaded successfully.
-        let so = item.so.trim();
+        let successCount = 0;
+        const failedTypes: string[] = [];
+        let so: string | null = null;
         if (item.downloads.modules || item.downloads.zbom) {
-          so = item.so.trim()
-            ? await useSuppliedSo(item.fid, item.machineNo, item.so)
-            : (await resolveSoPo(item.fid, item.machineNo)).so;
+          try {
+            so = item.so.trim()
+              ? await saveSuppliedSo(item.fid, item.machineNo, item.so)
+              : (await resolveSoPo(item.fid, item.machineNo)).so;
+          } catch (err) {
+            if (err instanceof CancelledError) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            failedTypes.push("SO/PO resolve");
+            setLog((prev) => `${prev}[Error] Could not resolve SO/PO: ${message}\n`);
+          }
         }
-        if (item.downloads.modules) await downloadModules(item.fid, so, item.machineNo);
-        if (item.downloads.fullBom) await downloadFullBom(item.fid, item.machineNo);
-        if (item.downloads.zbom) await downloadZbom(so, item.machineNo);
 
-        setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done" } : q)));
+        if (item.downloads.modules) {
+          if (!so) {
+            failedTypes.push("Modules");
+            setLog((prev) => `${prev}[Error] Modules skipped because SO/PO could not be resolved.\n`);
+          } else {
+            try {
+              const outcome = await downloadModules(item.fid, so, item.machineNo);
+              if (outcome !== "failed") successCount++;
+              if (outcome !== "success") failedTypes.push("Modules");
+            } catch (err) {
+              if (err instanceof CancelledError) throw err;
+              const message = err instanceof Error ? err.message : String(err);
+              failedTypes.push("Modules");
+              setLog((prev) => `${prev}[Error] Modules failed: ${message}\n`);
+            }
+          }
+        }
+
+        if (item.downloads.fullBom) {
+          try {
+            const outcome = await downloadFullBom(item.fid, item.machineNo);
+            if (outcome === "success") successCount++;
+            else failedTypes.push("Full BOM");
+          } catch (err) {
+            if (err instanceof CancelledError) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            failedTypes.push("Full BOM");
+            setLog((prev) => `${prev}[Error] Full BOM failed: ${message}\n`);
+          }
+        }
+
+        if (item.downloads.zbom) {
+          if (!so) {
+            failedTypes.push("ZBOM");
+            setLog((prev) => `${prev}[Error] ZBOM skipped because SO/PO could not be resolved.\n`);
+          } else {
+            try {
+              const outcome = await downloadZbom(so, item.machineNo);
+              if (outcome === "success") successCount++;
+              else failedTypes.push("ZBOM");
+            } catch (err) {
+              if (err instanceof CancelledError) throw err;
+              const message = err instanceof Error ? err.message : String(err);
+              failedTypes.push("ZBOM");
+              setLog((prev) => `${prev}[Error] ZBOM failed: ${message}\n`);
+            }
+          }
+        }
+
+        if (failedTypes.length === 0) {
+          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status: "done", error: undefined } : q)));
+        } else {
+          const status: QueueStatus = successCount > 0 ? "partial" : "error";
+          const error = `Failed: ${failedTypes.join(", ")}`;
+          setLog((prev) => `${prev}[Warning] ${item.machineNo} completed with ${successCount} selected download(s) succeeded; ${error}.\n`);
+          setQueue((prev) => prev.map((q, idx) => (idx === i ? { ...q, status, error } : q)));
+        }
       } catch (err) {
         if (err instanceof CancelledError) {
           setLog((prev) => `${prev}Cancelled.\n`);
@@ -591,6 +649,11 @@ export function FidDownloaderPanel({
                 </div>
                 {item.status === "running" && <span className="text-xs text-blue-600">{t("Running…")}</span>}
                 {item.status === "done" && <span className="text-xs text-emerald-600">{t("Done")}</span>}
+                {item.status === "partial" && (
+                  <span className="text-xs text-amber-600" title={item.error}>
+                    {t("Partial failure")}
+                  </span>
+                )}
                 {item.status === "error" && (
                   <span className="text-destructive text-xs" title={item.error}>
                     {t("Failed")}
