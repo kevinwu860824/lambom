@@ -29,7 +29,6 @@ import {
 import { useEmployeeGroup } from "@/lib/groups";
 import { useTranslate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -831,10 +830,8 @@ export default function InventoryPage() {
               </TableHeader>
               <TableBody>
                 {visibleLogs.map((log) => (
-                  <TableRow key={log.id} className={cn(tab === "archive" && "text-muted-foreground")}>
-                    <TableCell className="px-3">
-                      <Badge variant={statusBadgeVariant(log.status)}>{t(log.status)}</Badge>
-                    </TableCell>
+                  <TableRow key={log.id}>
+                    <TableCell className="px-3 font-medium">{t(log.status)}</TableCell>
                     <TableCell className="px-3 font-medium">{log.partName}</TableCell>
                     <TableCell className="px-3">{log.machineName || t("(none)")}</TableCell>
                     <TableCell className="px-3 text-sm">
@@ -844,10 +841,8 @@ export default function InventoryPage() {
                         <span className="text-muted-foreground">-</span>
                       )}
                     </TableCell>
-                    <TableCell className="px-3 font-mono text-xs">
-                      {log.reporterEmployeeId || <span className="text-muted-foreground">-</span>}
-                    </TableCell>
-                    <TableCell className="px-3 text-xs text-muted-foreground">
+                    <TableCell className="px-3">{log.reporterEmployeeId || "-"}</TableCell>
+                    <TableCell className="px-3 whitespace-nowrap">
                       {new Date(log.createdAt).toLocaleDateString()}
                     </TableCell>
                     {tab === "active" && (
@@ -869,18 +864,6 @@ export default function InventoryPage() {
       </div>
     </div>
   );
-}
-
-function statusBadgeVariant(status: InventoryLog["status"]): "default" | "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "missing":
-      return "destructive";
-    case "completed":
-    case "returned":
-      return "secondary";
-    default:
-      return "outline";
-  }
 }
 
 function StatusAction({
