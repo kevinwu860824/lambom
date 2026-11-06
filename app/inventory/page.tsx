@@ -47,7 +47,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RequireGroupPrompt } from "@/components/require-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
@@ -132,6 +139,7 @@ const zh: Record<string, string> = {
 // selectedMachineName back to "".
 const NONE_MACHINE_VALUE = "__none__";
 const NONE_LOCATION_VALUE = "__none_location__";
+const EDIT_STORAGE_LOCATIONS_VALUE = "__edit_storage_locations__";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -313,7 +321,13 @@ function StorageLocationField({
       <label className="text-sm font-medium">{t("Storage Location")}</label>
       <Select
         value={value == null ? NONE_LOCATION_VALUE : String(value)}
-        onValueChange={(selected) => onChange(selected === NONE_LOCATION_VALUE ? null : Number(selected))}
+        onValueChange={(selected) => {
+          if (selected === EDIT_STORAGE_LOCATIONS_VALUE) {
+            onEdit();
+            return;
+          }
+          onChange(selected === NONE_LOCATION_VALUE ? null : Number(selected));
+        }}
       >
         <SelectTrigger className="w-full">
           <SelectValue placeholder={t("Select storage location")} />
@@ -325,12 +339,13 @@ function StorageLocationField({
               {location.name}
             </SelectItem>
           ))}
+          <SelectSeparator />
+          <SelectItem value={EDIT_STORAGE_LOCATIONS_VALUE} className="text-primary">
+            <Pencil />
+            {t("Edit storage locations")}
+          </SelectItem>
         </SelectContent>
       </Select>
-      <Button type="button" size="sm" variant="outline" className="justify-start" onClick={onEdit}>
-        <Pencil className="h-3.5 w-3.5" />
-        {t("Edit storage locations")}
-      </Button>
     </div>
   );
 }
