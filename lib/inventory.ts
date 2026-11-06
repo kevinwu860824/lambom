@@ -19,6 +19,8 @@ export interface InventoryLog {
   groupId: number;
   machineName: string;
   partName: string;
+  iam: string | null;
+  storageLocationId: number | null;
   status: InventoryLogStatus;
   isLoan: boolean;
   borrower: string | null;
@@ -31,7 +33,7 @@ export async function fetchLogs(supabase: SupabaseClient, groupId: number): Prom
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_logs")
-      .select("id,group_id,machine_name,part_name,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
+      .select("id,group_id,machine_name,part_name,iam,storage_location_id,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
       .eq("group_id", groupId)
       .order("created_at", { ascending: false })
   );
@@ -41,6 +43,8 @@ export async function fetchLogs(supabase: SupabaseClient, groupId: number): Prom
     groupId: row.group_id as number,
     machineName: row.machine_name as string,
     partName: row.part_name as string,
+    iam: row.iam as string | null,
+    storageLocationId: row.storage_location_id as number | null,
     status: row.status as InventoryLogStatus,
     isLoan: row.is_loan as boolean,
     borrower: row.borrower as string | null,
@@ -56,6 +60,8 @@ export async function createLog(
     groupId: number;
     machineName: string;
     partName: string;
+    iam: string | null;
+    storageLocationId: number | null;
     isLoan: boolean;
     borrower: string | null;
     reporterEmployeeId: string | null;
@@ -66,11 +72,67 @@ export async function createLog(
       group_id: input.groupId,
       machine_name: input.machineName,
       part_name: input.partName,
+      iam: input.iam,
+      storage_location_id: input.storageLocationId,
       status: input.isLoan ? "loaned" : "missing",
       is_loan: input.isLoan,
       borrower: input.borrower,
       reporter_employee_id: input.reporterEmployeeId,
     })
+  );
+  if (error) throw new Error(error.message);
+}
+
+export interface InventoryStorageLocation {
+  id: number;
+  name: string;
+}
+
+export async function fetchStorageLocations(
+  supabase: SupabaseClient,
+  groupId: number
+): Promise<InventoryStorageLocation[]> {
+  const { data, error } = await withRetry(() =>
+    supabase
+      .from("inv_storage_locations")
+      .select("id,name")
+      .eq("group_id", groupId)
+      .order("name", { ascending: true })
+  );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id as number, name: row.name as string }));
+}
+
+export async function addStorageLocation(
+  supabase: SupabaseClient,
+  groupId: number,
+  name: string
+): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("inv_storage_locations").insert({ group_id: groupId, name })
+  );
+  if (error) throw new Error(error.message);
+}
+
+export async function renameStorageLocation(
+  supabase: SupabaseClient,
+  groupId: number,
+  id: number,
+  name: string
+): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("inv_storage_locations").update({ name }).eq("id", id).eq("group_id", groupId)
+  );
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteStorageLocation(
+  supabase: SupabaseClient,
+  groupId: number,
+  id: number
+): Promise<void> {
+  const { error } = await withRetry(() =>
+    supabase.from("inv_storage_locations").delete().eq("id", id).eq("group_id", groupId)
   );
   if (error) throw new Error(error.message);
 }
@@ -102,6 +164,8 @@ export interface StockItem {
    * when not tied to a specific machine (same convention as
    * InventoryLog.machineName). */
   machineName: string;
+  iam: string | null;
+  storageLocationId: number | null;
   description: string | null;
   qty: number;
   note: string | null;
@@ -112,7 +176,7 @@ export async function fetchStock(supabase: SupabaseClient, groupId: number): Pro
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_stock")
-      .select("id,group_id,part_no,machine_name,description,qty,note,updated_at")
+      .select("id,group_id,part_no,machine_name,iam,storage_location_id,description,qty,note,updated_at")
       .eq("group_id", groupId)
       .order("part_no", { ascending: true })
   );
@@ -122,6 +186,8 @@ export async function fetchStock(supabase: SupabaseClient, groupId: number): Pro
     groupId: row.group_id as number,
     partNo: row.part_no as string,
     machineName: row.machine_name as string,
+    iam: row.iam as string | null,
+    storageLocationId: row.storage_location_id as number | null,
     description: row.description as string | null,
     qty: row.qty as number,
     note: row.note as string | null,
@@ -136,7 +202,16 @@ export async function fetchStock(supabase: SupabaseClient, groupId: number): Pro
  * because of two different machines' orders). */
 export async function upsertStockItem(
   supabase: SupabaseClient,
-  input: { groupId: number; partNo: string; machineName: string; description: string | null; qty: number; note: string | null }
+  input: {
+    groupId: number;
+    partNo: string;
+    machineName: string;
+    iam: string | null;
+    storageLocationId: number | null;
+    description: string | null;
+    qty: number;
+    note: string | null;
+  }
 ): Promise<void> {
   const { error } = await withRetry(() =>
     supabase.from("inv_stock").upsert(
@@ -144,6 +219,8 @@ export async function upsertStockItem(
         group_id: input.groupId,
         part_no: input.partNo,
         machine_name: input.machineName,
+        iam: input.iam,
+        storage_location_id: input.storageLocationId,
         description: input.description,
         qty: input.qty,
         note: input.note,

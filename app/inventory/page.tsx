@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CircleAlert,
@@ -17,13 +17,18 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
 import {
+  addStorageLocation,
   createLog,
+  deleteStorageLocation,
   deleteStockItem,
   fetchLogs,
   fetchStock,
+  fetchStorageLocations,
+  renameStorageLocation,
   updateLogStatus,
   upsertStockItem,
   type InventoryLog,
+  type InventoryStorageLocation,
   type StockItem,
 } from "@/lib/inventory";
 import { useEmployeeGroup } from "@/lib/groups";
@@ -32,6 +37,14 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RequireGroupPrompt } from "@/components/require-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,8 +63,11 @@ const zh: Record<string, string> = {
   "Type a part number or description…": "輸入料號或說明…",
   "Type a part number or name…": "輸入料號或零件名稱…",
   "+{count} more match — type more to narrow down": "還有 {count} 筆相符,請輸入更多字元縮小範圍",
+  "Matched in {count} machines": "符合 {count} 台機台",
   "Found in Full BOM": "在完整 BOM 表中找到",
+  "Found in this group's Full BOM": "在目前群組的完整 BOM 表中找到",
   "Not found in this machine's Full BOM — double-check the part number.": "在這台機台的完整 BOM 表中找不到——請再次確認料號是否正確。",
+  "Not found in this group's Full BOM — double-check the part number.": "在目前群組的完整 BOM 表中找不到——請再次確認料號是否正確。",
   Qty: "數量",
   Unit: "單位",
   "Mark as a loan (not a repair)": "標記為零件借出(非報修)",
@@ -86,6 +102,20 @@ const zh: Record<string, string> = {
   returned: "已歸還",
   "Add / Update Stock": "新增/更新庫存",
   "Part Number": "料號",
+  IAM: "IAM",
+  "Storage Location": "存放地點",
+  "Select storage location": "選擇存放地點",
+  "Edit storage locations": "編輯存放地點",
+  "Manage storage locations": "管理存放地點",
+  "Storage locations are managed for your active group.": "存放地點選項依目前群組分開管理。",
+  "Add a location": "新增存放地點",
+  "Add location": "新增地點",
+  "Save location": "儲存地點",
+  "Delete location": "刪除地點",
+  "No storage locations yet.": "尚未設定存放地點。",
+  "Storage location is in use and cannot be deleted.": "此存放地點仍有紀錄使用，無法刪除。",
+  "Delete this storage location?": "確定刪除此存放地點？",
+  Close: "關閉",
   Description: "說明",
   Quantity: "數量",
   Note: "備註",
@@ -101,15 +131,16 @@ const zh: Record<string, string> = {
 // sentinel value rather than value="" — selecting it just resets
 // selectedMachineName back to "".
 const NONE_MACHINE_VALUE = "__none__";
+const NONE_LOCATION_VALUE = "__none_location__";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
-/** Debounced live autocomplete against one machine's real Full BOM, for
- * the Report form's Part Name field. `enabled` gates the case where no
- * machine has been chosen yet — searching requires a machine_name filter
- * to stay fast (see searchFullBomItems), so there's nothing to search
- * against until one is picked. */
-function usePartSearch(supabase: SupabaseClient, machineName: string, enabled: boolean) {
+/** Debounced autocomplete against one machine or the active group's Full BOMs. */
+function usePartSearch(getSupabase: () => SupabaseClient, machineName: string, groupMachineNames: string[]) {
+  const searchMachineNames = useMemo(
+    () => (machineName ? (groupMachineNames.includes(machineName) ? [machineName] : []) : groupMachineNames),
+    [machineName, groupMachineNames]
+  );
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
@@ -117,11 +148,11 @@ function usePartSearch(supabase: SupabaseClient, machineName: string, enabled: b
     return () => clearTimeout(timer);
   }, [query]);
 
-  const [suggestions, setSuggestions] = useState<BomItem[]>([]);
+  const [suggestions, setSuggestions] = useState<Awaited<ReturnType<typeof searchFullBomItems>>["items"]>([]);
   const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const trimmed = debounced.trim();
-  const eligible = enabled && trimmed.length >= 2;
+  const eligible = searchMachineNames.length > 0 && trimmed.length >= 2;
   // Derived at render time rather than reset via a synchronous setState in
   // the effect below — once the query no longer qualifies for a search,
   // the last-fetched suggestions are simply not shown.
@@ -131,7 +162,7 @@ function usePartSearch(supabase: SupabaseClient, machineName: string, enabled: b
   useEffect(() => {
     if (!eligible) return;
     let cancelled = false;
-    searchFullBomItems(supabase, machineName, trimmed)
+    searchFullBomItems(getSupabase(), searchMachineNames, trimmed)
       .then((result) => {
         if (!cancelled) {
           setSuggestions(result.items);
@@ -147,7 +178,7 @@ function usePartSearch(supabase: SupabaseClient, machineName: string, enabled: b
     return () => {
       cancelled = true;
     };
-  }, [eligible, machineName, trimmed, supabase]);
+  }, [eligible, getSupabase, searchMachineNames, trimmed]);
 
   return {
     query,
@@ -177,6 +208,7 @@ function PartSearchCombobox({
   onSelect,
   onBlur,
   placeholder,
+  showMachineCount,
   t,
 }: {
   search: PartSearchState;
@@ -184,6 +216,7 @@ function PartSearchCombobox({
   onSelect: (item: BomItem) => void;
   onBlur?: () => void;
   placeholder: string;
+  showMachineCount: boolean;
   t: (text: string) => string;
 }) {
   return (
@@ -213,6 +246,11 @@ function PartSearchCombobox({
             >
               <div className="font-mono text-xs">{item.part_no}</div>
               {item.description && <div className="text-muted-foreground truncate text-xs">{item.description}</div>}
+              {showMachineCount && (
+                <div className="mt-0.5 text-muted-foreground text-[11px]">
+                  {t("Matched in {count} machines").replace("{count}", String(item.machineCount))}
+                </div>
+              )}
             </button>
           ))}
           {search.truncatedCount > 0 && (
@@ -257,17 +295,56 @@ function MachineSelect({
   );
 }
 
-/** The "found in this machine's Full BOM" / "not found" banner shared by
- * the Report form and the Stock form — same green/amber treatment either
- * way, so a part that isn't actually on the selected machine is flagged
- * consistently no matter which form it's typed into. */
+function StorageLocationField({
+  value,
+  locations,
+  onChange,
+  onEdit,
+  t,
+}: {
+  value: number | null;
+  locations: InventoryStorageLocation[];
+  onChange: (value: number | null) => void;
+  onEdit: () => void;
+  t: (text: string) => string;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <label className="text-sm font-medium">{t("Storage Location")}</label>
+      <Select
+        value={value == null ? NONE_LOCATION_VALUE : String(value)}
+        onValueChange={(selected) => onChange(selected === NONE_LOCATION_VALUE ? null : Number(selected))}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={t("Select storage location")} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NONE_LOCATION_VALUE}>{t("(none)")}</SelectItem>
+          {locations.map((location) => (
+            <SelectItem key={location.id} value={String(location.id)}>
+              {location.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button type="button" size="sm" variant="outline" className="justify-start" onClick={onEdit}>
+        <Pencil className="h-3.5 w-3.5" />
+        {t("Edit storage locations")}
+      </Button>
+    </div>
+  );
+}
+
+/** Shows whether a part was found in the selected machine or active group. */
 function PartLookupBanner({
   lookup,
   loading,
+  machineName,
   t,
 }: {
-  lookup: { item: BomItem | null } | null;
+  lookup: { item: (BomItem & { machineCount?: number }) | null } | null;
   loading: boolean;
+  machineName: string;
   t: (text: string) => string;
 }) {
   return (
@@ -286,17 +363,29 @@ function PartLookupBanner({
             <>
               <CircleCheck className="h-3.5 w-3.5 shrink-0" />
               <div>
-                <p className="font-medium">{t("Found in Full BOM")}</p>
-                <p>{lookup.item.description}</p>
-                <p>
-                  {t("Qty")} {lookup.item.qty ?? "-"} · {t("Unit")} {lookup.item.uom ?? "-"}
+                <p className="font-medium">
+                  {t(machineName ? "Found in Full BOM" : "Found in this group's Full BOM")}
                 </p>
+                <p>{lookup.item.description}</p>
+                {machineName ? (
+                  <p>
+                    {t("Qty")} {lookup.item.qty ?? "-"} · {t("Unit")} {lookup.item.uom ?? "-"}
+                  </p>
+                ) : lookup.item.machineCount ? (
+                  <p>{t("Matched in {count} machines").replace("{count}", String(lookup.item.machineCount))}</p>
+                ) : null}
               </div>
             </>
           ) : (
             <>
               <CircleAlert className="h-3.5 w-3.5 shrink-0" />
-              <p>{t("Not found in this machine's Full BOM — double-check the part number.")}</p>
+              <p>
+                {t(
+                  machineName
+                    ? "Not found in this machine's Full BOM — double-check the part number."
+                    : "Not found in this group's Full BOM — double-check the part number."
+                )}
+              </p>
             </>
           )}
         </div>
@@ -308,15 +397,17 @@ function PartLookupBanner({
 export default function InventoryPage() {
   const t = useTranslate(zh);
   const supabaseRef = useRef<SupabaseClient | null>(null);
-  function getSupabase() {
+  const getSupabase = useCallback(() => {
     if (!supabaseRef.current) supabaseRef.current = createClient();
     return supabaseRef.current;
-  }
+  }, []);
 
   const { employeeId, group, allowedMachines, notFound, loading: groupLoading } = useEmployeeGroup();
+  const machineNames = useMemo(() => Array.from(allowedMachines ?? []).sort(), [allowedMachines]);
 
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
+  const [storageLocations, setStorageLocations] = useState<InventoryStorageLocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
@@ -326,26 +417,39 @@ export default function InventoryPage() {
   const [selectedMachineName, setSelectedMachineName] = useState("");
   const [isLoan, setIsLoan] = useState(false);
   const [borrower, setBorrower] = useState("");
+  const [reportIam, setReportIam] = useState("");
+  const [reportStorageLocationId, setReportStorageLocationId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [storageLocationDialogOpen, setStorageLocationDialogOpen] = useState(false);
+  const [newStorageLocationName, setNewStorageLocationName] = useState("");
+  const [storageLocationDrafts, setStorageLocationDrafts] = useState<Record<number, string>>({});
+  const [storageLocationError, setStorageLocationError] = useState<string | null>(null);
+  const [savingStorageLocationId, setSavingStorageLocationId] = useState<number | null>(null);
 
-  const reportSearch = usePartSearch(getSupabase(), selectedMachineName, Boolean(selectedMachineName));
+  const reportSearch = usePartSearch(getSupabase, selectedMachineName, machineNames);
 
   // Whatever the Full BOM lookup last found (or didn't) for the exact text
   // currently in the part name field — set either by clicking a
   // suggestion directly (already known), or on blur for whatever was
   // typed without picking one. Cleared whenever the machine/part text
   // changes, so a stale result never lingers past the input it described.
-  const [partLookup, setPartLookup] = useState<{ item: BomItem | null } | null>(null);
+  const [partLookup, setPartLookup] = useState<{ item: (BomItem & { machineCount?: number }) | null } | null>(null);
   const [partLookupLoading, setPartLookupLoading] = useState(false);
+
+  async function findPartMatch(machineName: string, partNo: string): Promise<BomItem & { machineCount?: number } | null> {
+    if (machineName) return fetchFullBomItemByPartNo(getSupabase(), machineName, partNo);
+    const result = await searchFullBomItems(getSupabase(), machineNames, partNo);
+    return result.items.find((item) => item.part_no.toLowerCase() === partNo.toLowerCase()) ?? null;
+  }
 
   async function handlePartNameBlur() {
     reportSearch.setOpen(false);
     const trimmed = reportSearch.query.trim();
-    if (!selectedMachineName || !trimmed) return;
+    if (!trimmed) return;
     setPartLookupLoading(true);
     try {
-      const item = await fetchFullBomItemByPartNo(getSupabase(), selectedMachineName, trimmed);
+      const item = await findPartMatch(selectedMachineName, trimmed);
       setPartLookup({ item });
     } catch {
       // Best-effort — a failed lookup shouldn't block filling out the form.
@@ -355,7 +459,7 @@ export default function InventoryPage() {
     }
   }
 
-  function selectReportSuggestion(item: BomItem) {
+  function selectReportSuggestion(item: BomItem & { machineCount?: number }) {
     reportSearch.setQuery(item.part_no);
     setPartLookup({ item });
     reportSearch.setOpen(false);
@@ -366,9 +470,11 @@ export default function InventoryPage() {
   // suggestions/found-banner, and the chosen machine is saved on the row
   // as which machine this stock entry was requested because of.
   const [stockMachineName, setStockMachineName] = useState("");
-  const stockSearch = usePartSearch(getSupabase(), stockMachineName, Boolean(stockMachineName));
-  const [stockPartLookup, setStockPartLookup] = useState<{ item: BomItem | null } | null>(null);
+  const stockSearch = usePartSearch(getSupabase, stockMachineName, machineNames);
+  const [stockPartLookup, setStockPartLookup] = useState<{ item: (BomItem & { machineCount?: number }) | null } | null>(null);
   const [stockPartLookupLoading, setStockPartLookupLoading] = useState(false);
+  const [stockIam, setStockIam] = useState("");
+  const [stockStorageLocationId, setStockStorageLocationId] = useState<number | null>(null);
   const [stockDescription, setStockDescription] = useState("");
   const [stockQty, setStockQty] = useState("1");
   const [stockNote, setStockNote] = useState("");
@@ -377,10 +483,10 @@ export default function InventoryPage() {
   async function handleStockPartBlur() {
     stockSearch.setOpen(false);
     const trimmed = stockSearch.query.trim();
-    if (!stockMachineName || !trimmed) return;
+    if (!trimmed) return;
     setStockPartLookupLoading(true);
     try {
-      const item = await fetchFullBomItemByPartNo(getSupabase(), stockMachineName, trimmed);
+      const item = await findPartMatch(stockMachineName, trimmed);
       setStockPartLookup({ item });
     } catch {
       setStockPartLookup(null);
@@ -389,7 +495,7 @@ export default function InventoryPage() {
     }
   }
 
-  function selectStockSuggestion(item: BomItem) {
+  function selectStockSuggestion(item: BomItem & { machineCount?: number }) {
     stockSearch.setQuery(item.part_no);
     setStockDescription(item.description ?? "");
     setStockPartLookup({ item });
@@ -400,6 +506,8 @@ export default function InventoryPage() {
     setStockMachineName(item.machineName);
     stockSearch.setQuery(item.partNo);
     setStockPartLookup(null);
+    setStockIam(item.iam ?? "");
+    setStockStorageLocationId(item.storageLocationId);
     setStockDescription(item.description ?? "");
     setStockQty(String(item.qty));
     setStockNote(item.note ?? "");
@@ -418,11 +526,15 @@ export default function InventoryPage() {
         groupId,
         partNo,
         machineName: stockMachineName,
+        iam: stockIam.trim() || null,
+        storageLocationId: stockStorageLocationId,
         description: stockDescription.trim() || null,
         qty: Math.max(0, Math.round(Number(stockQty) || 0)),
         note: stockNote.trim() || null,
       });
       setStockMachineName("");
+      setStockIam("");
+      setStockStorageLocationId(null);
       stockSearch.reset();
       setStockPartLookup(null);
       setStockDescription("");
@@ -447,23 +559,68 @@ export default function InventoryPage() {
     }
   }
 
+  async function handleAddStorageLocation() {
+    if (!group) return;
+    const name = newStorageLocationName.trim();
+    if (!name) return;
+    setStorageLocationError(null);
+    try {
+      await addStorageLocation(getSupabase(), group.id, name);
+      setNewStorageLocationName("");
+      await loadAll();
+    } catch (err) {
+      setStorageLocationError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRenameStorageLocation(id: number) {
+    if (!group) return;
+    const name = (storageLocationDrafts[id] ?? "").trim();
+    if (!name) return;
+    setStorageLocationError(null);
+    setSavingStorageLocationId(id);
+    try {
+      await renameStorageLocation(getSupabase(), group.id, id, name);
+      await loadAll();
+    } catch (err) {
+      setStorageLocationError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingStorageLocationId(null);
+    }
+  }
+
+  async function handleDeleteStorageLocation(id: number) {
+    if (!group || !window.confirm(t("Delete this storage location?"))) return;
+    setStorageLocationError(null);
+    try {
+      await deleteStorageLocation(getSupabase(), group.id, id);
+      await loadAll();
+    } catch {
+      setStorageLocationError(t("Storage location is in use and cannot be deleted."));
+    }
+  }
+
   async function loadAll() {
     const groupId = group?.id;
     if (groupId == null) {
       setLogs([]);
       setStock([]);
+      setStorageLocations([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [logsData, stockData] = await Promise.all([
+      const [logsData, stockData, locationsData] = await Promise.all([
         fetchLogs(getSupabase(), groupId),
         fetchStock(getSupabase(), groupId),
+        fetchStorageLocations(getSupabase(), groupId),
       ]);
       setLogs(logsData);
       setStock(stockData);
+      setStorageLocations(locationsData);
+      setStorageLocationDrafts(Object.fromEntries(locationsData.map((location) => [location.id, location.name])));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -477,7 +634,10 @@ export default function InventoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeId, group?.id]);
 
-  const machineNames = Array.from(allowedMachines ?? []).sort();
+  const storageLocationNames = useMemo(
+    () => new Map(storageLocations.map((location) => [location.id, location.name])),
+    [storageLocations]
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -492,6 +652,8 @@ export default function InventoryPage() {
         groupId,
         machineName: selectedMachineName,
         partName: reportSearch.query.trim(),
+        iam: reportIam.trim() || null,
+        storageLocationId: reportStorageLocationId,
         isLoan,
         borrower: isLoan ? borrower.trim() || null : null,
         reporterEmployeeId: employeeId,
@@ -502,6 +664,8 @@ export default function InventoryPage() {
       setPartLookup(null);
       setIsLoan(false);
       setBorrower("");
+      setReportIam("");
+      setReportStorageLocationId(null);
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -584,6 +748,22 @@ export default function InventoryPage() {
                 </div>
 
                 <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("IAM")}</label>
+                  <Input value={reportIam} onChange={(event) => setReportIam(event.target.value)} />
+                </div>
+
+                <StorageLocationField
+                  value={reportStorageLocationId}
+                  locations={storageLocations}
+                  onChange={setReportStorageLocationId}
+                  onEdit={() => {
+                    setStorageLocationError(null);
+                    setStorageLocationDialogOpen(true);
+                  }}
+                  t={t}
+                />
+
+                <div className="grid gap-1.5">
                   <label className="text-sm font-medium">{t("Part Name")}</label>
                   <PartSearchCombobox
                     search={reportSearch}
@@ -593,12 +773,18 @@ export default function InventoryPage() {
                     }}
                     onSelect={selectReportSuggestion}
                     onBlur={handlePartNameBlur}
+                    showMachineCount={!selectedMachineName}
                     placeholder={
                       selectedMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
                     }
                     t={t}
                   />
-                  <PartLookupBanner lookup={partLookup} loading={partLookupLoading} t={t} />
+                  <PartLookupBanner
+                    lookup={partLookup}
+                    loading={partLookupLoading}
+                    machineName={selectedMachineName}
+                    t={t}
+                  />
                 </div>
 
                 <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
@@ -659,6 +845,22 @@ export default function InventoryPage() {
                 </div>
 
                 <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("IAM")}</label>
+                  <Input value={stockIam} onChange={(event) => setStockIam(event.target.value)} />
+                </div>
+
+                <StorageLocationField
+                  value={stockStorageLocationId}
+                  locations={storageLocations}
+                  onChange={setStockStorageLocationId}
+                  onEdit={() => {
+                    setStorageLocationError(null);
+                    setStorageLocationDialogOpen(true);
+                  }}
+                  t={t}
+                />
+
+                <div className="grid gap-1.5">
                   <label className="text-sm font-medium">{t("Part Number")}</label>
                   <PartSearchCombobox
                     search={stockSearch}
@@ -668,12 +870,18 @@ export default function InventoryPage() {
                     }}
                     onSelect={selectStockSuggestion}
                     onBlur={handleStockPartBlur}
+                    showMachineCount={!stockMachineName}
                     placeholder={
                       stockMachineName ? t("Type a part number or description…") : t("Type a part number or name…")
                     }
                     t={t}
                   />
-                  <PartLookupBanner lookup={stockPartLookup} loading={stockPartLookupLoading} t={t} />
+                  <PartLookupBanner
+                    lookup={stockPartLookup}
+                    loading={stockPartLookupLoading}
+                    machineName={stockMachineName}
+                    t={t}
+                  />
                 </div>
 
                 <div className="grid gap-1.5">
@@ -751,12 +959,14 @@ export default function InventoryPage() {
               <p className="text-muted-foreground text-sm italic">{t("No stock recorded yet.")}</p>
             ) : (
               <div className="overflow-hidden rounded-lg border bg-card">
-                <Table className="min-w-[820px]">
+                <Table className="min-w-[1000px]">
                   <TableHeader className="bg-muted/60">
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="px-3">{t("Part Number")}</TableHead>
                       <TableHead className="px-3">{t("Description")}</TableHead>
                       <TableHead className="px-3">{t("Machine")}</TableHead>
+                      <TableHead className="px-3">{t("IAM")}</TableHead>
+                      <TableHead className="px-3">{t("Storage Location")}</TableHead>
                       <TableHead className="px-3 text-right">{t("Quantity")}</TableHead>
                       <TableHead className="px-3">{t("Note")}</TableHead>
                       <TableHead className="px-3">{t("Updated")}</TableHead>
@@ -771,6 +981,10 @@ export default function InventoryPage() {
                           {item.description || <span className="text-muted-foreground">-</span>}
                         </TableCell>
                         <TableCell className="px-3">{item.machineName || t("(none)")}</TableCell>
+                        <TableCell className="px-3">{item.iam || "-"}</TableCell>
+                        <TableCell className="px-3">
+                          {item.storageLocationId == null ? "-" : storageLocationNames.get(item.storageLocationId) ?? "-"}
+                        </TableCell>
                         <TableCell className="px-3 text-right font-mono text-sm tabular-nums">{item.qty}</TableCell>
                         <TableCell className="max-w-[200px] whitespace-normal px-3 text-sm">
                           {item.note || <span className="text-muted-foreground">-</span>}
@@ -815,13 +1029,15 @@ export default function InventoryPage() {
           <p className="text-muted-foreground text-sm italic">{t("No records.")}</p>
         ) : (
           <div className="overflow-hidden rounded-lg border bg-card">
-            <Table className="min-w-[760px]">
+            <Table className="min-w-[1000px]">
               <TableHeader className="bg-muted/60">
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="px-3">{t("Status")}</TableHead>
                   <TableHead className="px-3">{t("Part Name")}</TableHead>
                   <TableHead className="px-3">{t("Machine")}</TableHead>
                   <TableHead className="px-3">{t("Details")}</TableHead>
+                  <TableHead className="px-3">{t("IAM")}</TableHead>
+                  <TableHead className="px-3">{t("Storage Location")}</TableHead>
                   <TableHead className="px-3">{t("Reported")}</TableHead>
                   <TableHead className="px-3">{t("Date")}</TableHead>
                   {tab === "active" && <TableHead className="min-w-[220px] px-3">{t("Actions")}</TableHead>}
@@ -839,6 +1055,10 @@ export default function InventoryPage() {
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
+                    </TableCell>
+                    <TableCell className="px-3">{log.iam || "-"}</TableCell>
+                    <TableCell className="px-3">
+                      {log.storageLocationId == null ? "-" : storageLocationNames.get(log.storageLocationId) ?? "-"}
                     </TableCell>
                     <TableCell className="px-3">{log.reporterEmployeeId || "-"}</TableCell>
                     <TableCell className="px-3 whitespace-nowrap">
@@ -860,6 +1080,85 @@ export default function InventoryPage() {
             </Table>
           </div>
         )}
+
+        <Dialog
+          open={storageLocationDialogOpen}
+          onOpenChange={(open) => {
+            setStorageLocationDialogOpen(open);
+            if (!open) setStorageLocationError(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t("Manage storage locations")}</DialogTitle>
+              <DialogDescription>{t("Storage locations are managed for your active group.")}</DialogDescription>
+            </DialogHeader>
+
+            <div className="flex gap-2">
+              <Input
+                value={newStorageLocationName}
+                onChange={(event) => setNewStorageLocationName(event.target.value)}
+                placeholder={t("Add a location")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleAddStorageLocation();
+                  }
+                }}
+              />
+              <Button type="button" onClick={handleAddStorageLocation} disabled={!newStorageLocationName.trim()}>
+                {t("Add location")}
+              </Button>
+            </div>
+
+            {storageLocationError && <p className="text-destructive text-sm">{storageLocationError}</p>}
+
+            <div className="grid max-h-64 gap-2 overflow-y-auto">
+              {storageLocations.length === 0 ? (
+                <p className="text-muted-foreground text-sm">{t("No storage locations yet.")}</p>
+              ) : (
+                storageLocations.map((location) => (
+                  <div key={location.id} className="flex items-center gap-2">
+                    <Input
+                      value={storageLocationDrafts[location.id] ?? location.name}
+                      onChange={(event) =>
+                        setStorageLocationDrafts((previous) => ({
+                          ...previous,
+                          [location.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={savingStorageLocationId === location.id || !(storageLocationDrafts[location.id] ?? location.name).trim()}
+                      onClick={() => handleRenameStorageLocation(location.id)}
+                    >
+                      {savingStorageLocationId === location.id ? t("Submitting") : t("Save location")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t("Delete location")}
+                      title={t("Delete location")}
+                      onClick={() => handleDeleteStorageLocation(location.id)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setStorageLocationDialogOpen(false)}>
+                {t("Close")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

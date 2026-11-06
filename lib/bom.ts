@@ -18,6 +18,10 @@ export interface BomEntry {
   itemsLoaded: boolean;
 }
 
+export interface BomSearchItem extends BomItem {
+  machineCount: number;
+}
+
 export interface MachineGroup {
   machine: string;
   subparts: BomEntry[];
@@ -476,18 +480,24 @@ export async function fetchFullBomItemByPartNo(
 }
 
 export interface BomSearchResult {
-  items: BomItem[];
+  items: BomSearchItem[];
   /** How many distinct parts matched in total, even when `items` was
    * capped at `limit` — lets the UI tell the user there's more to narrow
    * down to instead of silently truncating. */
   totalMatches: number;
 }
 
-/** Live autocomplete search within one machine's Full BOM, matching
- * part_no or description — scoped to one machine's Full BOM instead of
- * every machine's Modules. Calls the search_full_bom_items() RPC (scripts/
- * full-bom-search-distinct-schema.sql) rather than a plain select: the same
- * part_no legitimately repeats many times in one machine's Full BOM (once
+export interface BomSearchItem extends BomItem {
+  machineCount: number;
+}
+
+/** Live autocomplete search within the supplied machine list's Full BOM,
+ * matching part_no or description — never searches across other groups or
+ * Modules. A single-machine search calls search_full_bom_items(); a
+ * group-wide search calls search_full_bom_items_in_machines() from the
+ * inventory IAM/location migration. Both use RPCs rather than a plain
+ * select because the same part_no legitimately repeats many times in one
+ * machine's Full BOM (once
  * per sub-assembly it's used under), so a plain `ilike ... limit N` can
  * fill the entire N-row budget with repeats of one common part and never
  * reach other genuinely different matches — verified against real data,
@@ -502,27 +512,41 @@ export interface BomSearchResult {
  * (via the RPC's count(*) over()) lets the caller surface that instead of
  * silently dropping it.
  *
- * machineName is required, not optional: dropping the machine_name filter
- * removes the only index-assisted narrowing ILIKE gets, and a search
- * across every machine at once (~159 machines, 3M+ rows) reliably hits
- * Postgres' statement timeout — confirmed against real data. */
+ * Group-wide results include the number of matching machines for each
+ * distinct part number. */
 export async function searchFullBomItems(
   supabase: SupabaseClient,
-  machineName: string,
+  machineNames: string[],
   query: string,
   limit = 50
 ): Promise<BomSearchResult> {
+  const uniqueMachineNames = Array.from(new Set(machineNames));
+  if (uniqueMachineNames.length === 0) return { items: [], totalMatches: 0 };
+
+  const singleMachine = uniqueMachineNames.length === 1;
   const { data, error } = await withRetry(() =>
-    supabase.rpc("search_full_bom_items", {
-      p_machine_name: machineName,
-      p_query: query,
-      p_limit: limit,
-    })
+    singleMachine
+      ? supabase.rpc("search_full_bom_items", {
+          p_machine_name: uniqueMachineNames[0],
+          p_query: query,
+          p_limit: limit,
+        })
+      : supabase.rpc("search_full_bom_items_in_machines", {
+          p_machine_names: uniqueMachineNames,
+          p_query: query,
+          p_limit: limit,
+        })
   );
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as (BomItem & { total_matches: number })[];
+  const rows = (data ?? []) as (BomItem & { machine_count?: number; total_matches: number })[];
   return {
-    items: rows.map(({ part_no, description, qty, uom }) => ({ part_no, description, qty, uom })),
+    items: rows.map(({ part_no, description, qty, uom, machine_count }) => ({
+      part_no,
+      description,
+      qty,
+      uom,
+      machineCount: machine_count ?? 1,
+    })),
     totalMatches: rows[0]?.total_matches ?? rows.length,
   };
 }
