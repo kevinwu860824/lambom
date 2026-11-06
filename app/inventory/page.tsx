@@ -495,6 +495,8 @@ export default function InventoryPage() {
   const [stockPartLookupLoading, setStockPartLookupLoading] = useState(false);
   const [stockIam, setStockIam] = useState("");
   const [stockStorageLocationId, setStockStorageLocationId] = useState<number | null>(null);
+  const [stockIsLoan, setStockIsLoan] = useState(false);
+  const [stockBorrower, setStockBorrower] = useState("");
   const [stockDescription, setStockDescription] = useState("");
   const [stockQty, setStockQty] = useState("1");
   const [stockNote, setStockNote] = useState("");
@@ -528,6 +530,8 @@ export default function InventoryPage() {
     setStockPartLookup(null);
     setStockIam(item.iam ?? "");
     setStockStorageLocationId(item.storageLocationId);
+    setStockIsLoan(item.isLoan);
+    setStockBorrower(item.borrower ?? "");
     setStockDescription(item.description ?? "");
     setStockQty(String(item.qty));
     setStockNote(item.note ?? "");
@@ -548,6 +552,8 @@ export default function InventoryPage() {
         machineName: stockMachineName,
         iam: stockIam.trim() || null,
         storageLocationId: stockStorageLocationId,
+        isLoan: stockIsLoan,
+        borrower: stockIsLoan ? stockBorrower.trim() || null : null,
         description: stockDescription.trim() || null,
         qty: Math.max(0, Math.round(Number(stockQty) || 0)),
         note: stockNote.trim() || null,
@@ -555,6 +561,8 @@ export default function InventoryPage() {
       setStockMachineName("");
       setStockIam("");
       setStockStorageLocationId(null);
+      setStockIsLoan(false);
+      setStockBorrower("");
       stockSearch.reset();
       setStockPartLookup(null);
       setStockDescription("");
@@ -774,22 +782,6 @@ export default function InventoryPage() {
                 </div>
 
                 <div className="grid gap-1.5">
-                  <label className="text-sm font-medium">{t("IAM")}</label>
-                  <Input value={reportIam} onChange={(event) => setReportIam(event.target.value)} />
-                </div>
-
-                <StorageLocationField
-                  value={reportStorageLocationId}
-                  locations={storageLocations}
-                  onChange={setReportStorageLocationId}
-                  onEdit={() => {
-                    setStorageLocationError(null);
-                    setStorageLocationDialogOpen(true);
-                  }}
-                  t={t}
-                />
-
-                <div className="grid gap-1.5">
                   <label className="text-sm font-medium">{t("Part Name")}</label>
                   <PartSearchCombobox
                     search={reportSearch}
@@ -814,11 +806,27 @@ export default function InventoryPage() {
                   />
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="grid gap-1.5 sm:col-span-1">
-                    <label className="text-sm font-medium">{t("Description")}</label>
-                    <Input value={reportDescription} onChange={(event) => setReportDescription(event.target.value)} />
-                  </div>
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("Description")}</label>
+                  <Input value={reportDescription} onChange={(event) => setReportDescription(event.target.value)} />
+                </div>
+
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("IAM")}</label>
+                  <Input value={reportIam} onChange={(event) => setReportIam(event.target.value)} />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3 sm:items-end">
+                  <StorageLocationField
+                    value={reportStorageLocationId}
+                    locations={storageLocations}
+                    onChange={setReportStorageLocationId}
+                    onEdit={() => {
+                      setStorageLocationError(null);
+                      setStorageLocationDialogOpen(true);
+                    }}
+                    t={t}
+                  />
                   <div className="grid gap-1.5">
                     <label className="text-sm font-medium">{t("Quantity")}</label>
                     <Input
@@ -893,22 +901,6 @@ export default function InventoryPage() {
                 </div>
 
                 <div className="grid gap-1.5">
-                  <label className="text-sm font-medium">{t("IAM")}</label>
-                  <Input value={stockIam} onChange={(event) => setStockIam(event.target.value)} />
-                </div>
-
-                <StorageLocationField
-                  value={stockStorageLocationId}
-                  locations={storageLocations}
-                  onChange={setStockStorageLocationId}
-                  onEdit={() => {
-                    setStorageLocationError(null);
-                    setStorageLocationDialogOpen(true);
-                  }}
-                  t={t}
-                />
-
-                <div className="grid gap-1.5">
                   <label className="text-sm font-medium">{t("Part Number")}</label>
                   <PartSearchCombobox
                     search={stockSearch}
@@ -937,7 +929,22 @@ export default function InventoryPage() {
                   <Input value={stockDescription} onChange={(e) => setStockDescription(e.target.value)} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">{t("IAM")}</label>
+                  <Input value={stockIam} onChange={(event) => setStockIam(event.target.value)} />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3 sm:items-end">
+                  <StorageLocationField
+                    value={stockStorageLocationId}
+                    locations={storageLocations}
+                    onChange={setStockStorageLocationId}
+                    onEdit={() => {
+                      setStorageLocationError(null);
+                      setStorageLocationDialogOpen(true);
+                    }}
+                    t={t}
+                  />
                   <div className="grid gap-1.5">
                     <label className="text-sm font-medium">{t("Quantity")}</label>
                     <Input
@@ -952,6 +959,27 @@ export default function InventoryPage() {
                     <label className="text-sm font-medium">{t("Note")}</label>
                     <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} />
                   </div>
+                </div>
+
+                <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <Checkbox
+                      checked={stockIsLoan}
+                      onCheckedChange={(checked) => setStockIsLoan(checked === true)}
+                    />
+                    {t("Mark as a loan (not a repair)")}
+                  </label>
+                  {stockIsLoan && (
+                    <div className="grid gap-1.5">
+                      <label className="text-sm font-medium">{t("Borrower")}</label>
+                      <Input
+                        required
+                        placeholder={t("Who's taking this part?")}
+                        value={stockBorrower}
+                        onChange={(event) => setStockBorrower(event.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <Button type="submit" disabled={stockSubmitting || !stockSearch.query.trim()}>
@@ -1013,6 +1041,8 @@ export default function InventoryPage() {
                       <TableHead className="px-3">{t("Part Number")}</TableHead>
                       <TableHead className="px-3">{t("Description")}</TableHead>
                       <TableHead className="px-3">{t("Machine")}</TableHead>
+                      <TableHead className="px-3">{t("Status")}</TableHead>
+                      <TableHead className="px-3">{t("Borrower")}</TableHead>
                       <TableHead className="px-3">{t("IAM")}</TableHead>
                       <TableHead className="px-3">{t("Storage Location")}</TableHead>
                       <TableHead className="px-3 text-right">{t("Quantity")}</TableHead>
@@ -1029,6 +1059,8 @@ export default function InventoryPage() {
                           {item.description || <span className="text-muted-foreground">-</span>}
                         </TableCell>
                         <TableCell className="px-3">{item.machineName || t("(none)")}</TableCell>
+                        <TableCell className="px-3">{item.isLoan ? t("loaned") : "-"}</TableCell>
+                        <TableCell className="px-3">{item.isLoan ? item.borrower || "-" : "-"}</TableCell>
                         <TableCell className="px-3">{item.iam || "-"}</TableCell>
                         <TableCell className="px-3">
                           {item.storageLocationId == null ? "-" : storageLocationNames.get(item.storageLocationId) ?? "-"}

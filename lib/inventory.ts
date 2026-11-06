@@ -178,6 +178,8 @@ export interface StockItem {
   machineName: string;
   iam: string | null;
   storageLocationId: number | null;
+  isLoan: boolean;
+  borrower: string | null;
   description: string | null;
   qty: number;
   note: string | null;
@@ -188,7 +190,7 @@ export async function fetchStock(supabase: SupabaseClient, groupId: number): Pro
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_stock")
-      .select("id,group_id,part_no,machine_name,iam,storage_location_id,description,qty,note,updated_at")
+      .select("id,group_id,part_no,machine_name,iam,storage_location_id,is_loan,borrower,description,qty,note,updated_at")
       .eq("group_id", groupId)
       .order("part_no", { ascending: true })
   );
@@ -200,6 +202,8 @@ export async function fetchStock(supabase: SupabaseClient, groupId: number): Pro
     machineName: row.machine_name as string,
     iam: row.iam as string | null,
     storageLocationId: row.storage_location_id as number | null,
+    isLoan: row.is_loan as boolean,
+    borrower: row.borrower as string | null,
     description: row.description as string | null,
     qty: row.qty as number,
     note: row.note as string | null,
@@ -220,6 +224,8 @@ export async function upsertStockItem(
     machineName: string;
     iam: string | null;
     storageLocationId: number | null;
+    isLoan: boolean;
+    borrower: string | null;
     description: string | null;
     qty: number;
     note: string | null;
@@ -233,6 +239,8 @@ export async function upsertStockItem(
         machine_name: input.machineName,
         iam: input.iam,
         storage_location_id: input.storageLocationId,
+        is_loan: input.isLoan,
+        borrower: input.borrower,
         description: input.description,
         qty: input.qty,
         note: input.note,
