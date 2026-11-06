@@ -19,6 +19,9 @@ export interface InventoryLog {
   groupId: number;
   machineName: string;
   partName: string;
+  description: string | null;
+  qty: number;
+  note: string | null;
   iam: string | null;
   storageLocationId: number | null;
   status: InventoryLogStatus;
@@ -33,7 +36,7 @@ export async function fetchLogs(supabase: SupabaseClient, groupId: number): Prom
   const { data, error } = await withRetry(() =>
     supabase
       .from("inv_logs")
-      .select("id,group_id,machine_name,part_name,iam,storage_location_id,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
+      .select("id,group_id,machine_name,part_name,description,qty,note,iam,storage_location_id,status,is_loan,borrower,reporter_employee_id,created_at,updated_at")
       .eq("group_id", groupId)
       .order("created_at", { ascending: false })
   );
@@ -43,6 +46,9 @@ export async function fetchLogs(supabase: SupabaseClient, groupId: number): Prom
     groupId: row.group_id as number,
     machineName: row.machine_name as string,
     partName: row.part_name as string,
+    description: row.description as string | null,
+    qty: row.qty as number,
+    note: row.note as string | null,
     iam: row.iam as string | null,
     storageLocationId: row.storage_location_id as number | null,
     status: row.status as InventoryLogStatus,
@@ -60,6 +66,9 @@ export async function createLog(
     groupId: number;
     machineName: string;
     partName: string;
+    description: string | null;
+    qty: number;
+    note: string | null;
     iam: string | null;
     storageLocationId: number | null;
     isLoan: boolean;
@@ -72,6 +81,9 @@ export async function createLog(
       group_id: input.groupId,
       machine_name: input.machineName,
       part_name: input.partName,
+      description: input.description,
+      qty: input.qty,
+      note: input.note,
       iam: input.iam,
       storage_location_id: input.storageLocationId,
       status: input.isLoan ? "loaned" : "missing",

@@ -60,6 +60,9 @@ const zh: Record<string, string> = {
   "Select machine": "選擇機台",
   "(none)": "(不選)",
   "Part Name": "零件名稱",
+  "Description": "說明",
+  "Quantity": "數量",
+  "Note": "備註",
   "Type a part number or description…": "輸入料號或說明…",
   "Type a part number or name…": "輸入料號或零件名稱…",
   "+{count} more match — type more to narrow down": "還有 {count} 筆相符,請輸入更多字元縮小範圍",
@@ -116,9 +119,6 @@ const zh: Record<string, string> = {
   "Storage location is in use and cannot be deleted.": "此存放地點仍有紀錄使用，無法刪除。",
   "Delete this storage location?": "確定刪除此存放地點？",
   Close: "關閉",
-  Description: "說明",
-  Quantity: "數量",
-  Note: "備註",
   Save: "儲存",
   Edit: "編輯",
   Delete: "刪除",
@@ -415,6 +415,9 @@ export default function InventoryPage() {
 
   // Report form state
   const [selectedMachineName, setSelectedMachineName] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
+  const [reportQty, setReportQty] = useState("1");
+  const [reportNote, setReportNote] = useState("");
   const [isLoan, setIsLoan] = useState(false);
   const [borrower, setBorrower] = useState("");
   const [reportIam, setReportIam] = useState("");
@@ -451,6 +454,7 @@ export default function InventoryPage() {
     try {
       const item = await findPartMatch(selectedMachineName, trimmed);
       setPartLookup({ item });
+      if (item?.description) setReportDescription((current) => current.trim() || item.description || "");
     } catch {
       // Best-effort — a failed lookup shouldn't block filling out the form.
       setPartLookup(null);
@@ -462,6 +466,7 @@ export default function InventoryPage() {
   function selectReportSuggestion(item: BomItem & { machineCount?: number }) {
     reportSearch.setQuery(item.part_no);
     setPartLookup({ item });
+    setReportDescription(item.description ?? "");
     reportSearch.setOpen(false);
   }
 
@@ -652,6 +657,9 @@ export default function InventoryPage() {
         groupId,
         machineName: selectedMachineName,
         partName: reportSearch.query.trim(),
+        description: reportDescription.trim() || null,
+        qty: Math.max(1, Math.round(Number(reportQty) || 1)),
+        note: reportNote.trim() || null,
         iam: reportIam.trim() || null,
         storageLocationId: reportStorageLocationId,
         isLoan,
@@ -662,6 +670,9 @@ export default function InventoryPage() {
       setSelectedMachineName("");
       reportSearch.reset();
       setPartLookup(null);
+      setReportDescription("");
+      setReportQty("1");
+      setReportNote("");
       setIsLoan(false);
       setBorrower("");
       setReportIam("");
@@ -770,6 +781,7 @@ export default function InventoryPage() {
                     onChange={(v) => {
                       reportSearch.setQuery(v);
                       setPartLookup(null);
+                      setReportDescription("");
                     }}
                     onSelect={selectReportSuggestion}
                     onBlur={handlePartNameBlur}
@@ -785,6 +797,27 @@ export default function InventoryPage() {
                     machineName={selectedMachineName}
                     t={t}
                   />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="grid gap-1.5 sm:col-span-1">
+                    <label className="text-sm font-medium">{t("Description")}</label>
+                    <Input value={reportDescription} onChange={(event) => setReportDescription(event.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Quantity")}</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={reportQty}
+                      onChange={(event) => setReportQty(event.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label className="text-sm font-medium">{t("Note")}</label>
+                    <Input value={reportNote} onChange={(event) => setReportNote(event.target.value)} />
+                  </div>
                 </div>
 
                 <div className="bg-muted/50 grid gap-3 rounded-lg border p-3">
@@ -1034,6 +1067,9 @@ export default function InventoryPage() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="px-3">{t("Status")}</TableHead>
                   <TableHead className="px-3">{t("Part Name")}</TableHead>
+                  <TableHead className="px-3">{t("Description")}</TableHead>
+                  <TableHead className="px-3 text-right">{t("Quantity")}</TableHead>
+                  <TableHead className="px-3">{t("Note")}</TableHead>
                   <TableHead className="px-3">{t("Machine")}</TableHead>
                   <TableHead className="px-3">{t("Details")}</TableHead>
                   <TableHead className="px-3">{t("IAM")}</TableHead>
@@ -1048,6 +1084,13 @@ export default function InventoryPage() {
                   <TableRow key={log.id}>
                     <TableCell className="px-3 font-medium">{t(log.status)}</TableCell>
                     <TableCell className="px-3 font-medium">{log.partName}</TableCell>
+                    <TableCell className="max-w-[220px] whitespace-normal px-3">
+                      {log.description || <span className="text-muted-foreground">-</span>}
+                    </TableCell>
+                    <TableCell className="px-3 text-right font-mono tabular-nums">{log.qty}</TableCell>
+                    <TableCell className="max-w-[200px] whitespace-normal px-3">
+                      {log.note || <span className="text-muted-foreground">-</span>}
+                    </TableCell>
                     <TableCell className="px-3">{log.machineName || t("(none)")}</TableCell>
                     <TableCell className="px-3 text-sm">
                       {log.isLoan && log.borrower ? (

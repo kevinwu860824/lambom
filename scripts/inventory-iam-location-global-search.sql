@@ -117,6 +117,8 @@ as $$
     matches.machine_count,
     count(*) over() as total_matches
   from matches
-  order by matches.part_no
+  order by
+    case when lower(matches.part_no) = lower(p_query) then 0 else 1 end,
+    matches.part_no
   limit p_limit;
 $$;
