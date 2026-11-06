@@ -90,11 +90,11 @@ const zh: Record<string, string> = {
   Actions: "操作",
   Updated: "更新時間",
   Reported: "回報人",
-  "Mark as ordered": "標記為已下訂",
-  "Mark as arrived": "標記為已到貨",
-  "Mark as picked up / installed": "標記為已領取/已安裝",
-  "Mark as completed": "核定結案",
-  "Mark as returned": "標記為已歸還",
+  Order: "下訂",
+  Received: "到貨",
+  "Picked up": "領取",
+  Complete: "結案",
+  Return: "歸還",
   "Waiting on the next step…": "等待下一步處理中…",
   missing: "缺料待訂",
   ordered: "採購中",
@@ -1076,7 +1076,7 @@ export default function InventoryPage() {
                   <TableHead className="px-3">{t("Storage Location")}</TableHead>
                   <TableHead className="px-3">{t("Reported")}</TableHead>
                   <TableHead className="px-3">{t("Date")}</TableHead>
-                  {tab === "active" && <TableHead className="min-w-[220px] px-3">{t("Actions")}</TableHead>}
+                  {tab === "active" && <TableHead className="px-3">{t("Actions")}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1223,32 +1223,32 @@ function StatusAction({
   switch (log.status) {
     case "missing":
       return (
-        <Button className="w-full" disabled={updating} onClick={() => onUpdate(log, "ordered")}>
-          {icon ?? <ShoppingCart className="h-4 w-4" />} {t("Mark as ordered")}
+        <Button size="sm" className="whitespace-nowrap px-2.5" disabled={updating} onClick={() => onUpdate(log, "ordered")}>
+          {icon ?? <ShoppingCart className="h-4 w-4" />} {t("Order")}
         </Button>
       );
     case "ordered":
       return (
-        <Button className="w-full" disabled={updating} onClick={() => onUpdate(log, "arrived")}>
-          {icon ?? <Truck className="h-4 w-4" />} {t("Mark as arrived")}
+        <Button size="sm" className="whitespace-nowrap px-2.5" disabled={updating} onClick={() => onUpdate(log, "arrived")}>
+          {icon ?? <Truck className="h-4 w-4" />} {t("Received")}
         </Button>
       );
     case "arrived":
       return (
-        <Button className="w-full" disabled={updating} onClick={() => onUpdate(log, "picked_up")}>
-          {icon ?? <PackageCheck className="h-4 w-4" />} {t("Mark as picked up / installed")}
+        <Button size="sm" className="whitespace-nowrap px-2.5" disabled={updating} onClick={() => onUpdate(log, "picked_up")}>
+          {icon ?? <PackageCheck className="h-4 w-4" />} {t("Picked up")}
         </Button>
       );
     case "picked_up":
       return (
-        <Button className="w-full" disabled={updating} onClick={() => onUpdate(log, "completed")}>
-          {icon ?? <PackageCheck className="h-4 w-4" />} {t("Mark as completed")}
+        <Button size="sm" className="whitespace-nowrap px-2.5" disabled={updating} onClick={() => onUpdate(log, "completed")}>
+          {icon ?? <PackageCheck className="h-4 w-4" />} {t("Complete")}
         </Button>
       );
     case "loaned":
       return (
-        <Button className="w-full" disabled={updating} onClick={() => onUpdate(log, "returned")}>
-          {icon ?? <RotateCcw className="h-4 w-4" />} {t("Mark as returned")}
+        <Button size="sm" className="whitespace-nowrap px-2.5" disabled={updating} onClick={() => onUpdate(log, "returned")}>
+          {icon ?? <RotateCcw className="h-4 w-4" />} {t("Return")}
         </Button>
       );
     default:
