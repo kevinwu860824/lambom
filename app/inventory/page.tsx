@@ -43,7 +43,6 @@ const zh: Record<string, string> = {
   "Report missing/loaned parts and track them through to completion — records are shared within your active group.":
     "回報缺料或借出零件並追蹤結案——紀錄只會在目前群組內共用。",
   "Back to Internal Tools": "回內部工具首頁",
-  "Report a Part": "回報零件",
   Machine: "機台",
   "Select machine": "選擇機台",
   "(none)": "(不選)",
@@ -566,7 +565,7 @@ export default function InventoryPage() {
             className={cn("col-start-1 row-start-1", tab === "stock" && "invisible")}
           >
             <CardHeader>
-              <CardTitle>{t("Report a Part")}</CardTitle>
+              <CardTitle>{t("Add / Update Stock")}</CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="grid gap-4">
