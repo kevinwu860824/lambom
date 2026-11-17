@@ -151,6 +151,19 @@ const EDIT_STORAGE_LOCATIONS_VALUE = "__edit_storage_locations__";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
+/** How long to wait after the user stops typing before actually searching —
+ * scaled by how many machines a group-wide search has to cover, since a
+ * search spanning a very large machine list is both slower per-request and
+ * more expensive to fire repeatedly. A single/few-machine search (the
+ * common case) still gets a snappy-ish 1s; a search covering most of the
+ * system's machines waits longer so a user mid-typing doesn't fire several
+ * of the most expensive possible queries back to back. */
+function partSearchDebounceDelay(machineCount: number): number {
+  if (machineCount > 100) return 3000;
+  if (machineCount > 50) return 2000;
+  return 1000;
+}
+
 /** Debounced autocomplete against one machine or the active group's Full BOMs. */
 function usePartSearch(
   getSupabase: () => SupabaseClient,
@@ -165,9 +178,12 @@ function usePartSearch(
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
-    const timer = setTimeout(() => setDebounced(query), 300);
+    // Typing or deleting a character resets this timer (the cleanup below
+    // clears it before the next run schedules a new one) — only a real
+    // pause in editing, for the full delay, actually triggers a search.
+    const timer = setTimeout(() => setDebounced(query), partSearchDebounceDelay(searchMachineNames.length));
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, searchMachineNames.length]);
 
   const [suggestions, setSuggestions] = useState<Awaited<ReturnType<typeof searchFullBomItems>>["items"]>([]);
   const [total, setTotal] = useState(0);
@@ -183,7 +199,12 @@ function usePartSearch(
   useEffect(() => {
     if (!eligible || groupId == null) return;
     let cancelled = false;
-    searchFullBomItems(getSupabase(), searchMachineNames, trimmed, groupId)
+    // Actually aborts the in-flight request (not just discards its result)
+    // when a newer search supersedes it before this one returns — a slow
+    // query against a large machine list otherwise keeps running
+    // server-side for nothing once its answer is no longer wanted.
+    const controller = new AbortController();
+    searchFullBomItems(getSupabase(), searchMachineNames, trimmed, groupId, 50, controller.signal)
       .then((result) => {
         if (!cancelled) {
           setSuggestions(result.items);
@@ -198,6 +219,7 @@ function usePartSearch(
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [eligible, getSupabase, searchMachineNames, trimmed, groupId]);
 

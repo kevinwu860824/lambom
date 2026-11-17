@@ -544,27 +544,33 @@ export async function searchFullBomItems(
   machineNames: string[],
   query: string,
   groupId: number,
-  limit = 50
+  limit = 50,
+  signal?: AbortSignal
 ): Promise<BomSearchResult> {
   const uniqueMachineNames = Array.from(new Set(machineNames));
   if (uniqueMachineNames.length === 0) return { items: [], totalMatches: 0 };
 
   const singleMachine = uniqueMachineNames.length === 1;
-  const { data, error } = await withRetry(() =>
-    singleMachine
-      ? supabase.rpc("search_full_bom_items", {
-          p_machine_name: uniqueMachineNames[0],
-          p_query: query,
-          p_group_id: groupId,
-          p_limit: limit,
-        })
-      : supabase.rpc("search_full_bom_items_in_machines", {
-          p_machine_names: uniqueMachineNames,
-          p_query: query,
-          p_group_id: groupId,
-          p_limit: limit,
-        })
-  );
+  // Not wrapped in withRetry: this backs live, frequently-superseded
+  // autocomplete — a slow/aborted attempt isn't worth retrying with
+  // backoff delays, since a fresher call for whatever the user has since
+  // typed will fire shortly anyway, and retrying a query the caller just
+  // aborted would defeat the point of aborting it.
+  let builder = singleMachine
+    ? supabase.rpc("search_full_bom_items", {
+        p_machine_name: uniqueMachineNames[0],
+        p_query: query,
+        p_group_id: groupId,
+        p_limit: limit,
+      })
+    : supabase.rpc("search_full_bom_items_in_machines", {
+        p_machine_names: uniqueMachineNames,
+        p_query: query,
+        p_group_id: groupId,
+        p_limit: limit,
+      });
+  if (signal) builder = builder.abortSignal(signal);
+  const { data, error } = await builder;
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as (BomItem & {
     custom_name: string | null;
