@@ -15,7 +15,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
-import { fetchCustomNames, fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
+import {
+  combinePartNames,
+  fetchCustomNames,
+  fetchFullBomItemByPartNo,
+  fetchKeyPartNamesForMachines,
+  searchFullBomItems,
+  type BomItem,
+} from "@/lib/bom";
 import { CustomNameButton } from "@/components/custom-name-button";
 import {
   addStorageLocation,
@@ -248,7 +255,9 @@ function PartSearchCombobox({
       />
       {search.open && search.suggestions.length > 0 && (
         <div className="bg-popover absolute z-10 mt-1 w-full max-h-64 overflow-y-auto rounded-md border shadow-md">
-          {search.suggestions.map((item, idx) => (
+          {search.suggestions.map((item, idx) => {
+            const displayName = combinePartNames(item.customName, item.keyPartName);
+            return (
             <button
               key={`${item.part_no}-${idx}`}
               type="button"
@@ -258,20 +267,21 @@ function PartSearchCombobox({
                 onSelect(item);
               }}
             >
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono text-xs">{item.part_no}</span>
-                {item.customName && (
-                  <span className="text-primary truncate text-xs font-medium">({item.customName})</span>
-                )}
-              </div>
-              {item.description && <div className="text-muted-foreground truncate text-xs">{item.description}</div>}
+              <div className="font-mono text-xs">{item.part_no}</div>
+              {(item.description || displayName) && (
+                <div className="text-muted-foreground truncate text-xs">
+                  {item.description}
+                  {displayName && <span className="text-primary font-medium"> ({displayName})</span>}
+                </div>
+              )}
               {showMachineCount && (
                 <div className="mt-0.5 text-muted-foreground text-[11px]">
                   {t("Matched in {count} machines").replace("{count}", String(item.machineCount))}
                 </div>
               )}
             </button>
-          ))}
+            );
+          })}
           {search.truncatedCount > 0 && (
             <p className="text-muted-foreground border-t px-3 py-1.5 text-xs">
               {t("+{count} more match — type more to narrow down").replace("{count}", String(search.truncatedCount))}
@@ -397,7 +407,6 @@ function PartLookupBanner({
                   <p className="font-medium">
                     {t(machineName ? "Found in Full BOM" : "Found in this group's Full BOM")}
                   </p>
-                  {lookup.item.customName && <p className="font-medium">({lookup.item.customName})</p>}
                   {groupId != null && (
                     <CustomNameButton
                       groupId={groupId}
@@ -407,7 +416,15 @@ function PartLookupBanner({
                     />
                   )}
                 </div>
-                <p>{lookup.item.description}</p>
+                <p>
+                  {lookup.item.description}
+                  {combinePartNames(lookup.item.customName, lookup.item.keyPartName) && (
+                    <span className="font-medium">
+                      {" "}
+                      ({combinePartNames(lookup.item.customName, lookup.item.keyPartName)})
+                    </span>
+                  )}
+                </p>
                 {machineName ? (
                   <p>
                     {t("Qty")} {lookup.item.qty ?? "-"} · {t("Unit")} {lookup.item.uom ?? "-"}
@@ -450,6 +467,7 @@ export default function InventoryPage() {
   const [stock, setStock] = useState<StockItem[]>([]);
   const [storageLocations, setStorageLocations] = useState<InventoryStorageLocation[]>([]);
   const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
+  const [keyPartNames, setKeyPartNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
@@ -664,22 +682,25 @@ export default function InventoryPage() {
       setStock([]);
       setStorageLocations([]);
       setCustomNames(new Map());
+      setKeyPartNames(new Map());
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [logsData, stockData, locationsData, customNamesData] = await Promise.all([
+      const [logsData, stockData, locationsData, customNamesData, keyPartNamesData] = await Promise.all([
         fetchLogs(getSupabase(), groupId),
         fetchStock(getSupabase(), groupId),
         fetchStorageLocations(getSupabase(), groupId),
         fetchCustomNames(getSupabase(), groupId),
+        fetchKeyPartNamesForMachines(getSupabase(), machineNames),
       ]);
       setLogs(logsData);
       setStock(stockData);
       setStorageLocations(locationsData);
       setCustomNames(customNamesData);
+      setKeyPartNames(keyPartNamesData);
       setStorageLocationDrafts(Object.fromEntries(locationsData.map((location) => [location.id, location.name])));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1096,14 +1117,15 @@ export default function InventoryPage() {
                   <TableBody>
                     {stock.map((item) => (
                       <TableRow key={item.id}>
-                        <TableCell className="px-3 text-xs font-medium">
-                          <span className="font-mono">{item.partNo}</span>
-                          {customNames.get(item.partNo) && (
-                            <span className="text-primary ml-1.5">({customNames.get(item.partNo)})</span>
-                          )}
-                        </TableCell>
+                        <TableCell className="px-3 font-mono text-xs font-medium">{item.partNo}</TableCell>
                         <TableCell className="max-w-[240px] whitespace-normal px-3 text-sm">
                           {item.description || <span className="text-muted-foreground">-</span>}
+                          {combinePartNames(customNames.get(item.partNo), keyPartNames.get(item.partNo)) && (
+                            <span className="text-primary font-medium">
+                              {" "}
+                              ({combinePartNames(customNames.get(item.partNo), keyPartNames.get(item.partNo))})
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell className="px-3">{item.machineName || t("(none)")}</TableCell>
                         <TableCell className="px-3">{item.isLoan ? t("loaned") : "-"}</TableCell>
@@ -1177,14 +1199,15 @@ export default function InventoryPage() {
                 {visibleLogs.map((log) => (
                   <TableRow key={log.id}>
                     <TableCell className="px-3 font-medium">{t(log.status)}</TableCell>
-                    <TableCell className="px-3 font-medium">
-                      {log.partName}
-                      {customNames.get(log.partName) && (
-                        <span className="text-primary ml-1.5">({customNames.get(log.partName)})</span>
-                      )}
-                    </TableCell>
+                    <TableCell className="px-3 font-medium">{log.partName}</TableCell>
                     <TableCell className="max-w-[220px] whitespace-normal px-3">
                       {log.description || <span className="text-muted-foreground">-</span>}
+                      {combinePartNames(customNames.get(log.partName), keyPartNames.get(log.partName)) && (
+                        <span className="text-primary font-medium">
+                          {" "}
+                          ({combinePartNames(customNames.get(log.partName), keyPartNames.get(log.partName))})
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="px-3 text-right font-mono tabular-nums">{log.qty}</TableCell>
                     <TableCell className="max-w-[200px] whitespace-normal px-3">

@@ -8,6 +8,7 @@ import {
   buildBomTree,
   documentPartCodeFor,
   fetchCustomNames,
+  fetchKeyPartNames,
   DOCUMENT_PART_PREFIXES,
   type BomTreeItem,
   type BomTreeNode,
@@ -82,13 +83,14 @@ function collectExpandablePaths(nodes: BomTreeNode[], idPrefix: string, out: Set
 function collectMatches(
   subpartTrees: SubpartTree[],
   normalizedQuery: string,
-  customNames: Map<string, string>
+  customNames: Map<string, string>,
+  keyPartNames: Map<string, string>
 ): TreeMatch[] {
   if (!normalizedQuery) return [];
   const matches: TreeMatch[] = [];
   function walk(nodes: BomTreeNode[], idPrefix: string) {
     for (const node of nodes) {
-      if (nodeMatchesQuery(node, normalizedQuery, customNames)) {
+      if (nodeMatchesQuery(node, normalizedQuery, customNames, keyPartNames)) {
         matches.push({ id: `${idPrefix}:${node.path}` });
       }
       walk(node.children, idPrefix);
@@ -193,6 +195,24 @@ export function BomStructureViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
+  // key_parts has no group_id column, so (unlike customNames above) this is
+  // scoped to whichever single machine is currently selected rather than
+  // the whole group — same boundary the search RPCs use.
+  const [keyPartNames, setKeyPartNames] = useState<Map<string, string>>(new Map());
+  function refreshKeyPartNames() {
+    if (!machine) return;
+    fetchKeyPartNames(getSupabase(), machine)
+      .then(setKeyPartNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
+  useEffect(() => {
+    if (!machine) return;
+    refreshKeyPartNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machine]);
+
   // Rebuilt whenever visibleDocumentCodes changes — filtering the flat
   // items before buildBomTree naturally drops a hidden node's whole
   // subtree too (its children become unreachable from the root during tree
@@ -248,8 +268,8 @@ export function BomStructureViewer({
 
   const normalizedQuery = normalizeSearchText(deferredQuery);
   const matches = useMemo(
-    () => collectMatches(visibleSubpartTrees, normalizedQuery, customNames),
-    [visibleSubpartTrees, normalizedQuery, customNames]
+    () => collectMatches(visibleSubpartTrees, normalizedQuery, customNames, keyPartNames),
+    [visibleSubpartTrees, normalizedQuery, customNames, keyPartNames]
   );
 
   // Recomputed fresh from the current match set every time (not merged
@@ -733,6 +753,7 @@ export function BomStructureViewer({
                         normalizedQuery={normalizedQuery}
                         activeMatchId={activeMatch?.id ?? null}
                         customNames={customNames}
+                        keyPartNames={keyPartNames}
                         groupId={groupId}
                         onCustomNameSaved={refreshCustomNames}
                       />

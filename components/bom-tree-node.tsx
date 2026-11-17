@@ -3,7 +3,7 @@
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
-import type { BomTreeNode } from "@/lib/bom";
+import { combinePartNames, type BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
 import { CustomNameButton } from "@/components/custom-name-button";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
@@ -15,13 +15,15 @@ export function normalizeSearchText(s: string): string {
 export function nodeMatchesQuery(
   node: BomTreeNode,
   normalizedQuery: string,
-  customNames?: Map<string, string>
+  customNames?: Map<string, string>,
+  keyPartNames?: Map<string, string>
 ): boolean {
   if (!normalizedQuery) return false;
   return (
     normalizeSearchText(node.item.part_no).includes(normalizedQuery) ||
     normalizeSearchText(node.item.description ?? "").includes(normalizedQuery) ||
-    normalizeSearchText(customNames?.get(node.item.part_no) ?? "").includes(normalizedQuery)
+    normalizeSearchText(customNames?.get(node.item.part_no) ?? "").includes(normalizedQuery) ||
+    normalizeSearchText(keyPartNames?.get(node.item.part_no) ?? "").includes(normalizedQuery)
   );
 }
 
@@ -86,6 +88,7 @@ export function BomTreeNodeRow({
   normalizedQuery,
   activeMatchId,
   customNames,
+  keyPartNames,
   groupId,
   onCustomNameSaved,
 }: {
@@ -96,9 +99,11 @@ export function BomTreeNodeRow({
   normalizedQuery: string;
   activeMatchId: string | null;
   customNames: Map<string, string>;
+  keyPartNames: Map<string, string>;
   groupId: number | undefined;
   onCustomNameSaved: () => void;
 }) {
+  const displayName = combinePartNames(customNames.get(node.item.part_no), keyPartNames.get(node.item.part_no));
   const id = `${idPrefix}:${node.path}`;
   const expanded = expandedPaths.has(id);
   const hasChildren = node.children.length > 0;
@@ -125,14 +130,14 @@ export function BomTreeNodeRow({
           <span className="shrink-0 font-mono text-xs">
             <HighlightedText text={node.item.part_no} normalizedQuery={normalizedQuery} />
           </span>
-          {customNames.get(node.item.part_no) && (
-            <span className="text-primary shrink-0 truncate text-xs font-medium">
-              (<HighlightedText text={customNames.get(node.item.part_no) ?? ""} normalizedQuery={normalizedQuery} />)
-            </span>
-          )}
           <span className="text-muted-foreground truncate">
             <HighlightedText text={node.item.description ?? ""} normalizedQuery={normalizedQuery} />
           </span>
+          {displayName && (
+            <span className="text-primary shrink-0 truncate text-xs font-medium">
+              (<HighlightedText text={displayName} normalizedQuery={normalizedQuery} />)
+            </span>
+          )}
           <span className="text-muted-foreground ml-auto shrink-0 pl-2 text-xs whitespace-nowrap">
             {node.item.qty ?? "-"} {node.item.uom ?? ""}
           </span>
@@ -173,6 +178,7 @@ export function BomTreeNodeRow({
               normalizedQuery={normalizedQuery}
               activeMatchId={activeMatchId}
               customNames={customNames}
+              keyPartNames={keyPartNames}
               groupId={groupId}
               onCustomNameSaved={onCustomNameSaved}
             />

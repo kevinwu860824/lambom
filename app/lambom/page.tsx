@@ -211,10 +211,22 @@ export default function Home() {
     setPositionTarget({ partNo: item.part_no, description: item.description, machine });
   }
 
-  function matchesResultFilter(item: AggregatedItem, keyword: string, customNames: Map<string, string>): boolean {
+  function matchesResultFilter(
+    item: AggregatedItem,
+    keyword: string,
+    customNames: Map<string, string>,
+    keyPartNames: Map<string, string>
+  ): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return true;
-    const haystack = `${item.part_no} ${item.description ?? ""} ${customNames.get(item.part_no) ?? ""}`.toLowerCase();
+    // Whitespace stripped from the haystack (not from each already-split
+    // term) so "ATM Robot" / "atmrobot" / "ATMROBOT" all find each other —
+    // each space-separated term in the typed keyword still independently
+    // narrows the result set (the documented "all must match" behavior),
+    // this only makes each term's own comparison whitespace-insensitive.
+    const haystack = `${item.part_no} ${item.description ?? ""} ${customNames.get(item.part_no) ?? ""} ${keyPartNames.get(item.part_no) ?? ""}`
+      .toLowerCase()
+      .replace(/\s+/g, "");
     return terms.every((term) => haystack.includes(term));
   }
 
@@ -455,8 +467,9 @@ export default function Home() {
   }
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
+  const keyPartNameMap = useMemo(() => new Map(keyParts.map((k) => [k.part_no, k.custom_name])), [keyParts]);
   function isVisible(item: AggregatedItem): boolean {
-    if (!matchesResultFilter(item, resultFilter, customNames)) return false;
+    if (!matchesResultFilter(item, resultFilter, customNames, keyPartNameMap)) return false;
     const code = documentPartCodeFor(item.part_no);
     return code === null || visibleDocumentCodes.has(code);
   }
@@ -967,9 +980,6 @@ function PartTable({
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <span>{item.part_no}</span>
-                      {customNames.get(item.part_no) && (
-                        <span className="text-primary font-medium">({customNames.get(item.part_no)})</span>
-                      )}
                       {groupId != null && (
                         <CustomNameButton
                           groupId={groupId}
@@ -993,7 +1003,12 @@ function PartTable({
                       <InventoryLookupButton partNo={item.part_no} />
                     </div>
                   </TableCell>
-                  <TableCell>{item.description}</TableCell>
+                  <TableCell>
+                    {item.description}
+                    {customNames.get(item.part_no) && (
+                      <span className="text-primary font-medium"> ({customNames.get(item.part_no)})</span>
+                    )}
+                  </TableCell>
                   <TableCell>{item.qty ?? "-"}</TableCell>
                   <TableCell>{item.uom ?? ""}</TableCell>
                   {hasKeyPartColumn && (

@@ -11,6 +11,21 @@ export interface BomItem {
   /** This group's nickname for part_no (see part_custom_names), when one
    * exists — undefined for call sites that don't look it up at all. */
   customName?: string | null;
+  /** Fingerprint's key-part name for part_no (key_parts.custom_name),
+   * when one exists — a separate naming system from customName above
+   * (see combinePartNames), kept distinct so tagging a part via Inventory
+   * doesn't leak into Fingerprint/LamBOM's highlighting. */
+  keyPartName?: string | null;
+}
+
+/** Combines a part_custom_names nickname and a key_parts name into one
+ * display string — the two are independent systems that can both be set
+ * on the same part_no, so this is the single place that decides how they
+ * read together: identical values collapse to one, different values show
+ * both (comma-separated), either alone just shows itself. */
+export function combinePartNames(customName?: string | null, keyPartName?: string | null): string | null {
+  if (customName && keyPartName) return customName === keyPartName ? customName : `${customName}, ${keyPartName}`;
+  return customName || keyPartName || null;
 }
 
 export interface BomEntry {
@@ -471,7 +486,7 @@ export async function fetchFullBomItemByPartNo(
   partNo: string,
   groupId: number
 ): Promise<BomItem | null> {
-  const [itemRes, customName] = await Promise.all([
+  const [itemRes, customName, keyPartName] = await Promise.all([
     withRetry(() =>
       supabase
         .from("full_bom_items")
@@ -481,10 +496,11 @@ export async function fetchFullBomItemByPartNo(
         .limit(1)
     ),
     fetchCustomName(supabase, groupId, partNo),
+    fetchKeyPartName(supabase, machineName, partNo),
   ]);
   if (itemRes.error) throw new Error(itemRes.error.message);
   const item = (itemRes.data ?? [])[0];
-  return item ? { ...item, customName } : null;
+  return item ? { ...item, customName, keyPartName } : null;
 }
 
 export interface BomSearchResult {
@@ -550,14 +566,20 @@ export async function searchFullBomItems(
         })
   );
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as (BomItem & { custom_name: string | null; machine_count?: number; total_matches: number })[];
+  const rows = (data ?? []) as (BomItem & {
+    custom_name: string | null;
+    key_part_name: string | null;
+    machine_count?: number;
+    total_matches: number;
+  })[];
   return {
-    items: rows.map(({ part_no, description, qty, uom, custom_name, machine_count }) => ({
+    items: rows.map(({ part_no, description, qty, uom, custom_name, key_part_name, machine_count }) => ({
       part_no,
       description,
       qty,
       uom,
       customName: custom_name,
+      keyPartName: key_part_name,
       machineCount: machine_count ?? 1,
     })),
     totalMatches: rows[0]?.total_matches ?? rows.length,
@@ -614,6 +636,72 @@ export async function deleteCustomName(supabase: SupabaseClient, groupId: number
     .eq("group_id", groupId)
     .eq("part_no", partNo);
   if (error) throw new Error(error.message);
+}
+
+/** One machine's key_parts name for a single part_no, or null — mirrors
+ * fetchCustomName, but reads key_parts (Fingerprint's naming system)
+ * instead of part_custom_names. If a part_no has more than one key_parts
+ * row for this machine (different source_files disagreeing on a name,
+ * same edge case autoMatchKeyParts' KeyPartLookup already tolerates),
+ * this just returns whichever one the query happens to return first. */
+async function fetchKeyPartName(supabase: SupabaseClient, machineName: string, partNo: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("key_parts")
+    .select("custom_name")
+    .eq("machine_name", machineName)
+    .eq("part_no", partNo)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.custom_name ?? null;
+}
+
+/** Every key_parts name set for a given machine, as part_no -> name — for
+ * client-side search over an already-loaded item list (the BOM Structure
+ * Viewer's tree), the same role fetchCustomNames plays for
+ * part_custom_names. Scoped to one machine (not a whole group) since
+ * key_parts has no group_id column; bounding by machine_name is the same
+ * boundary the search RPCs use. */
+export async function fetchKeyPartNames(supabase: SupabaseClient, machineName: string): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("key_parts")
+    .select("part_no,custom_name")
+    .eq("machine_name", machineName);
+  if (error) throw new Error(error.message);
+  return new Map((data ?? []).map((row) => [row.part_no as string, row.custom_name as string]));
+}
+
+/** Same as fetchKeyPartNames, but across every machine in the given list —
+ * for callers showing rows that each belong to a different machine (e.g.
+ * Inventory's stock/report tables), where there's no single "current
+ * machine" to scope to. Keyset-paginated (id > afterId) rather than a
+ * plain select, for the same reason app/lambom/page.tsx's loadKeyParts is:
+ * a plain `.in("machine_name", ...)` select silently truncates at
+ * Supabase/PostgREST's default 1000-row cap for a group with enough
+ * machines/key parts. */
+export async function fetchKeyPartNamesForMachines(
+  supabase: SupabaseClient,
+  machineNames: string[]
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (machineNames.length === 0) return map;
+  const pageSize = 1000;
+  let afterId = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("key_parts")
+      .select("id,part_no,custom_name")
+      .in("machine_name", machineNames)
+      .gt("id", afterId)
+      .order("id", { ascending: true })
+      .limit(pageSize);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    for (const row of data) map.set(row.part_no as string, row.custom_name as string);
+    afterId = data[data.length - 1].id as number;
+    if (data.length < pageSize) break;
+  }
+  return map;
 }
 
 export interface MachineBomLookup {

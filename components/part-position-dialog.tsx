@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ancestorIdsOf } from "@/components/bom-structure-viewer";
 import { BomTreeNodeRow } from "@/components/bom-tree-node";
-import { buildBomTree, fetchCustomNames, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
+import { buildBomTree, fetchCustomNames, fetchKeyPartNames, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -109,6 +109,16 @@ export function PartPositionDialog({
     refreshCustomNames();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, groupId]);
+
+  const [keyPartNames, setKeyPartNames] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!open || !target?.machine) return;
+    fetchKeyPartNames(getSupabase(), target.machine)
+      .then(setKeyPartNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }, [open, target?.machine]);
 
   useEffect(() => {
     if (!open || !target) return;
@@ -282,6 +292,7 @@ export function PartPositionDialog({
                             normalizedQuery=""
                             activeMatchId={activeMatchId}
                             customNames={customNames}
+                            keyPartNames={keyPartNames}
                             groupId={groupId}
                             onCustomNameSaved={refreshCustomNames}
                           />
@@ -312,6 +323,7 @@ export function PartPositionDialog({
                                 normalizedQuery=""
                                 activeMatchId={activeMatchId}
                                 customNames={customNames}
+                                keyPartNames={keyPartNames}
                                 groupId={groupId}
                                 onCustomNameSaved={refreshCustomNames}
                               />
