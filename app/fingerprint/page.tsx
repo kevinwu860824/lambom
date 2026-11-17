@@ -242,7 +242,7 @@ export default function FingerprintPage() {
     setPositionTarget({ partNo, description: null, machine });
   }
 
-  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
   const t = useTranslate(zh);
 
   const [toolTypes, setToolTypes] = useState<string[]>([]);
@@ -1498,6 +1498,7 @@ export default function FingerprintPage() {
         onOpenChange={(open) => !open && setPositionTarget(null)}
         target={positionTarget}
         mode="both"
+        groupId={group?.id}
         getFullBomTree={getFullBomTree}
         getModules={getModules}
         getModuleTree={getModuleTree}

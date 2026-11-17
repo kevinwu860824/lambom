@@ -15,7 +15,7 @@ import { RequireGroupPrompt } from "@/components/require-group";
 type SupabaseClient = ReturnType<typeof createClient>;
 
 export default function FullBomPage() {
-  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
 
   if (groupLoading) return null;
   if (!allowedMachines) {
@@ -30,6 +30,7 @@ export default function FullBomPage() {
     <BomStructureViewer
       title="Full BOM Structure Viewer"
       description="Pick a machine to view its complete BOM hierarchically, expand/collapse as needed."
+      groupId={group?.id}
       fetchMachineNames={async (supabase: SupabaseClient) => {
         const { machineGroups } = await fetchMachineGroups(supabase);
         return machineGroups.map((group) => group.machine).filter((name) => allowedMachines.has(name));

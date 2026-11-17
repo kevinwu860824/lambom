@@ -15,6 +15,7 @@ import {
   DOCUMENT_PART_PREFIXES,
   fetchAllBomItems,
   fetchBomTreeItems,
+  fetchCustomNames,
   fetchFullBomItems,
   fetchFullBomTreeItems,
   fetchMachineGroups,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { useEmployeeGroup } from "@/lib/groups";
+import { CustomNameButton } from "@/components/custom-name-button";
 import { DocumentPartsFilter } from "@/components/document-parts-filter";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 import { PartPositionDialog, type PartPositionTarget } from "@/components/part-position-dialog";
@@ -125,7 +127,7 @@ export default function Home() {
 
   const bomDataRef = useRef<BomEntry[]>([]);
 
-  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
   const t = useTranslate(zh);
 
   const [machineGroups, setMachineGroups] = useState<MachineGroup[]>([]);
@@ -157,6 +159,17 @@ export default function Home() {
   const [keyParts, setKeyParts] = useState<KeyPart[]>([]);
   const [keyPartsLoading, setKeyPartsLoading] = useState(true);
   const [keyPartsError, setKeyPartsError] = useState<string | null>(null);
+
+  const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
+  function loadCustomNames() {
+    const groupId = group?.id;
+    if (groupId == null) return;
+    fetchCustomNames(getSupabase(), groupId)
+      .then(setCustomNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
 
   // "Where is this part?" dialog — opened by clicking a row in Only in A/B.
   // The fetch/match/render logic lives in the shared PartPositionDialog
@@ -198,10 +211,10 @@ export default function Home() {
     setPositionTarget({ partNo: item.part_no, description: item.description, machine });
   }
 
-  function matchesResultFilter(item: AggregatedItem, keyword: string): boolean {
+  function matchesResultFilter(item: AggregatedItem, keyword: string, customNames: Map<string, string>): boolean {
     const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return true;
-    const haystack = `${item.part_no} ${item.description ?? ""}`.toLowerCase();
+    const haystack = `${item.part_no} ${item.description ?? ""} ${customNames.get(item.part_no) ?? ""}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   }
 
@@ -392,6 +405,11 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedMachines]);
 
+  useEffect(() => {
+    loadCustomNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group?.id]);
+
   function handleMachineAChange(machine: string) {
     setMachineA(machine);
     setSubpartsA(new Set(subpartsFor(machine).map((s) => s.source_file)));
@@ -438,7 +456,7 @@ export default function Home() {
 
   const qtyMismatchCount = result?.common.filter((item) => !item.qtyMatch).length ?? 0;
   function isVisible(item: AggregatedItem): boolean {
-    if (!matchesResultFilter(item, resultFilter)) return false;
+    if (!matchesResultFilter(item, resultFilter, customNames)) return false;
     const code = documentPartCodeFor(item.part_no);
     return code === null || visibleDocumentCodes.has(code);
   }
@@ -735,6 +753,9 @@ export default function Home() {
                   keyPartColumnVariant="detail"
                   machine={summaryA?.machine ?? ""}
                   onSelectPart={openPositionDialog}
+                  customNames={customNames}
+                  groupId={group?.id}
+                  onCustomNameSaved={loadCustomNames}
                 />
                 <PartTable
                   title={t("Only in B")}
@@ -744,6 +765,9 @@ export default function Home() {
                   keyPartColumnVariant="badge"
                   machine={summaryB?.machine ?? ""}
                   onSelectPart={openPositionDialog}
+                  customNames={customNames}
+                  groupId={group?.id}
+                  onCustomNameSaved={loadCustomNames}
                 />
               </div>
             </CardContent>
@@ -755,6 +779,7 @@ export default function Home() {
           onOpenChange={(open) => !open && setPositionTarget(null)}
           target={positionTarget}
           mode={resultCompareMode}
+          groupId={group?.id}
           getFullBomTree={getFullBomTree}
           getModules={getModules}
           getModuleTree={getModuleTree}
@@ -888,6 +913,9 @@ function PartTable({
   keyPartColumnVariant = "badge",
   machine,
   onSelectPart,
+  customNames,
+  groupId,
+  onCustomNameSaved,
 }: {
   title: string;
   items?: AggregatedItem[];
@@ -896,6 +924,9 @@ function PartTable({
   keyPartColumnVariant?: "badge" | "detail";
   machine: string;
   onSelectPart: (item: AggregatedItem, machine: string) => void;
+  customNames: Map<string, string>;
+  groupId: number | undefined;
+  onCustomNameSaved: () => void;
 }) {
   const t = useTranslate(zh);
   const hasKeyPartColumn = (keyPartInfo?.size ?? 0) > 0;
@@ -936,6 +967,17 @@ function PartTable({
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       <span>{item.part_no}</span>
+                      {customNames.get(item.part_no) && (
+                        <span className="text-primary font-medium">({customNames.get(item.part_no)})</span>
+                      )}
+                      {groupId != null && (
+                        <CustomNameButton
+                          groupId={groupId}
+                          partNo={item.part_no}
+                          currentName={customNames.get(item.part_no)}
+                          onSaved={onCustomNameSaved}
+                        />
+                      )}
                       <Button
                         variant="ghost"
                         size="xs"

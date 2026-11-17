@@ -8,6 +8,9 @@ export interface BomItem {
   description: string | null;
   qty: number | string | null;
   uom: string | null;
+  /** This group's nickname for part_no (see part_custom_names), when one
+   * exists — undefined for call sites that don't look it up at all. */
+  customName?: string | null;
 }
 
 export interface BomEntry {
@@ -465,18 +468,23 @@ export async function fetchFullBomPartNos(supabase: SupabaseClient, machineName:
 export async function fetchFullBomItemByPartNo(
   supabase: SupabaseClient,
   machineName: string,
-  partNo: string
+  partNo: string,
+  groupId: number
 ): Promise<BomItem | null> {
-  const { data, error } = await withRetry(() =>
-    supabase
-      .from("full_bom_items")
-      .select("part_no,description,qty,uom")
-      .eq("machine_name", machineName)
-      .eq("part_no", partNo)
-      .limit(1)
-  );
-  if (error) throw new Error(error.message);
-  return (data ?? [])[0] ?? null;
+  const [itemRes, customName] = await Promise.all([
+    withRetry(() =>
+      supabase
+        .from("full_bom_items")
+        .select("part_no,description,qty,uom")
+        .eq("machine_name", machineName)
+        .eq("part_no", partNo)
+        .limit(1)
+    ),
+    fetchCustomName(supabase, groupId, partNo),
+  ]);
+  if (itemRes.error) throw new Error(itemRes.error.message);
+  const item = (itemRes.data ?? [])[0];
+  return item ? { ...item, customName } : null;
 }
 
 export interface BomSearchResult {
@@ -513,11 +521,13 @@ export interface BomSearchItem extends BomItem {
  * silently dropping it.
  *
  * Group-wide results include the number of matching machines for each
- * distinct part number. */
+ * distinct part number, and the group's custom name for the part (see
+ * part_custom_names) when one is set — typing the nickname matches too. */
 export async function searchFullBomItems(
   supabase: SupabaseClient,
   machineNames: string[],
   query: string,
+  groupId: number,
   limit = 50
 ): Promise<BomSearchResult> {
   const uniqueMachineNames = Array.from(new Set(machineNames));
@@ -529,26 +539,81 @@ export async function searchFullBomItems(
       ? supabase.rpc("search_full_bom_items", {
           p_machine_name: uniqueMachineNames[0],
           p_query: query,
+          p_group_id: groupId,
           p_limit: limit,
         })
       : supabase.rpc("search_full_bom_items_in_machines", {
           p_machine_names: uniqueMachineNames,
           p_query: query,
+          p_group_id: groupId,
           p_limit: limit,
         })
   );
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as (BomItem & { machine_count?: number; total_matches: number })[];
+  const rows = (data ?? []) as (BomItem & { custom_name: string | null; machine_count?: number; total_matches: number })[];
   return {
-    items: rows.map(({ part_no, description, qty, uom, machine_count }) => ({
+    items: rows.map(({ part_no, description, qty, uom, custom_name, machine_count }) => ({
       part_no,
       description,
       qty,
       uom,
+      customName: custom_name,
       machineCount: machine_count ?? 1,
     })),
     totalMatches: rows[0]?.total_matches ?? rows.length,
   };
+}
+
+/** One group's nickname for a single part_no, or null if it doesn't have
+ * one — used by fetchFullBomItemByPartNo so an exact-match lookup carries
+ * the custom name the same way the search RPCs do. */
+async function fetchCustomName(supabase: SupabaseClient, groupId: number, partNo: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("part_custom_names")
+    .select("custom_name")
+    .eq("group_id", groupId)
+    .eq("part_no", partNo)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.custom_name ?? null;
+}
+
+/** Every custom name this group has set, as part_no -> name — for callers
+ * that search an already-loaded, in-memory item list (the BOM Structure
+ * Viewer's tree, LamBOM's Only-in-A/B filter) rather than querying
+ * full_bom_items directly, so they can still match a typed nickname
+ * without a per-keystroke round trip. part_custom_names is expected to
+ * stay small (only parts someone bothered to nickname), so loading the
+ * whole group's map once is cheap. */
+export async function fetchCustomNames(supabase: SupabaseClient, groupId: number): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("part_custom_names")
+    .select("part_no,custom_name")
+    .eq("group_id", groupId);
+  if (error) throw new Error(error.message);
+  return new Map((data ?? []).map((row) => [row.part_no as string, row.custom_name as string]));
+}
+
+/** Insert-or-overwrite this group's nickname for a part_no. */
+export async function upsertCustomName(
+  supabase: SupabaseClient,
+  groupId: number,
+  partNo: string,
+  customName: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("part_custom_names")
+    .upsert({ group_id: groupId, part_no: partNo, custom_name: customName, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteCustomName(supabase: SupabaseClient, groupId: number, partNo: string): Promise<void> {
+  const { error } = await supabase
+    .from("part_custom_names")
+    .delete()
+    .eq("group_id", groupId)
+    .eq("part_no", partNo);
+  if (error) throw new Error(error.message);
 }
 
 export interface MachineBomLookup {

@@ -4,7 +4,14 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { buildBomTree, documentPartCodeFor, DOCUMENT_PART_PREFIXES, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
+import {
+  buildBomTree,
+  documentPartCodeFor,
+  fetchCustomNames,
+  DOCUMENT_PART_PREFIXES,
+  type BomTreeItem,
+  type BomTreeNode,
+} from "@/lib/bom";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -72,12 +79,16 @@ function collectExpandablePaths(nodes: BomTreeNode[], idPrefix: string, out: Set
   }
 }
 
-function collectMatches(subpartTrees: SubpartTree[], normalizedQuery: string): TreeMatch[] {
+function collectMatches(
+  subpartTrees: SubpartTree[],
+  normalizedQuery: string,
+  customNames: Map<string, string>
+): TreeMatch[] {
   if (!normalizedQuery) return [];
   const matches: TreeMatch[] = [];
   function walk(nodes: BomTreeNode[], idPrefix: string) {
     for (const node of nodes) {
-      if (nodeMatchesQuery(node, normalizedQuery)) {
+      if (nodeMatchesQuery(node, normalizedQuery, customNames)) {
         matches.push({ id: `${idPrefix}:${node.path}` });
       }
       walk(node.children, idPrefix);
@@ -119,12 +130,16 @@ export function ancestorIdsOf(matchId: string): string[] {
 export function BomStructureViewer({
   title,
   description,
+  groupId,
   fetchMachineNames,
   fetchSubparts,
   onUploadFile,
 }: {
   title: string;
   description: string;
+  /** Scopes custom-name search/editing (part_custom_names) to this group —
+   * undefined while the caller's group is still loading disables it. */
+  groupId: number | undefined;
   fetchMachineNames: (supabase: SupabaseClient) => Promise<string[]>;
   /**
    * `onProgress` is optional to call — a caller whose data always arrives
@@ -162,6 +177,21 @@ export function BomStructureViewer({
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
+  function refreshCustomNames() {
+    if (groupId == null) return;
+    fetchCustomNames(getSupabase(), groupId)
+      .then(setCustomNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
+  useEffect(() => {
+    if (groupId == null) return;
+    refreshCustomNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
 
   // Rebuilt whenever visibleDocumentCodes changes — filtering the flat
   // items before buildBomTree naturally drops a hidden node's whole
@@ -218,8 +248,8 @@ export function BomStructureViewer({
 
   const normalizedQuery = normalizeSearchText(deferredQuery);
   const matches = useMemo(
-    () => collectMatches(visibleSubpartTrees, normalizedQuery),
-    [visibleSubpartTrees, normalizedQuery]
+    () => collectMatches(visibleSubpartTrees, normalizedQuery, customNames),
+    [visibleSubpartTrees, normalizedQuery, customNames]
   );
 
   // Recomputed fresh from the current match set every time (not merged
@@ -702,6 +732,9 @@ export function BomStructureViewer({
                         onToggle={toggleExpanded}
                         normalizedQuery={normalizedQuery}
                         activeMatchId={activeMatch?.id ?? null}
+                        customNames={customNames}
+                        groupId={groupId}
+                        onCustomNameSaved={refreshCustomNames}
                       />
                     ))}
                   </div>

@@ -9,7 +9,7 @@ import { RequireGroupPrompt } from "@/components/require-group";
 type SupabaseClient = ReturnType<typeof createClient>;
 
 export default function TreePage() {
-  const { allowedMachines, employeeId, notFound, loading: groupLoading } = useEmployeeGroup();
+  const { allowedMachines, employeeId, group, notFound, loading: groupLoading } = useEmployeeGroup();
 
   if (groupLoading) return null;
   if (!allowedMachines) {
@@ -24,6 +24,7 @@ export default function TreePage() {
     <BomStructureViewer
       title="BOM Structure Viewer"
       description="Pick a machine to view its parts hierarchically, expand/collapse as needed."
+      groupId={group?.id}
       fetchMachineNames={async (supabase: SupabaseClient) => {
         const { machineGroups } = await fetchMachineGroups(supabase);
         return machineGroups.map((g) => g.machine).filter((name) => allowedMachines.has(name));

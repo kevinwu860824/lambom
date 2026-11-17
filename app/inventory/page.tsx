@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
-import { fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
+import { fetchCustomNames, fetchFullBomItemByPartNo, searchFullBomItems, type BomItem } from "@/lib/bom";
+import { CustomNameButton } from "@/components/custom-name-button";
 import {
   addStorageLocation,
   createLog,
@@ -144,7 +145,12 @@ const EDIT_STORAGE_LOCATIONS_VALUE = "__edit_storage_locations__";
 type SupabaseClient = ReturnType<typeof createClient>;
 
 /** Debounced autocomplete against one machine or the active group's Full BOMs. */
-function usePartSearch(getSupabase: () => SupabaseClient, machineName: string, groupMachineNames: string[]) {
+function usePartSearch(
+  getSupabase: () => SupabaseClient,
+  machineName: string,
+  groupMachineNames: string[],
+  groupId: number | undefined
+) {
   const searchMachineNames = useMemo(
     () => (machineName ? (groupMachineNames.includes(machineName) ? [machineName] : []) : groupMachineNames),
     [machineName, groupMachineNames]
@@ -160,7 +166,7 @@ function usePartSearch(getSupabase: () => SupabaseClient, machineName: string, g
   const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const trimmed = debounced.trim();
-  const eligible = searchMachineNames.length > 0 && trimmed.length >= 2;
+  const eligible = searchMachineNames.length > 0 && trimmed.length >= 2 && groupId != null;
   // Derived at render time rather than reset via a synchronous setState in
   // the effect below — once the query no longer qualifies for a search,
   // the last-fetched suggestions are simply not shown.
@@ -168,9 +174,9 @@ function usePartSearch(getSupabase: () => SupabaseClient, machineName: string, g
   const truncatedCount = eligible ? Math.max(0, total - suggestions.length) : 0;
 
   useEffect(() => {
-    if (!eligible) return;
+    if (!eligible || groupId == null) return;
     let cancelled = false;
-    searchFullBomItems(getSupabase(), searchMachineNames, trimmed)
+    searchFullBomItems(getSupabase(), searchMachineNames, trimmed, groupId)
       .then((result) => {
         if (!cancelled) {
           setSuggestions(result.items);
@@ -186,7 +192,7 @@ function usePartSearch(getSupabase: () => SupabaseClient, machineName: string, g
     return () => {
       cancelled = true;
     };
-  }, [eligible, getSupabase, searchMachineNames, trimmed]);
+  }, [eligible, getSupabase, searchMachineNames, trimmed, groupId]);
 
   return {
     query,
@@ -252,7 +258,12 @@ function PartSearchCombobox({
                 onSelect(item);
               }}
             >
-              <div className="font-mono text-xs">{item.part_no}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-xs">{item.part_no}</span>
+                {item.customName && (
+                  <span className="text-primary truncate text-xs font-medium">({item.customName})</span>
+                )}
+              </div>
               {item.description && <div className="text-muted-foreground truncate text-xs">{item.description}</div>}
               {showMachineCount && (
                 <div className="mt-0.5 text-muted-foreground text-[11px]">
@@ -355,11 +366,15 @@ function PartLookupBanner({
   lookup,
   loading,
   machineName,
+  groupId,
+  onCustomNameSaved,
   t,
 }: {
   lookup: { item: (BomItem & { machineCount?: number }) | null } | null;
   loading: boolean;
   machineName: string;
+  groupId: number | undefined;
+  onCustomNameSaved?: (customName: string) => void;
   t: (text: string) => string;
 }) {
   return (
@@ -377,10 +392,21 @@ function PartLookupBanner({
           {lookup.item ? (
             <>
               <CircleCheck className="h-3.5 w-3.5 shrink-0" />
-              <div>
-                <p className="font-medium">
-                  {t(machineName ? "Found in Full BOM" : "Found in this group's Full BOM")}
-                </p>
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="font-medium">
+                    {t(machineName ? "Found in Full BOM" : "Found in this group's Full BOM")}
+                  </p>
+                  {lookup.item.customName && <p className="font-medium">({lookup.item.customName})</p>}
+                  {groupId != null && (
+                    <CustomNameButton
+                      groupId={groupId}
+                      partNo={lookup.item.part_no}
+                      currentName={lookup.item.customName}
+                      onSaved={onCustomNameSaved}
+                    />
+                  )}
+                </div>
                 <p>{lookup.item.description}</p>
                 {machineName ? (
                   <p>
@@ -423,6 +449,7 @@ export default function InventoryPage() {
   const [logs, setLogs] = useState<InventoryLog[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
   const [storageLocations, setStorageLocations] = useState<InventoryStorageLocation[]>([]);
+  const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive" | "stock">("active");
@@ -445,7 +472,7 @@ export default function InventoryPage() {
   const [storageLocationError, setStorageLocationError] = useState<string | null>(null);
   const [savingStorageLocationId, setSavingStorageLocationId] = useState<number | null>(null);
 
-  const reportSearch = usePartSearch(getSupabase, selectedMachineName, machineNames);
+  const reportSearch = usePartSearch(getSupabase, selectedMachineName, machineNames, group?.id);
 
   // Whatever the Full BOM lookup last found (or didn't) for the exact text
   // currently in the part name field — set either by clicking a
@@ -456,8 +483,10 @@ export default function InventoryPage() {
   const [partLookupLoading, setPartLookupLoading] = useState(false);
 
   async function findPartMatch(machineName: string, partNo: string): Promise<BomItem & { machineCount?: number } | null> {
-    if (machineName) return fetchFullBomItemByPartNo(getSupabase(), machineName, partNo);
-    const result = await searchFullBomItems(getSupabase(), machineNames, partNo);
+    const groupId = group?.id;
+    if (groupId == null) return null;
+    if (machineName) return fetchFullBomItemByPartNo(getSupabase(), machineName, partNo, groupId);
+    const result = await searchFullBomItems(getSupabase(), machineNames, partNo, groupId);
     return result.items.find((item) => item.part_no.toLowerCase() === partNo.toLowerCase()) ?? null;
   }
 
@@ -490,7 +519,7 @@ export default function InventoryPage() {
   // suggestions/found-banner, and the chosen machine is saved on the row
   // as which machine this stock entry was requested because of.
   const [stockMachineName, setStockMachineName] = useState("");
-  const stockSearch = usePartSearch(getSupabase, stockMachineName, machineNames);
+  const stockSearch = usePartSearch(getSupabase, stockMachineName, machineNames, group?.id);
   const [stockPartLookup, setStockPartLookup] = useState<{ item: (BomItem & { machineCount?: number }) | null } | null>(null);
   const [stockPartLookupLoading, setStockPartLookupLoading] = useState(false);
   const [stockIam, setStockIam] = useState("");
@@ -634,20 +663,23 @@ export default function InventoryPage() {
       setLogs([]);
       setStock([]);
       setStorageLocations([]);
+      setCustomNames(new Map());
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [logsData, stockData, locationsData] = await Promise.all([
+      const [logsData, stockData, locationsData, customNamesData] = await Promise.all([
         fetchLogs(getSupabase(), groupId),
         fetchStock(getSupabase(), groupId),
         fetchStorageLocations(getSupabase(), groupId),
+        fetchCustomNames(getSupabase(), groupId),
       ]);
       setLogs(logsData);
       setStock(stockData);
       setStorageLocations(locationsData);
+      setCustomNames(customNamesData);
       setStorageLocationDrafts(Object.fromEntries(locationsData.map((location) => [location.id, location.name])));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -802,6 +834,10 @@ export default function InventoryPage() {
                     lookup={partLookup}
                     loading={partLookupLoading}
                     machineName={selectedMachineName}
+                    groupId={group?.id}
+                    onCustomNameSaved={(customName) =>
+                      setPartLookup((current) => (current?.item ? { item: { ...current.item, customName } } : current))
+                    }
                     t={t}
                   />
                 </div>
@@ -920,6 +956,12 @@ export default function InventoryPage() {
                     lookup={stockPartLookup}
                     loading={stockPartLookupLoading}
                     machineName={stockMachineName}
+                    groupId={group?.id}
+                    onCustomNameSaved={(customName) =>
+                      setStockPartLookup((current) =>
+                        current?.item ? { item: { ...current.item, customName } } : current
+                      )
+                    }
                     t={t}
                   />
                 </div>
@@ -1054,7 +1096,12 @@ export default function InventoryPage() {
                   <TableBody>
                     {stock.map((item) => (
                       <TableRow key={item.id}>
-                        <TableCell className="px-3 font-mono text-xs font-medium">{item.partNo}</TableCell>
+                        <TableCell className="px-3 text-xs font-medium">
+                          <span className="font-mono">{item.partNo}</span>
+                          {customNames.get(item.partNo) && (
+                            <span className="text-primary ml-1.5">({customNames.get(item.partNo)})</span>
+                          )}
+                        </TableCell>
                         <TableCell className="max-w-[240px] whitespace-normal px-3 text-sm">
                           {item.description || <span className="text-muted-foreground">-</span>}
                         </TableCell>
@@ -1130,7 +1177,12 @@ export default function InventoryPage() {
                 {visibleLogs.map((log) => (
                   <TableRow key={log.id}>
                     <TableCell className="px-3 font-medium">{t(log.status)}</TableCell>
-                    <TableCell className="px-3 font-medium">{log.partName}</TableCell>
+                    <TableCell className="px-3 font-medium">
+                      {log.partName}
+                      {customNames.get(log.partName) && (
+                        <span className="text-primary ml-1.5">({customNames.get(log.partName)})</span>
+                      )}
+                    </TableCell>
                     <TableCell className="max-w-[220px] whitespace-normal px-3">
                       {log.description || <span className="text-muted-foreground">-</span>}
                     </TableCell>

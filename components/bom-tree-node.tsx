@@ -5,17 +5,23 @@ import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
 import type { BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
+import { CustomNameButton } from "@/components/custom-name-button";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 
 export function normalizeSearchText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "");
 }
 
-export function nodeMatchesQuery(node: BomTreeNode, normalizedQuery: string): boolean {
+export function nodeMatchesQuery(
+  node: BomTreeNode,
+  normalizedQuery: string,
+  customNames?: Map<string, string>
+): boolean {
   if (!normalizedQuery) return false;
   return (
     normalizeSearchText(node.item.part_no).includes(normalizedQuery) ||
-    normalizeSearchText(node.item.description ?? "").includes(normalizedQuery)
+    normalizeSearchText(node.item.description ?? "").includes(normalizedQuery) ||
+    normalizeSearchText(customNames?.get(node.item.part_no) ?? "").includes(normalizedQuery)
   );
 }
 
@@ -79,6 +85,9 @@ export function BomTreeNodeRow({
   onToggle,
   normalizedQuery,
   activeMatchId,
+  customNames,
+  groupId,
+  onCustomNameSaved,
 }: {
   node: BomTreeNode;
   idPrefix: string;
@@ -86,6 +95,9 @@ export function BomTreeNodeRow({
   onToggle: (id: string) => void;
   normalizedQuery: string;
   activeMatchId: string | null;
+  customNames: Map<string, string>;
+  groupId: number | undefined;
+  onCustomNameSaved: () => void;
 }) {
   const id = `${idPrefix}:${node.path}`;
   const expanded = expandedPaths.has(id);
@@ -113,6 +125,11 @@ export function BomTreeNodeRow({
           <span className="shrink-0 font-mono text-xs">
             <HighlightedText text={node.item.part_no} normalizedQuery={normalizedQuery} />
           </span>
+          {customNames.get(node.item.part_no) && (
+            <span className="text-primary shrink-0 truncate text-xs font-medium">
+              (<HighlightedText text={customNames.get(node.item.part_no) ?? ""} normalizedQuery={normalizedQuery} />)
+            </span>
+          )}
           <span className="text-muted-foreground truncate">
             <HighlightedText text={node.item.description ?? ""} normalizedQuery={normalizedQuery} />
           </span>
@@ -125,6 +142,14 @@ export function BomTreeNodeRow({
          * hydration). Scoped to its own row here (not the outer div) so
          * it lays out next to the row's own button without also pulling
          * the children container below into the same flex row. */}
+        {groupId != null && (
+          <CustomNameButton
+            groupId={groupId}
+            partNo={node.item.part_no}
+            currentName={customNames.get(node.item.part_no)}
+            onSaved={onCustomNameSaved}
+          />
+        )}
         <Button
           variant="ghost"
           size="xs"
@@ -147,6 +172,9 @@ export function BomTreeNodeRow({
               onToggle={onToggle}
               normalizedQuery={normalizedQuery}
               activeMatchId={activeMatchId}
+              customNames={customNames}
+              groupId={groupId}
+              onCustomNameSaved={onCustomNameSaved}
             />
           ))}
         </div>

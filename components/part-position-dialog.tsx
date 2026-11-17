@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ancestorIdsOf } from "@/components/bom-structure-viewer";
 import { BomTreeNodeRow } from "@/components/bom-tree-node";
-import { buildBomTree, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
+import { buildBomTree, fetchCustomNames, type BomTreeItem, type BomTreeNode } from "@/lib/bom";
+import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -57,6 +58,7 @@ export function PartPositionDialog({
   onOpenChange,
   target,
   mode,
+  groupId,
   getFullBomTree,
   getModules,
   getModuleTree,
@@ -65,11 +67,19 @@ export function PartPositionDialog({
   onOpenChange: (open: boolean) => void;
   target: PartPositionTarget | null;
   mode: "modules" | "fullBom" | "both";
+  /** Scopes custom-name search/editing (part_custom_names) to this group —
+   * undefined disables it. */
+  groupId: number | undefined;
   getFullBomTree: (machine: string) => Promise<BomTreeItem[]>;
   getModules: (machine: string) => Promise<{ bomId: number; sourceFile: string }[]>;
   getModuleTree: (bomId: number, sourceFile: string) => Promise<BomTreeItem[]>;
 }) {
   const t = useTranslate(zh);
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  function getSupabase() {
+    if (!supabaseRef.current) supabaseRef.current = createClient();
+    return supabaseRef.current;
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullBomItems, setFullBomItems] = useState<BomTreeItem[] | null>(null);
@@ -85,6 +95,20 @@ export function PartPositionDialog({
   // than once (the same part can legitimately appear under more than one
   // parent, or in more than one module).
   const [activeIndex, setActiveIndex] = useState(0);
+  const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
+  function refreshCustomNames() {
+    if (groupId == null) return;
+    fetchCustomNames(getSupabase(), groupId)
+      .then(setCustomNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
+  useEffect(() => {
+    if (!open || groupId == null) return;
+    refreshCustomNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, groupId]);
 
   useEffect(() => {
     if (!open || !target) return;
@@ -257,6 +281,9 @@ export function PartPositionDialog({
                             onToggle={toggleExpanded}
                             normalizedQuery=""
                             activeMatchId={activeMatchId}
+                            customNames={customNames}
+                            groupId={groupId}
+                            onCustomNameSaved={refreshCustomNames}
                           />
                         ))}
                       </CardContent>
@@ -284,6 +311,9 @@ export function PartPositionDialog({
                                 onToggle={toggleExpanded}
                                 normalizedQuery=""
                                 activeMatchId={activeMatchId}
+                                customNames={customNames}
+                                groupId={groupId}
+                                onCustomNameSaved={refreshCustomNames}
                               />
                             ))}
                           </CardContent>
