@@ -13,6 +13,7 @@ import {
   type BomTreeItem,
   type BomTreeNode,
 } from "@/lib/bom";
+import { cn } from "@/lib/utils";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,6 +46,8 @@ const zh: Record<string, string> = {
   "Search part no. / description…": "搜尋料號 / 說明…",
   "Previous match": "上一個符合項目",
   "Next match": "下一個符合項目",
+  "{n} results": "共 {n} 筆符合",
+  "Showing first {shown} of {total}": "顯示前 {shown} 筆,共 {total} 筆符合",
   "Expand All": "全部展開",
   "Collapse All": "全部收合",
   "Expand to level": "展開到層級",
@@ -69,7 +72,14 @@ interface SubpartTree {
 
 interface TreeMatch {
   id: string;
+  item: BomTreeItem;
 }
+
+/** Results list is rendered entirely from the already-loaded, in-memory
+ * match set (no new query), but a broad term can still match thousands of
+ * occurrences in a large tree — capped so the list itself stays cheap to
+ * render. */
+const RESULTS_LIST_CAP = 200;
 
 function collectExpandablePaths(nodes: BomTreeNode[], idPrefix: string, out: Set<string>) {
   for (const node of nodes) {
@@ -91,7 +101,7 @@ function collectMatches(
   function walk(nodes: BomTreeNode[], idPrefix: string) {
     for (const node of nodes) {
       if (nodeMatchesQuery(node, normalizedQuery, customNames, keyPartNames)) {
-        matches.push({ id: `${idPrefix}:${node.path}` });
+        matches.push({ id: `${idPrefix}:${node.path}`, item: node.item });
       }
       walk(node.children, idPrefix);
     }
@@ -459,6 +469,14 @@ export function BomStructureViewer({
     setActiveMatchIndex((i) => (i - 1 + matches.length) % matches.length);
   }
 
+  /** Jumps straight to a specific match picked from the results list below
+   * the search box, instead of stepping through prev/next one at a time —
+   * same underlying activeMatchIndex the counter/prev/next buttons use, so
+   * the existing auto-expand + scroll-into-view effect handles the rest. */
+  function jumpToMatch(index: number) {
+    setActiveMatchIndex(index);
+  }
+
   // Auto-expand just each subpart's root(s) so there's something useful to
   // see immediately without a huge initial render. Built against the
   // current document-parts visibility so it matches what subpartTrees will
@@ -654,40 +672,79 @@ export function BomStructureViewer({
 
         {!treeLoading && subpartTrees.length > 0 && (
           <>
-            <div className="bg-background sticky top-0 z-10 mb-3 flex items-center gap-2 border-b py-3">
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  if (e.shiftKey) goToPrev();
-                  else goToNext();
-                }}
-                placeholder={t("Search part no. / description…")}
-                className="flex-1"
-              />
-              <span className="text-muted-foreground w-16 shrink-0 text-center text-sm whitespace-nowrap">
-                {query.trim() ? `${matches.length > 0 ? activeMatchIndexResolved + 1 : 0} / ${matches.length}` : ""}
-              </span>
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={goToPrev}
-                disabled={matches.length === 0}
-                aria-label={t("Previous match")}
-              >
-                <ChevronUp className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={goToNext}
-                disabled={matches.length === 0}
-                aria-label={t("Next match")}
-              >
-                <ChevronDown className="h-4 w-4" />
-              </Button>
+            {/* Results list lives inside the same sticky block as the
+             * search row (not as a separate element after it) — jumping to
+             * a match auto-scrolls the tree below into view, and a
+             * non-sticky panel would immediately scroll away with it,
+             * defeating the point of having a visible results list while
+             * browsing. */}
+            <div className="bg-background sticky top-0 z-10 mb-3 border-b py-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    if (e.shiftKey) goToPrev();
+                    else goToNext();
+                  }}
+                  placeholder={t("Search part no. / description…")}
+                  className="flex-1"
+                />
+                <span className="text-muted-foreground w-16 shrink-0 text-center text-sm whitespace-nowrap">
+                  {query.trim() ? `${matches.length > 0 ? activeMatchIndexResolved + 1 : 0} / ${matches.length}` : ""}
+                </span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={goToPrev}
+                  disabled={matches.length === 0}
+                  aria-label={t("Previous match")}
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={goToNext}
+                  disabled={matches.length === 0}
+                  aria-label={t("Next match")}
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {query.trim() && matches.length > 0 && (
+                <div className="bg-background mt-2 rounded-md border shadow-sm">
+                  <div className="text-muted-foreground border-b px-3 py-1.5 text-xs">
+                    {matches.length > RESULTS_LIST_CAP
+                      ? t("Showing first {shown} of {total}")
+                          .replace("{shown}", String(RESULTS_LIST_CAP))
+                          .replace("{total}", String(matches.length))
+                      : t("{n} results").replace("{n}", String(matches.length))}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {matches.slice(0, RESULTS_LIST_CAP).map((m, idx) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => jumpToMatch(idx)}
+                        className={cn(
+                          "hover:bg-accent flex w-full items-center gap-2 border-b px-3 py-1.5 text-left text-sm last:border-b-0",
+                          idx === activeMatchIndexResolved && "bg-accent"
+                        )}
+                      >
+                        <span className="shrink-0 font-mono text-xs">{m.item.part_no}</span>
+                        <span className="text-muted-foreground min-w-0 flex-1 truncate">{m.item.description}</span>
+                        <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
+                          {m.item.qty ?? "-"} {m.item.uom ?? ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mb-3 flex flex-wrap items-center gap-2">
