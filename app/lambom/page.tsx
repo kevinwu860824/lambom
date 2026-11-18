@@ -594,6 +594,7 @@ export default function Home() {
 
         <DescriptionSearch
           allowedMachines={allowedMachines}
+          groupId={group?.id}
           onKeyPartAdded={() => loadKeyParts(allowedMachines)}
         />
 

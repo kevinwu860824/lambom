@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Star, Check, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { fetchMachineGroups, type MachineGroup } from "@/lib/bom";
+import {
+  combinePartNames,
+  fetchCustomNames,
+  fetchKeyPartNamesForMachines,
+  fetchMachineGroups,
+  type MachineGroup,
+} from "@/lib/bom";
 import { cn } from "@/lib/utils";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -74,9 +80,11 @@ const zh: Record<string, string> = {
 
 export function DescriptionSearch({
   allowedMachines,
+  groupId,
   onKeyPartAdded,
 }: {
   allowedMachines: Set<string>;
+  groupId: number | undefined;
   onKeyPartAdded?: () => void;
 }) {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -98,6 +106,40 @@ export function DescriptionSearch({
   const [filterOpen, setFilterOpen] = useState(false);
   const [checkedMachines, setCheckedMachines] = useState<Set<string>>(new Set());
   const [selectedBomIds, setSelectedBomIds] = useState<Set<number>>(new Set());
+
+  // part_custom_names (group nicknames) and key_parts (Fingerprint names) —
+  // both small enough to hold fully in memory, used to (a) also match a
+  // typed nickname/key-part name against this search and (b) show it next
+  // to Description for any result row that has one.
+  const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
+  const [keyPartNames, setKeyPartNames] = useState<Map<string, string>>(new Map());
+
+  function refreshCustomNames() {
+    if (groupId == null) return;
+    fetchCustomNames(getSupabase(), groupId)
+      .then(setCustomNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
+  useEffect(() => {
+    if (groupId == null) return;
+    refreshCustomNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
+
+  function refreshKeyPartNames() {
+    if (allowedMachines.size === 0) return;
+    fetchKeyPartNamesForMachines(getSupabase(), Array.from(allowedMachines))
+      .then(setKeyPartNames)
+      .catch(() => {
+        // Best-effort — a failed refresh just leaves the previous map shown.
+      });
+  }
+  useEffect(() => {
+    refreshKeyPartNames();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedMachines]);
 
   useEffect(() => {
     fetchMachineGroups(getSupabase())
@@ -213,7 +255,45 @@ export function DescriptionSearch({
 
       const { data, error: searchError } = await query;
       if (searchError) throw new Error(searchError.message);
-      setResults((data ?? []) as unknown as SearchResultRow[]);
+      const rows = (data ?? []) as unknown as SearchResultRow[];
+
+      // Also match the typed keyword(s) against part_custom_names/key_parts
+      // names (both already loaded in memory) — a part named "Main Power
+      // Switch" should turn up here the same way typing its real part_no
+      // or description would. Same "every space-separated term must match
+      // somewhere" rule as the main search above, just checked against the
+      // part's combined name instead of its bom_items columns.
+      const nicknameMatchedPartNos = new Set<string>();
+      const allPartNos = new Set([...customNames.keys(), ...keyPartNames.keys()]);
+      for (const partNo of allPartNos) {
+        const name = combinePartNames(customNames.get(partNo), keyPartNames.get(partNo));
+        if (!name) continue;
+        const haystack = name.toLowerCase();
+        if (terms.every((term) => haystack.includes(term.toLowerCase()))) {
+          nicknameMatchedPartNos.add(partNo);
+        }
+      }
+
+      if (nicknameMatchedPartNos.size > 0) {
+        let nameQuery = getSupabase()
+          .from("bom_items")
+          .select("id,part_no,description,qty,uom,bom_machines(machine_name,source_file)")
+          .in("part_no", Array.from(nicknameMatchedPartNos))
+          .limit(RESULT_LIMIT);
+        if (bomIds.size > 0) nameQuery = nameQuery.in("bom_id", Array.from(bomIds));
+
+        const { data: nameData, error: nameError } = await nameQuery;
+        if (nameError) throw new Error(nameError.message);
+        const seenIds = new Set(rows.map((r) => r.id));
+        for (const row of (nameData ?? []) as unknown as SearchResultRow[]) {
+          if (!seenIds.has(row.id)) {
+            seenIds.add(row.id);
+            rows.push(row);
+          }
+        }
+      }
+
+      setResults(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setResults(null);
@@ -370,12 +450,20 @@ export function DescriptionSearch({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.map((row) => (
+                    {results.map((row) => {
+                      const displayName = combinePartNames(
+                        customNames.get(row.part_no),
+                        keyPartNames.get(row.part_no)
+                      );
+                      return (
                       <TableRow key={row.id}>
                         <TableCell>{row.bom_machines?.machine_name ?? "-"}</TableCell>
                         <TableCell>{row.bom_machines?.source_file ?? "-"}</TableCell>
                         <TableCell>{row.part_no}</TableCell>
-                        <TableCell>{row.description}</TableCell>
+                        <TableCell>
+                          {row.description}
+                          {displayName && <span className="text-primary font-medium"> ({displayName})</span>}
+                        </TableCell>
                         <TableCell>{row.qty ?? "-"}</TableCell>
                         <TableCell>{row.uom ?? ""}</TableCell>
                         <TableCell>
@@ -384,11 +472,15 @@ export function DescriptionSearch({
                             description={row.description}
                             machineName={row.bom_machines?.machine_name ?? null}
                             sourceFile={row.bom_machines?.source_file ?? null}
-                            onAdded={onKeyPartAdded}
+                            onAdded={() => {
+                              refreshKeyPartNames();
+                              onKeyPartAdded?.();
+                            }}
                           />
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

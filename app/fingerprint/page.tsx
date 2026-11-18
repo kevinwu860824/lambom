@@ -113,14 +113,14 @@ const zh: Record<string, string> = {
   "Back to Comparison Tool": "返回比對工具",
   "Key Parts Fingerprint": "關鍵零件指紋",
   "View/edit each machine's key part numbers by tool type — reads and writes directly to key_parts.":
-    "依刀具類型檢視/編輯各機台的關鍵零件料號 — 直接讀寫 key_parts。",
-  "Select Tool Type": "選擇刀具類型",
-  "Tool Type": "刀具類型",
-  "Select tool type": "選擇刀具類型",
-  "Or add a new tool type": "或新增刀具類型",
+    "依機台類型檢視/編輯各機台的關鍵零件料號 — 直接讀寫 key_parts。",
+  "Select Tool Type": "選擇機台類型",
+  "Tool Type": "機台類型",
+  "Select tool type": "選擇機台類型",
+  "Or add a new tool type": "或新增機台類型",
   "e.g. Core-Buffing OX": "例如：Core-Buffing OX",
   Add: "新增",
-  "Select or add a tool type first.": "請先選擇或新增刀具類型。",
+  "Select or add a tool type first.": "請先選擇或新增機台類型。",
   "Add a machine column (e.g. ACOXN1)": "新增機台欄位（例如：ACOXN1）",
   "Adding…": "新增中…",
   "Add Machine": "新增機台",
@@ -139,7 +139,7 @@ const zh: Record<string, string> = {
   "Color only applies to a brand-new category; if the category already exists, its existing color is kept (you can change it via the category color swatch in the table below).":
     "顏色只套用於全新分類；若分類已存在，會保留其原有顏色（可透過下方表格中的分類顏色色塊變更）。",
   "Loading…": "載入中…",
-  "This tool type has no rows yet — add one above.": "此刀具類型尚無資料列 — 請於上方新增。",
+  "This tool type has no rows yet — add one above.": "此機台類型尚無資料列 — 請於上方新增。",
   Slot: "插槽",
   "No machines yet — add one above": "尚無機台 — 請於上方新增",
   "Remove machine {machine}": "移除機台 {machine}",
@@ -156,11 +156,11 @@ const zh: Record<string, string> = {
   "Add All Anyway": "仍要全部新增",
   "Both category and slot name are required": "分類和插槽名稱皆為必填",
   "There's already a slot with this name under this category": "此分類下已有相同名稱的插槽",
-  "This machine is already in this tool type": "此機台已經在這個刀具類型中",
+  "This machine is already in this tool type": "此機台已經在這個機台類型中",
   "Delete the row \"{name}\"? (Already-filled part numbers won't be deleted)":
     "刪除列「{name}」？（已填寫的料號不會被刪除）",
   "Remove \"{name}\" from this tool type's table? (The machine itself and its uploaded BOM won't be deleted)":
-    "從此刀具類型的表格中移除「{name}」？（機台本身及其已上傳的 BOM 不會被刪除）",
+    "從此機台類型的表格中移除「{name}」？（機台本身及其已上傳的 BOM 不會被刪除）",
   "\"{value}\" wasn't found in {machine}'s Full BOM or Modules data — it may be a typo. Save it anyway?":
     "在 {machine} 的完整 BOM 或模組資料中找不到「{value}」— 可能是打字錯誤。仍要儲存嗎？",
   "This file has no data rows besides the header": "此檔案除了標題列外沒有資料列",
@@ -168,7 +168,7 @@ const zh: Record<string, string> = {
     "找不到必要欄位（\"Category\" / \"Slot Name\"）— 請檢查檔案格式",
   "No matching machine columns found — column headers must exactly match an existing machine name":
     "找不到符合的機台欄位 — 欄位名稱必須與現有機台名稱完全一致",
-  "Failed to add machine(s) to this tool type:": "新增機台至此刀具類型失敗：",
+  "Failed to add machine(s) to this tool type:": "新增機台至此機台類型失敗：",
   "Failed to create row \"{row}\":": "建立列「{row}」失敗：",
 };
 
