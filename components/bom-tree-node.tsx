@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
@@ -80,8 +81,17 @@ function HighlightedText({ text, normalizedQuery }: { text: string; normalizedQu
  *
  * Each row carries a `bom-row-<id>` DOM id so the search feature can scroll
  * a specific match into view via document.getElementById.
+ *
+ * Wrapped in `memo`: a large, already-expanded tree (hundreds/thousands of
+ * rendered rows) otherwise gets fully re-reconciled on every parent
+ * re-render — including one triggered by an unrelated keystroke in a
+ * sibling search input — which is expensive enough to make typing itself
+ * stutter. Callers must pass stable (useCallback'd) `onToggle`/
+ * `onCustomNameSaved` and stable `customNames`/`keyPartNames` map
+ * references for this to actually skip re-rendering; otherwise memo is a
+ * no-op since the props compare unequal every time anyway.
  */
-export function BomTreeNodeRow({
+export const BomTreeNodeRow = memo(function BomTreeNodeRowImpl({
   node,
   idPrefix,
   expandedPaths,
@@ -189,4 +199,4 @@ export function BomTreeNodeRow({
       )}
     </div>
   );
-}
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronUp, Download, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase";
@@ -171,10 +171,10 @@ export function BomStructureViewer({
 }) {
   const t = useTranslate(zh);
   const supabaseRef = useRef<SupabaseClient | null>(null);
-  function getSupabase() {
+  const getSupabase = useCallback(() => {
     if (!supabaseRef.current) supabaseRef.current = createClient();
     return supabaseRef.current;
-  }
+  }, []);
 
   const [machineNames, setMachineNames] = useState<string[]>([]);
   const [machine, setMachine] = useState("");
@@ -191,19 +191,17 @@ export function BomStructureViewer({
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const [customNames, setCustomNames] = useState<Map<string, string>>(new Map());
-  function refreshCustomNames() {
+  const refreshCustomNames = useCallback(() => {
     if (groupId == null) return;
     fetchCustomNames(getSupabase(), groupId)
       .then(setCustomNames)
       .catch(() => {
         // Best-effort — a failed refresh just leaves the previous map shown.
       });
-  }
+  }, [groupId, getSupabase]);
   useEffect(() => {
-    if (groupId == null) return;
     refreshCustomNames();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId]);
+  }, [refreshCustomNames]);
 
   // key_parts has no group_id column, so (unlike customNames above) this is
   // scoped to whichever single machine is currently selected rather than
@@ -340,7 +338,12 @@ export function BomStructureViewer({
   // single level.
   const [activeLevel, setActiveLevel] = useState<number | null>(null);
 
-  function toggleExpanded(id: string) {
+  // useCallback with empty deps (both setters are the stable useState
+  // identities) so this stays referentially stable across re-renders —
+  // passed down as BomTreeNodeRow's onToggle, which is memo()'d
+  // specifically to avoid re-rendering a large, already-expanded tree on
+  // every keystroke in the unrelated search box above it.
+  const toggleExpanded = useCallback((id: string) => {
     setActiveLevel(null);
     setManualExpandedIds((prev) => {
       const next = new Set(prev);
@@ -348,7 +351,7 @@ export function BomStructureViewer({
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   function expandAll() {
     const all = new Set<string>();
