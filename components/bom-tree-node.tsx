@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
 import { combinePartNames, type BomTreeNode } from "@/lib/bom";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { CustomNameButton } from "@/components/custom-name-button";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 
@@ -164,7 +165,8 @@ export function BomTreeNodeRow({
           <ExternalLink className="h-3 w-3" />
           KM
         </Button>
-        <InventoryLookupButton partNo={node.item.part_no} className="text-muted-foreground mr-2 shrink-0" />
+        <InventoryLookupButton partNo={node.item.part_no} className="text-muted-foreground shrink-0" />
+        <CopyButton value={node.item.part_no} className="text-muted-foreground mr-2 shrink-0" />
       </div>
       {expanded && hasChildren && (
         <div>

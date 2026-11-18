@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { openKmMatrix } from "@/lib/km-matrix";
 import { useTranslate } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/copy-button";
 import { InventoryLookupButton } from "@/components/inventory-lookup-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -84,6 +85,7 @@ export function FingerprintCell({
           </Button>
         )}
         {value && <InventoryLookupButton partNo={value} />}
+        {value && <CopyButton value={value} />}
         {foundInModules && foundInModules.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
